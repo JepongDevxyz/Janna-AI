@@ -309,3 +309,19 @@ body[data-theme='moon']{--paper:#fff8fb;--sidebar:#fde6ef;--hover:#f9d6e5;--line
 .work-stream:not(.is-done) .work-stream-title{background:linear-gradient(90deg,var(--muted) 35%,var(--ink) 50%,var(--muted) 65%);background-size:220% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;animation:janna-thinking 2.2s linear infinite}
 @keyframes janna-thinking{from{background-position:120% 0}to{background-position:-120% 0}}
 @media(prefers-reduced-motion:reduce){.work-stream:not(.is-done) .work-stream-title{animation:none;background:none;color:var(--muted)}}
+
+/* === Phone no-overlap polish (2026-11-10, web edition feedback) ===
+   Scoped to .phone-layout so the desktop app renders exactly as before.
+   1. Toasts move to the top: the bottom toast covered the composer dock.
+   2. The Kage companion FAB drops to the bottom corner on content views
+      (Models, Projects) where there is no composer; page-end padding keeps
+      the last card clear of it. In chat it keeps its composer clearance.
+   3. Thread scroll clearance so the last message can scroll past the FAB.
+   4. The desktop "Ctrl K" hint is hidden on phones. */
+.phone-layout .toast{top:calc(64px + env(safe-area-inset-top));bottom:auto;animation:phone-toast-in 180ms cubic-bezier(.2,.8,.2,1)}
+@keyframes phone-toast-in{from{opacity:0;transform:translate(-50%,-6px)}to{opacity:1;transform:translate(-50%,0)}}
+.phone-layout .app-shell:has(.content-view:not([hidden])) .companion-fab{display:none}
+.phone-layout .content-inner{padding-bottom:180px}
+.phone-layout .thread{scroll-padding-bottom:130px}
+.phone-layout .messages{padding-bottom:110px}
+.phone-layout .new-chat kbd{display:none}

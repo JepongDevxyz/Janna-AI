@@ -607,7 +607,7 @@ function renderModelsPanel(root){
   for(const id of state.models){
     const row=modelRecord(id);const card=el('div','card');card.append(el('h3','',row.label),el('p','',row.note||'Installed on this PC.'));
     if(id===state.model)card.append(el('span','pill','Selected'));
-    card.append(button('Select',()=>{chooseModel(id);showView('chats')}));grid.append(card)
+    else card.append(button('Select',()=>{chooseModel(id);showView('chats')}));grid.append(card)
   }
   root.append(grid);
   if(!state.models.length)root.append(el('p','muted','No local model is ready. Complete setup above; model downloads can be resumed if interrupted.'));
@@ -1104,7 +1104,7 @@ function applyLocale(){
   const newLabel=$('newChat')?.querySelector('span');if(newLabel)newLabel.textContent=it?'Nuova chat':'New chat';
   const welcome=$('welcome')?.querySelector('h1');if(welcome)welcome.textContent=it?'Su cosa lavoriamo?':'What are we working on?';
   const hint=$('welcome')?.querySelector('.welcome-hint span > span')?.parentNode;
-  if(hint)hint.lastChild.textContent=it?'Sessione locale · File sul tuo computer':'Local session · Files stay on your machine';
+  if(hint)hint.lastChild.textContent=window.__JANNA_WEB__?'Cloud session · Chats stay in this browser':(it?'Sessione locale · File sul tuo computer':'Local session · Files stay on your machine');
   if(!state.busy){$('prompt').placeholder=it?'Chiedi qualcosa a Janna…':'Ask Janna anything…'}
 }
 async function refreshBootstrap(){const b=await api('/api/bootstrap');state.token=b.token||state.token;saveLocalToken();state.projects=b.projects||[];state.sessions=b.sessions||[];state.modelCatalog=b.model_catalog||[];state.library=b.library||[];state.clineInstalled=!!b.cline_installed;state.languages=b.languages||[];state.sumi=b.sumi||null;state.project=b.active_project||state.project;state.settings=b.settings||state.settings;applyLocale();refreshResearchSwitch();document.body.dataset.theme=state.settings.theme||'porcelain';syncDesktopChrome();state.speed=state.settings.speed||state.speed;state.effort=state.settings.effort||state.effort;$('speed').value=state.speed;$('effort').value=state.effort;renderModelOptions(b.models||[]);statusBadge({ollama:!!b.models?.length});renderRecents();$('workspaceLabel').textContent=selectedProject()?.name||'Workspace';$('projectQuickLabel').textContent=selectedProject()?.name||'Choose project';$('profileName').textContent=b.profile?.label||'Guest workspace';return b}
