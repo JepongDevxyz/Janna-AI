@@ -117,6 +117,7 @@
     <dialog id="projectDialog" class="janna-dialog"><form id="projectForm"><h2>Choose a project</h2><p>Give Janna a specific development folder. Work is restricted to this checkout.</p><label for="projectPath">Folder location</label><input id="projectPath" placeholder="C:\\Users\\You\\source\\MyProject" autocomplete="off"><div class="dialog-actions"><button type="button" id="cancelProject" class="text-btn">Cancel</button><button type="button" id="nativePick" class="text-btn">Browse…</button><button class="action-btn" type="submit">Use project</button></div></form></dialog>
     <dialog id="pairDialog" class="janna-dialog"><form id="pairForm"><img src="/mark-clean.png" alt="" class="pair-icon"><h2>Connect to your Janna</h2><p>On your Windows PC, open Settings → iPhone access and generate a private pairing code.</p><label for="pairCode">Pairing code</label><input id="pairCode" inputmode="numeric" autocomplete="one-time-code" placeholder="0000 0000" maxlength="9" required><button class="action-btn full" type="submit">Connect this device</button><p class="pair-error" id="pairError"></p></form></dialog>
   </div>
+  <script src="/web-adapter.js" defer></script>
   <script src="/run-stream.js" defer></script>
   <script src="/mobile.js" defer></script>
   <script src="/app.js" defer></script>

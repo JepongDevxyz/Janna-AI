@@ -190,7 +190,7 @@ function renderModelOptions(models){
   for(const row of ordered){
     sel.add(new Option(row.label,row.id));
     if(!list)continue;
-    const heading=row.model_class==='Janna engineering profile'?'Janna profiles':'Other models on this PC';
+    const heading=row.model_class==='Janna engineering profile'?'Janna profiles':(row.cloud?'Cloud models':'Other models on this PC');
     if(heading!==group){group=heading;list.append(el('div','model-menu-group',heading))}
     const item=el('button','model-menu-item');item.type='button';item.setAttribute('role','option');item.dataset.value=row.id;
     item.append(el('strong','',row.label),el('small','',row.note||'Installed on this PC'));
@@ -232,7 +232,7 @@ async function cycleResearchSwitch(){
     toast(next==='off'?'Web research disabled':next==='always'?'Web research enabled for every question':'Automatic research enabled')}
   catch(e){toast(e.message)}
 }
-function statusBadge(health){if(Array.isArray(health.busy))state.busySessions=health.busy;const ok=health.ollama??!!state.models.length;$('sidebarDot').classList.toggle('offline',!ok);$('headerDot').classList.toggle('offline',!ok);$('sidebarState').textContent=ok?(state.busy?'Working locally':state.busySessions.length?'Working in another chat':'Local model · Ready'):'Local model · Offline';$('headerMode').textContent=state.remote?'Private connection':'Local mode';const gpu=health.gpu||state.gpu;state.gpu=gpu;$('gpuState').textContent=gpu?.available?`${gpu.utilization_percent}% GPU`:'GPU'}
+function statusBadge(health){if(Array.isArray(health.busy))state.busySessions=health.busy;const ok=health.ollama??!!state.models.length;$('sidebarDot').classList.toggle('offline',!ok);$('headerDot').classList.toggle('offline',!ok);$('sidebarState').textContent=ok?(state.busy?'Working locally':state.busySessions.length?'Working in another chat':(window.__JANNA_WEB__?'Cloud · Ready':'Local model · Ready')):(window.__JANNA_WEB__?'Cloud · Offline':'Local model · Offline');$('headerMode').textContent=window.__JANNA_WEB__?'Web edition':(state.remote?'Private connection':'Local mode');const gpu=health.gpu||state.gpu;state.gpu=gpu;$('gpuState').textContent=gpu?.available?`${gpu.utilization_percent}% GPU`:'GPU'}
 function renderRecents(){
   const box=$('sessionList');box.replaceChildren();
   if(!state.sessions.length){box.append(el('div','empty-recents','Start a conversation'));return}
@@ -568,6 +568,9 @@ function renderModelsPanel(root){
   feature.append(el('p','',lightweightSelected?'A lighter local engineering model for 8 GB GPUs, with smaller context and memory budgets.':'Your local engineering model for emulator design, graphics, JITs, decompilation, and tested coding workflows.'));
   feature.append(el('span','pill',ready?'Ready on this PC':lite?'Rei 1.1 ready':'Setup required'));
   if(!ready && !lite){
+    if(window.__JANNA_WEB__){
+      feature.append(el('p','muted','This web version uses cloud models — no installation needed. Pick a model on the chat screen and start asking. Local Sumi 1.1 / Rei 1.1 setup belongs to the desktop app.'));
+    }else{
     feature.append(el('p','muted',state.sumi?.base_installed?
       'The model weights are already present. Finish setting up Sumi below.':
       'No model installed yet. Janna can install the official local runtime, model weights and coding tools on this Windows PC—no paid API required.'));
@@ -589,6 +592,7 @@ function renderModelsPanel(root){
       actions.append(install,small);feature.append(actions);
       const progress=el('pre','setup-progress','Checking setup status…');feature.append(progress);
       watchSetup(progress);
+    }
     }
   }else{
     const name=ready?'sumi-1.0':(state.sumi?.installed_rei?'rei-1.0':'sumi-1.0-lite');

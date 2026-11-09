@@ -62,6 +62,22 @@ Conversations, settings and project notes are stored under `~/.janna`. Model inf
 
 Janna is early software. Model answers can be wrong; review edits and run relevant tests. Phone, integration and extended autonomous-run qualification is incomplete. The [release status](docs/RELEASE-STATUS.md) separates tested behavior from remaining work.
 
+## Web edition (Vercel)
+
+Janna AI also runs as a hosted web app, shaped like Fable AI: the same `web/`
+UI served as a static site, plus one serverless function (`api/[...slug].js`)
+that answers the chat protocol (`POST /api/run`, canonical SSE) from cloud
+models. Conversations and settings stay in the visitor's browser
+(`web/web-adapter.js`, guest mode); project files, coding tools, local model
+setup and other PC features remain desktop-only and say so honestly in the UI.
+
+Deploy: import this repository in Vercel — no build command, output
+directory `web` (preset in `vercel.json`). The default model (Janna Cloud)
+works with no keys. Optional provider key pools (comma-separated, rotated
+per request, Fable-style) via environment variables: `GROQ_API_KEYS`,
+`GEMINI_API_KEYS`, `OPENROUTER_API_KEYS`, `MISTRAL_API_KEYS`,
+`COHERE_API_KEYS`. Setting a pool adds its model to the picker.
+
 ## Build and contribute
 
 The backend uses the Python standard library; the UI uses plain HTML, CSS and JavaScript. The Windows host uses .NET 10, WinForms and WebView2.

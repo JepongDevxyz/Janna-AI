@@ -1,0 +1,296 @@
+// Janna AI — web edition backend (Vercel serverless, Node runtime).
+// Mirrors Fable AI's shape: static web UI + one API function + cloud model
+// providers with ROTATIONAL key pools (Jepong's standing rule, 2026-11-04):
+// every request shuffles the provider's key pool and, on a key-level failure
+// (401/403/429), walks the rest of that pool before giving up. No silent
+// cross-provider substitution: the picked model answers, or an honest error.
+//
+// The desktop (Python) backend remains the full local workspace. This function
+// implements the web subset: bootstrap/status/models, the canonical run
+// stream (POST /api/run, schema v1 SSE — same protocol as janna/server.py),
+// and honest "desktop only" answers for local-machine features.
+
+export const config = { maxDuration: 60 };
+
+const APP_VERSION = '1.6.0-web.1';
+const SYSTEM_PROMPT =
+  'You are Janna AI, a helpful AI assistant in the Janna AI workspace by Jepong Devxyz ' +
+  '(the web edition of the open-source Janna AI workspace, based on Takumi by Coye). ' +
+  'Answer helpfully, clearly and directly. Use Markdown when it helps. ' +
+  'If you do not know something, say so instead of inventing it.';
+
+// ---------- key pools (rotational by default) ----------
+function keyPool(envName) {
+  const raw = process.env[envName] || '';
+  return raw.split(',').map((s) => s.trim()).filter(Boolean);
+}
+function shuffled(list) {
+  const a = list.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+// ---------- model catalog ----------
+function catalog() {
+  const rows = [
+    { id: 'janna-cloud', label: 'Janna Cloud', note: 'Free cloud model · no setup, works anywhere', model_class: 'Janna Cloud', cloud: true, provider: 'pollinations', model: process.env.JANNA_FREE_MODEL || 'openai-fast' },
+  ];
+  if (keyPool('GROQ_API_KEYS').length)
+    rows.push({ id: 'groq-llama-3.3-70b', label: 'Llama 3.3 70B · Groq', note: 'Fast cloud model via Groq', model_class: 'Janna Cloud', cloud: true, provider: 'groq', model: 'llama-3.3-70b-versatile' });
+  if (keyPool('GEMINI_API_KEYS').length)
+    rows.push({ id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash · Google', note: 'Cloud model via Google AI', model_class: 'Janna Cloud', cloud: true, provider: 'gemini', model: 'gemini-2.5-flash' });
+  if (keyPool('OPENROUTER_API_KEYS').length)
+    rows.push({ id: 'openrouter-llama-3.3-70b', label: 'Llama 3.3 70B · OpenRouter', note: 'Cloud model via OpenRouter', model_class: 'Janna Cloud', cloud: true, provider: 'openrouter', model: 'meta-llama/llama-3.3-70b-instruct' });
+  if (keyPool('MISTRAL_API_KEYS').length)
+    rows.push({ id: 'mistral-small', label: 'Mistral Small · Mistral', note: 'Cloud model via Mistral', model_class: 'Janna Cloud', cloud: true, provider: 'mistral', model: 'mistral-small-latest' });
+  if (keyPool('COHERE_API_KEYS').length)
+    rows.push({ id: 'cohere-command-a', label: 'Command A · Cohere', note: 'Cloud model via Cohere', model_class: 'Janna Cloud', cloud: true, provider: 'cohere', model: 'command-a-03-2025' });
+  return rows;
+}
+
+const DEFAULT_SETTINGS = {
+  figma_enabled: false, forge_enabled: false, browser_enabled: false, personality: 'precise',
+  theme: 'porcelain', speed: 'standard', effort: 'balanced', refine_reports: false,
+  autonomy_passes: 8, research_mode: 'auto', github_research: true, model_failover: true,
+  language: 'auto', show_progress: true, show_citations: true, verify_generated_code: true,
+  repair_generated_html: true, repair_generated_code: true, send_on_enter: true, voice_output: false,
+};
+
+const KAGE_MEMBERS = [
+  { id: 'ren', name: 'Ren', role: 'Product lead', description: 'Priorities, technical decisions, release risk and daily progress', avatar: '/kage/ren-256.webp' },
+  { id: 'kiri', name: 'Kiri', role: 'Research scout', description: 'Current technical references, GitHub implementations and source evidence', avatar: '/kage/kiri-256.webp' },
+  { id: 'hana', name: 'Hana', role: 'Graphics specialist', description: 'Rendering, synchronization, GPU captures and shader correctness', avatar: '/kage/hana-256.webp' },
+  { id: 'tetsu', name: 'Tetsu', role: 'Validation engineer', description: 'Reproduction, diagnostics, build and regression checks', avatar: '/kage/tetsu-256.webp' },
+  { id: 'akane', name: 'Akane', role: 'Implementation engineer', description: 'Focused fixes, careful refactors and regression checks', avatar: '/kage/akane.png' },
+];
+
+// ---------- provider calls ----------
+// OpenAI-compatible streaming chat. Walks the shuffled key pool on key-level
+// failures that happen BEFORE the first token; once tokens flow, the stream
+// is committed to that key.
+async function* openAIStream({ baseUrl, keys, model, messages, extraHeaders = {} }) {
+  const pool = keys.length ? shuffled(keys) : [null];
+  let lastError = null;
+  for (const key of pool) {
+    let response;
+    try {
+      response = await fetch(baseUrl + '/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(key ? { Authorization: 'Bearer ' + key } : {}),
+          ...extraHeaders,
+        },
+        body: JSON.stringify({ model, messages, stream: true }),
+      });
+    } catch (e) {
+      lastError = e;
+      continue;
+    }
+    if (!response.ok || !response.body) {
+      lastError = new Error('Provider HTTP ' + response.status);
+      if ([401, 403, 429].includes(response.status)) continue; // key-level: walk pool
+      throw lastError;
+    }
+    // Stream SSE deltas.
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let idx;
+      while ((idx = buffer.indexOf('\n')) >= 0) {
+        const line = buffer.slice(0, idx).trim();
+        buffer = buffer.slice(idx + 1);
+        if (!line.startsWith('data:')) continue;
+        const data = line.slice(5).trim();
+        if (data === '[DONE]') return;
+        try {
+          const json = JSON.parse(data);
+          const delta = json.choices?.[0]?.delta?.content || json.choices?.[0]?.message?.content || '';
+          if (delta) yield delta;
+        } catch { /* keepalive / partial frame */ }
+      }
+    }
+    return;
+  }
+  throw lastError || new Error('All provider keys failed');
+}
+
+async function pollinationsText({ model, messages }) {
+  const response = await fetch('https://text.pollinations.ai/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model, messages }),
+  });
+  if (!response.ok) throw new Error('Free cloud model HTTP ' + response.status);
+  return await response.text();
+}
+
+async function* providerStream(row, messages) {
+  switch (row.provider) {
+    case 'pollinations': {
+      const text = await pollinationsText({ model: row.model, messages });
+      // Emit as word-ish chunks so the UI streams naturally.
+      const parts = text.match(/\S+\s*/g) || [text];
+      for (const p of parts) yield p;
+      return;
+    }
+    case 'groq':
+      yield* openAIStream({ baseUrl: 'https://api.groq.com/openai/v1', keys: keyPool('GROQ_API_KEYS'), model: row.model, messages });
+      return;
+    case 'gemini':
+      yield* openAIStream({ baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', keys: keyPool('GEMINI_API_KEYS'), model: row.model, messages });
+      return;
+    case 'openrouter':
+      yield* openAIStream({ baseUrl: 'https://openrouter.ai/api/v1', keys: keyPool('OPENROUTER_API_KEYS'), model: row.model, messages, extraHeaders: { 'X-Title': 'Janna AI' } });
+      return;
+    case 'mistral':
+      yield* openAIStream({ baseUrl: 'https://api.mistral.ai/v1', keys: keyPool('MISTRAL_API_KEYS'), model: row.model, messages });
+      return;
+    case 'cohere':
+      yield* openAIStream({ baseUrl: 'https://api.cohere.ai/compatibility/v1', keys: keyPool('COHERE_API_KEYS'), model: row.model, messages });
+      return;
+    default:
+      throw new Error('Unknown provider for model ' + row.id);
+  }
+}
+
+// ---------- HTTP helpers ----------
+function json(res, status, obj) {
+  res.statusCode = status;
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.end(JSON.stringify(obj));
+}
+const desktopOnly = (res, what) =>
+  json(res, 400, { error: (what || 'This feature') + ' runs on the Janna AI desktop app (local PC) and is not available in the web version.' });
+
+async function readBody(req) {
+  const chunks = [];
+  for await (const c of req) chunks.push(c);
+  const text = Buffer.concat(chunks).toString('utf-8');
+  try { return JSON.parse(text || '{}'); } catch { return {}; }
+}
+
+// ---------- the run stream (canonical schema v1, same as desktop) ----------
+async function handleRun(req, res) {
+  const body = await readBody(req);
+  const sessionId = String(body.session_id || 'web-session');
+  const prompt = String(body.prompt || '').trim();
+  const rows = catalog();
+  const row = rows.find((r) => r.id === body.model) || rows[0];
+  const runId = 'run-' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+  let seq = 0;
+
+  res.statusCode = 200;
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-store, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  if (typeof res.flushHeaders === 'function') res.flushHeaders();
+
+  const emit = (payload) => {
+    seq += 1;
+    const event = { schema_version: 1, session_id: sessionId, run_id: runId, seq, event_id: runId + ':' + seq, payload };
+    res.write('id: ' + event.event_id + '\ndata: ' + JSON.stringify(event) + '\n\n');
+  };
+  const keepalive = setInterval(() => { try { res.write(': keepalive\n\n'); } catch { /* closed */ } }, 5000);
+
+  try {
+    emit({ type: 'start', mode: 'chat' });
+    if (body.mode === 'agent')
+      emit({ type: 'notice', message: 'Work mode (project files and coding tools) runs in the desktop app. Answering here in chat mode.' });
+    if (!prompt) throw new Error('Message is empty.');
+
+    const history = Array.isArray(body.messages) ? body.messages : [];
+    const messages = [{ role: 'system', content: SYSTEM_PROMPT }];
+    for (const m of history.slice(-20)) {
+      if (m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string' && m.content)
+        messages.push({ role: m.role, content: m.content.slice(0, 24000) });
+    }
+    let userContent = prompt;
+    for (const a of Array.isArray(body.attachments) ? body.attachments : []) {
+      if (a && a.text) userContent += '\n\n[Attached file: ' + String(a.name || 'file') + ']\n' + String(a.text).slice(0, 12000);
+      else if (a && a.kind === 'image') userContent += '\n\n[An image was attached, but this web model cannot view images.]';
+    }
+    messages.push({ role: 'user', content: userContent });
+
+    emit({ type: 'progress', stage: 'analysis', message: 'Thinking' });
+    let full = '';
+    let firstAt = 0;
+    const started = Date.now();
+    for await (const chunk of providerStream(row, messages)) {
+      if (!firstAt) { firstAt = Date.now(); emit({ type: 'first_token', milliseconds: firstAt - started }); }
+      full += chunk;
+      emit({ type: 'delta', text: chunk });
+    }
+    if (!full.trim()) throw new Error('The model returned an empty answer. Try again.');
+    const seconds = Math.max(0.001, (Date.now() - started) / 1000);
+    emit({
+      type: 'done', text: full, model_used: row.id, run_state: 'completed',
+      metrics: { tokens_per_second: Math.max(1, Math.round(full.split(/\s+/).length / seconds)), time_to_first_token_ms: firstAt ? firstAt - started : null },
+    });
+  } catch (e) {
+    emit({ type: 'error', message: String(e && e.message || e || 'Run failed') });
+  } finally {
+    clearInterval(keepalive);
+    res.end();
+  }
+}
+
+// ---------- main handler ----------
+export default async function handler(req, res) {
+  const url = new URL(req.url, 'http://localhost');
+  const path = url.pathname;
+  const method = req.method || 'GET';
+  const rows = catalog();
+
+  try {
+    if (method === 'GET' && path === '/api/bootstrap') {
+      return json(res, 200, {
+        token: 'web', version: APP_VERSION, projects: [], active_project: null,
+        sessions: [], models: rows.map((r) => r.id), model_catalog: rows,
+        library: [], cline_installed: false,
+        languages: [{ id: 'auto', name: 'Automatic', english: 'Automatic', speech: '', dir: 'ltr', chrome: 'english' },
+                    { id: 'en', name: 'English', english: 'English', speech: 'en', dir: 'ltr', chrome: 'full' }],
+        sumi: null, agentInstalled: false, busy: [], settings: { ...DEFAULT_SETTINGS },
+        remote: false, profile: { id: 'web-guest', label: 'Guest workspace' }, research_connectors: {},
+      });
+    }
+    if (method === 'GET' && path === '/api/remote-info')
+      return json(res, 200, { remote: false, pair_required: false, remote_enabled: false });
+    if (method === 'GET' && path === '/api/status')
+      return json(res, 200, { ollama: true, models: rows.map((r) => r.id), openCode: false, busy: [], gpu: null, gpu_scheduler: null });
+    if (method === 'GET' && path === '/api/models')
+      return json(res, 200, { models: rows.map((r) => r.id), model_catalog: rows, sumi: null });
+    if (method === 'GET' && path.startsWith('/api/reasoning/'))
+      return json(res, 200, { verified: false, vision: false, levels: ['default'] });
+    if (method === 'GET' && path === '/api/kage')
+      return json(res, 200, { name: 'Kage', model: 'Janna Cloud', members: KAGE_MEMBERS, selected: 'ren', unread: [], busy_sessions: [], notifications: [], goals: [], tasks: [] });
+    if (method === 'GET' && path.startsWith('/api/kage/avatar/')) {
+      const id = path.split('/').pop();
+      const member = KAGE_MEMBERS.find((m) => m.id === id) || KAGE_MEMBERS[0];
+      return json(res, 200, { src: member.avatar });
+    }
+    if (method === 'GET' && path === '/api/connections')
+      return json(res, 200, { github: { connected: false, status: 'Not connected in the web version' }, figma: { connected: false, status: 'Not connected in the web version' } });
+    if (method === 'GET' && path === '/api/host/readiness')
+      return json(res, 200, { web: true, ready: true, checks: [] });
+    if (method === 'GET' && path === '/api/research/providers')
+      return json(res, 200, {});
+    if (method === 'GET' && path === '/api/profile')
+      return json(res, 200, { profile: { id: 'web-guest', label: 'Guest workspace' }, discord_available: false, redirect_uri: '' });
+    if (method === 'POST' && path === '/api/run') return await handleRun(req, res);
+    if (method === 'POST' && path === '/api/kage/select') return json(res, 200, { ok: true });
+
+    if (path.startsWith('/api/')) return desktopOnly(res, 'This feature');
+    return json(res, 404, { error: 'Not found' });
+  } catch (e) {
+    return json(res, 500, { error: 'Web service error: ' + String(e && e.message || e) });
+  }
+}
