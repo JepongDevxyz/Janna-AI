@@ -1,0 +1,36 @@
+# Third-party components and distribution
+
+Janna is distributed as original source code or a compiled **Janna** desktop host. The repository and release artifacts must not bundle Ollama, OpenCode, Claude, Codex, model weights, firmware, keys, game files or other proprietary payloads. The Windows installer optionally fetches and installs official inference and coding engines **onto the end user's PC**, outside the Janna package. It also downloads model weights from the upstream registry on that PC. No third-party engines or model weights are bundled into the distributable ZIP.
+
+- **Ollama** — local model inference service, MIT license; https://github.com/ollama/ollama. Janna communicates over documented loopback endpoints. The inference runtime and model weights are downloaded on the user's PC at setup and *not* copied into Janna's release.
+- **OpenCode** — optional autonomous coding engine, MIT license; https://github.com/anomalyco/opencode. Janna launches the independent local CLI and consumes structured output. The executable and source are *not* vendored here.
+- **Microsoft .NET 10 runtime and Windows Forms** — used to compile Janna's own Windows desktop host. If published self-contained, Microsoft .NET runtime files may be included inside the Janna executable subject to Microsoft's applicable licenses. https://dotnet.microsoft.com/
+- **Microsoft Edge WebView2 SDK/runtime** — the embedded UI engine on Windows; NuGet package `Microsoft.Web.WebView2` version `1.0.4314.35`. The WebView2 Evergreen runtime is installed separately; the SDK may contribute its licensed native loader to published output. Follow Microsoft's distribution and license terms: https://developer.microsoft.com/en-us/microsoft-edge/webview2/
+- **Python 3.11+** — required to run Janna's local standard-library service. Python runtime is installed separately rather than bundled in Janna's ZIP. https://python.org/
+- **Tailscale** — optional private PC-to-phone network connection, separately installed with its own terms. https://tailscale.com/
+- **GitHub CLI / Figma MCP** — optional integrations using the user's own existing authentication. No credentials are copied to a release.
+- **Go** — used only to compile Janna's own `Janna-Setup.exe`. No Go runtime installation is needed to run the compiled setup executable.
+- **LLVM/Clang and Khronos glslang** — separately installed, optional source-index/syntax tools. No compiler executables are bundled in the Janna ZIP. Clang is discovered on PATH or in the standard Windows LLVM directory; glslang is discovered on PATH, in a Vulkan SDK or in the user's separately installed `LocalAppData/Janna/Tools/glslang/bin`. Upstream source, notices and licenses: https://github.com/llvm/llvm-project and https://github.com/KhronosGroup/glslang. A syntax pass does not establish target dependency, ABI, linking or runtime correctness.
+
+- **Bonsai 2 27B / Sumi 1.1 base** — Sumi 1.1 is a local application profile referencing the separately installed `bonsai-2:27b` upstream model published by Prism ML. The upstream model is listed as Apache-2.0; verify its distributed model card and any third-party terms before redistribution of weights. Janna redistributes **neither model tensors nor upstream model executables**. See https://ollama.com/library/bonsai-2:27b and https://huggingface.co/prism-ml/Ternary-Bonsai-2-27B-gguf. Naming Sumi 1.1 does not imply training or independent ownership of the base weights. The installed runtime tag remains `sumi-1.0:latest`.
+
+The Janna logo and supplied screenshots are owned/provided by the project owner. See `BRANDING.md`; they are not automatically MIT-licensed. For redistributed third-party modified software, each upstream license continues to apply independently.
+
+
+### Optional experimental training tools
+
+Optional browser tools use Microsoft `@playwright/mcp` 0.0.84 (Apache-2.0),
+installed separately from npm together with its pinned Playwright dependencies.
+Neither Node.js, Edge nor this connector is bundled. Source and license:
+https://github.com/microsoft/playwright-mcp.
+
+Optional training tools: `training/bonsai/runtime.py` and `codec.py` adapt the
+runtime distributed in Prism ML's Bonsai 2 MLX pack. Its supplied MIT license is
+retained at `training/bonsai/LICENSE`; source revision and modifications are in
+`training/bonsai/PROVENANCE.md`. MLX, mlx-lm, Transformers and llama.cpp's GGUF
+reader are separately installed tooling. This adds no weights or inference
+executables to the Janna installer and establishes no trained model release.
+
+### Rei 1.1 model profile
+
+Rei 1.1 uses separately downloaded Prism ML Bonsai 2 9B weights (`bonsai-2:9b`, Apache-2.0), not included in the Janna ZIP. See https://ollama.com/library/bonsai-2:9b and the upstream model license for attribution and redistribution terms. Janna's Modelfile customizes instructions and context settings only; it does not train or distribute independent model weights. The installed runtime tag remains `rei-1.0:latest`.
