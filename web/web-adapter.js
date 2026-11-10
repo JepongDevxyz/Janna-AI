@@ -155,7 +155,7 @@
       if (!found) return Promise.resolve(jsonResponse({ error: 'Conversation not found.' }, 404));
       return Promise.resolve(jsonResponse(Object.assign({}, found, { runs: [], inputs: queueFor(sid), goals: [] })));
     }
-    if (path === '/api/kage/chat' && method === 'POST') {
+    if (path === '/api/luna/chat' && method === 'POST') {
       var kn = Math.floor(Date.now() / 1000);
       var ks = { id: 'web-luna-' + Math.random().toString(36).slice(2, 10), title: 'Luna chat', purpose: 'luna', project_id: null, created: kn, updated: kn, messages: [], events: [] };
       var kl = loadSessions(); kl.unshift(ks); saveSessions(kl);

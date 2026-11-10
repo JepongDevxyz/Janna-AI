@@ -21,12 +21,12 @@ function drawRun(box,current){box.replaceChildren();if(!current)return;
  if(report.attempts)box.append(el('p','muted',`${report.attempts} attempt(s) · ${report.seconds}s · ${report.output_tokens} tokens · ${report.model||current.model}`))}
 window.drawVibe=async function(){
  stopPoll();const root=$('drawerBody');root.replaceChildren();
- root.append(el('p','','Describe the change. Sumi edits the project, runs its real build and tests, and repairs from the errors. A result only says verified when those checks actually ran and passed.'));
+ root.append(el('p','','Describe the change. Janna Pro edits the project, runs its real build and tests, and repairs from the errors. A result only says verified when those checks actually ran and passed.'));
  const project=typeof selectedProject==='function'?selectedProject():null;
  if(!project){root.append(button('Choose project',openProjectDialog,'action-btn'))}
  const planBox=el('div','card'),runBox=el('div','card');
  const task=el('textarea','inline-input');task.rows=4;task.placeholder='Add a dark mode toggle and keep the choice after a reload';task.setAttribute('aria-label','What to build or fix');
- const model=el('select','inline-input');model.setAttribute('aria-label','Model');for(const [value,label] of [['sumi-1.0:latest','Sumi 1.1'],['rei-1.0:latest','Rei 1.1']]){const option=el('option','',label);option.value=value;model.append(option)}
+ const model=el('select','inline-input');model.setAttribute('aria-label','Model');for(const [value,label] of [['janna-pro-1.0:latest','Janna Pro 1.1'],['janna-lite-1.0:latest','Janna Lite 1.1']]){const option=el('option','',label);option.value=value;model.append(option)}
  const configLabel=el('label','subtle-toggle'),config=document.createElement('input');config.type='checkbox';configLabel.append(config,document.createTextNode(' Allow edits to build configuration'));
  let noted=0,wasRunning=false;
  const refresh=async()=>{try{const r=await api('/api/vibe');const events=r.current?.events||[];const busy=r.current?.state==='running';if(busy||wasRunning){for(const event of events.slice(noted))window.noteEngineering?.(event)}noted=events.length;drawRun(runBox,r.current);runBox.hidden=!r.current;if(wasRunning&&!busy&&state.session&&typeof renderConversation==='function'){try{const session=await api('/api/session/'+encodeURIComponent(state.session));state.events=session.events||state.events;renderConversation(session)}catch{}}wasRunning=busy;startButton.disabled=busy||!project;stopButton.disabled=!busy;if(!busy)stopPoll()}catch(e){stopPoll();toast(e.message)}};
