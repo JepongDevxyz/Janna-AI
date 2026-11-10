@@ -223,7 +223,7 @@ function renderModelOptions(models){
   state.model=models.includes(current)?current:(models.find(m=>/^janna-pro-1\.0(?::latest)?$/.test(m))||models.find(m=>/^janna-lite-1\.0(?::latest)?$/.test(m))||models.find(m=>/^janna-lite-1\.0(?::latest)?$/.test(m))||models[0]);
   sel.value=state.model;syncModelMenu();refreshNativeLevels();
 }
-async function refreshNativeLevels(){const selected=state.reasoning;state.nativeLevels=['default'];state.modelVision=false;if(!state.model){state.reasoning='default';return}try{const r=await api('/api/reasoning/'+encodeURIComponent(state.model));state.modelVision=r.vision===true;if(r.verified)state.nativeLevels=r.levels||['default']}catch{}state.reasoning=state.nativeLevels.includes(selected)?selected:'default'}
+async function refreshNativeLevels(){const selected=state.reasoning;state.nativeLevels=['default'];state.modelVision=false;if(!state.model){state.reasoning='default';return}try{const r=await api('/api/reasoning/'+encodeURIComponent(state.model));state.modelVision=r.vision===true;if(r.verified)state.nativeLevels=r.levels||['default']}catch{}state.reasoning=state.nativeLevels.includes(selected)?selected:'default';if(typeof renderPending==='function')renderPending()}
 function syncDesktopChrome(){
   window.syncPhoneChrome?.();
   try{window.chrome?.webview?.postMessage(JSON.stringify({type:'janna.theme',theme:document.body.dataset.theme||'rose'}))}
