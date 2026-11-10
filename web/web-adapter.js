@@ -38,12 +38,12 @@
 
   function findSession(id) { return loadSessions().find(function (s) { return s.id === id; }); }
 
-  function appendExchange(sessionId, prompt, assistantText, errorMessage, activity) {
+  function appendExchange(sessionId, prompt, assistantText, errorMessage, activity, attached) {
     var list = loadSessions();
     var s = list.find(function (x) { return x.id === sessionId; });
     if (!s) return;
     s.messages = s.messages || [];
-    if (prompt) s.messages.push({ role: 'user', content: prompt });
+    if (prompt) { var um = { role: 'user', content: prompt }; if (Array.isArray(attached) && attached.length) um.attached = attached; s.messages.push(um); }
     if (assistantText) { var am = { role: 'assistant', content: assistantText }; if (activity && activity.steps && activity.steps.length) am.activity = activity; s.messages.push(am); }
     else if (errorMessage) s.messages.push({ role: 'assistant', content: '\u26a0\ufe0f ' + errorMessage });
     if ((!s.title || s.title === 'New chat') && prompt) s.title = prompt.slice(0, 60);
@@ -125,7 +125,7 @@
       });
   }
 
-  function tapRunStream(response, sessionId, prompt) {
+  function tapRunStream(response, sessionId, prompt, attached) {
     if (!response.body || typeof TransformStream === 'undefined') return response;
     var decoder = new TextDecoder();
     var buffer = '', recorded = false;
@@ -144,9 +144,9 @@
                 var event = JSON.parse(lines[i].slice(5).trim());
                 var p = event.payload || event;
                 if (p.type === 'progress' && p.message) { if (actSteps[actSteps.length - 1] !== p.message) actSteps.push(p.message); }
-                else if (p.type === 'done') { var act = actSteps.length ? { steps: actSteps.slice(0, 12), seconds: Math.max(1, Math.round((Date.now() - actStart) / 1000)) } : null; appendExchange(sessionId, prompt, typeof p.text === 'string' ? p.text : '', '', act); recorded = true; if (queueFor(sessionId).length) scheduleDrain(sessionId); }
-                else if (p.type === 'error') { appendExchange(sessionId, prompt, '', p.message || 'Run failed'); recorded = true; }
-                else if (p.type === 'recovery') { appendExchange(sessionId, prompt, '', p.message || 'Outcome unknown'); recorded = true; }
+                else if (p.type === 'done') { var act = actSteps.length ? { steps: actSteps.slice(0, 12), seconds: Math.max(1, Math.round((Date.now() - actStart) / 1000)) } : null; appendExchange(sessionId, prompt, typeof p.text === 'string' ? p.text : '', '', act, attached); recorded = true; if (queueFor(sessionId).length) scheduleDrain(sessionId); }
+                else if (p.type === 'error') { appendExchange(sessionId, prompt, '', p.message || 'Run failed', null, attached); recorded = true; }
+                else if (p.type === 'recovery') { appendExchange(sessionId, prompt, '', p.message || 'Outcome unknown', null, attached); recorded = true; }
               } catch { /* partial frame */ }
             }
           }
@@ -309,9 +309,36 @@
       if (sess && Array.isArray(sess.messages))
         runBody.messages = sess.messages.filter(function (m) { return m && (m.role === 'user' || m.role === 'assistant'); }).map(function (m) { return { role: m.role, content: m.content }; });
         if (sess.purpose === 'luna') runBody.companion = 'luna';
-      var newInit = Object.assign({}, init, { body: JSON.stringify(runBody) });
-      return nativeFetch(input, newInit).then(function (response) {
-        return tapRunStream(response, runBody.session_id, runBody.prompt);
+      var shrinkRunImages = function () {
+        var list = Array.isArray(runBody.attachments) ? runBody.attachments : [];
+        var jobs = list.filter(function (a) { return a && a.kind === 'image' && a.data && a.data.length > 900000; }).map(function (a) {
+          return new Promise(function (resolve) {
+            try {
+              var img = new Image();
+              img.onload = function () {
+                try {
+                  var scale = Math.min(1, 1568 / Math.max(img.naturalWidth || 1, img.naturalHeight || 1));
+                  var w = Math.max(1, Math.round(img.naturalWidth * scale)), h = Math.max(1, Math.round(img.naturalHeight * scale));
+                  var cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+                  var cx = cv.getContext('2d'); cx.fillStyle = '#ffffff'; cx.fillRect(0, 0, w, h); cx.drawImage(img, 0, 0, w, h);
+                  var url = cv.toDataURL('image/jpeg', 0.85);
+                  if (url && url.indexOf(',') > 0) { a.data = url.split(',')[1]; a.mime = 'image/jpeg'; }
+                } catch (e) { /* keep the original image */ }
+                resolve();
+              };
+              img.onerror = function () { resolve(); };
+              var mime0 = a.mime || (/\.png$/i.test(a.name || '') ? 'image/png' : /\.webp$/i.test(a.name || '') ? 'image/webp' : 'image/jpeg');
+              img.src = 'data:' + mime0 + ';base64,' + a.data;
+            } catch (e) { resolve(); }
+          });
+        });
+        return Promise.all(jobs);
+      };
+      return shrinkRunImages().then(function () {
+        var newInit = Object.assign({}, init, { body: JSON.stringify(runBody) });
+        return nativeFetch(input, newInit).then(function (response) {
+          return tapRunStream(response, runBody.session_id, runBody.prompt, (Array.isArray(runBody.attachments) ? runBody.attachments : []).map(function (a) { return { kind: a && a.kind === 'image' ? 'image' : 'file', name: String((a && a.name) || 'file').slice(0, 80) }; }));
+        });
       });
     }
 

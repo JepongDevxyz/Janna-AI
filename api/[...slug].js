@@ -14,8 +14,8 @@ export const config = { maxDuration: 60 };
 
 const APP_VERSION = '1.6.0-web.1';
 const SYSTEM_PROMPT =
-  'You are Janna AI, a helpful AI assistant in the Janna AI workspace by Jepong Devxyz. ' +
-  'YOUR IDENTITY — never break this: you are Janna AI, made by Jepong Devxyz. The model the user picks is only the engine powering this answer; you are never ChatGPT, GPT, Gemini, Claude, Kimi, Llama or any other model or company, and you never say you are based on, powered by as your identity, or a version of another model. If asked who or what you are, say you are Janna AI. If asked which engine is running, you may name the picked model as the engine for this answer, while making clear that you yourself are Janna AI. ' +
+  'You are Janna AI, a helpful AI assistant in the Janna AI app. ' +
+  'YOUR IDENTITY — never break this: you are Janna AI. When you introduce yourself, or when you are asked who you are, introduce yourself exactly this way — Tagalog: "Ako si Janna, isang AI. Ano ang maitutulong ko sa iyo?" English: "I\'m Janna, an AI. What can I help you with?" Do not add anyone\'s name to your introduction. Never volunteer who built you: ONLY when you are directly asked who created, built, made or developed you, answer — Tagalog: "Ako ay binuo ni Janna Mae, katulong si Jepong Devxyz." English: "I was built by Janna Mae, assisted by Jepong Devxyz." At all other times, do not mention Janna Mae or who made you. The model the user picks is only the engine powering this answer; you are never ChatGPT, GPT, Gemini, Claude, Kimi, Llama or any other model or company, and you never say you are based on another model. If asked which engine is running, you may name the picked model as the engine for this answer, while making clear that you yourself are Janna AI. ' +
   'Always write in the same language the user used: Tagalog in, Tagalog out; English in, English out. ' +
   'HOW YOU ANSWER — follow this style: ' +
   '(1) Answer directly first: give the answer, formula or definition up front; never open with a clarifying question — follow-up questions, if any, go at the very end. ' +
@@ -65,10 +65,10 @@ function catalog() {
     // echo, shared 15 requests/minute across the key. Claude Opus 4.6 is
     // listed free but actually subscription-gated (HTTP 402) and Jev 1.13 is
     // a decision-endpoint model (HTTP 400 on chat) — neither is wired.
-    rows.push({ id: 'apinex-gemini-3.8-flash', label: 'Gemini 3.8 Flash', note: 'Fast and sharp — great for long, detailed answers', model_class: 'Janna Cloud', cloud: true, provider: 'apinex', model: 'free/gemini-3.8-flash' });
-    rows.push({ id: 'apinex-gpt-6-luna', label: 'GPT-6 Luna', note: 'Strong all-rounder for chat, writing, and ideas', model_class: 'Janna Cloud', cloud: true, provider: 'apinex', model: 'free/gpt-6-luna' });
-    rows.push({ id: 'apinex-kimi-k3', label: 'Kimi K3', note: 'Great for coding and long documents', model_class: 'Janna Cloud', cloud: true, provider: 'apinex', model: 'free/kimi-k3' });
-    rows.push({ id: 'apinex-muse-spark-1.3', label: 'Muse Spark 1.3', note: 'Warm and creative everyday chat', model_class: 'Janna Cloud', cloud: true, provider: 'apinex', model: 'free/muse-spark-1.3' });
+    rows.push({ id: 'apinex-gemini-3.8-flash', label: 'Gemini 3.8 Flash', note: 'Fast and sharp — great for long, detailed answers', vision: true, model_class: 'Janna Cloud', cloud: true, provider: 'apinex', model: 'free/gemini-3.8-flash' });
+    rows.push({ id: 'apinex-gpt-6-luna', label: 'GPT-6 Luna', note: 'Strong all-rounder for chat, writing, and ideas', vision: true, model_class: 'Janna Cloud', cloud: true, provider: 'apinex', model: 'free/gpt-6-luna' });
+    rows.push({ id: 'apinex-kimi-k3', label: 'Kimi K3', note: 'Great for coding and long documents', vision: true, model_class: 'Janna Cloud', cloud: true, provider: 'apinex', model: 'free/kimi-k3' });
+    rows.push({ id: 'apinex-muse-spark-1.3', label: 'Muse Spark 1.3', note: 'Warm and creative everyday chat', vision: true, model_class: 'Janna Cloud', cloud: true, provider: 'apinex', model: 'free/muse-spark-1.3' });
   }
   return rows;
 }
@@ -147,12 +147,12 @@ function buildAwareness(body, row) {
   const modelList = catalog().map((r) => (r.note ? r.label + ' (' + r.note + ')' : r.label)).join('; ');
   const lines = [];
   lines.push('WHAT YOU KNOW — facts about yourself, this app and this user. Use them to answer questions about Janna AI, the app, or the user accurately; do not recite them unprompted.');
-  lines.push('You are Janna AI, the web edition at ai.janna-official.tech, made by Jepong Devxyz. There is no account or sign-in: chats, settings and your memory of the user are stored only in this user\'s browser on this device.');
+  lines.push('You are Janna AI, the web edition at ai.janna-official.tech. You never volunteer who built you; only if directly asked who created or built you, say you were built by Janna Mae, assisted by Jepong Devxyz. There is no account or sign-in: chats, settings and your memory of the user are stored only in this user\'s browser on this device.');
   lines.push('Plan: Free. Janna Cloud is completely free — no account, no payment, and there are no paid tiers or subscriptions in this app.');
   lines.push('Models the user can pick in this app: ' + modelList + '. The engine currently powering your answer is ' + row.label + ' — you are still Janna AI, never the engine itself.');
-  lines.push('Features in this app: chat, with each conversation saved in the sidebar; Luna, a star-cat pet companion the user can tap to pet, plus a separate Luna chat; about 90 color themes (default Rose, dark Velvet) under Settings - Themes; Settings sections: General, Themes, Personalization, How hard Janna works, Checking answers, Web research, Tools and connections, On-device control, Data controls (Export data, Import data, Clear all chats, Clear memory); microphone voice input; file attachments (you can read attached text files; you cannot view images); and a memory of the user (below).');
+  lines.push('Features in this app: chat, with each conversation saved in the sidebar; Luna, a star-cat pet companion the user can tap to pet, plus a separate Luna chat; about 90 color themes (default Rose, dark Velvet) under Settings - Themes; Settings sections: General, Themes, Personalization, How hard Janna works, Checking answers, Web research, Tools and connections, On-device control, Data controls (Export data, Import data, Clear all chats, Clear memory); microphone voice input; file attachments (you can read attached text files' + (row.vision ? ', and you CAN view attached images — describe them and answer questions about them' : '; the currently selected model cannot view images — if the user attaches an image, tell them honestly and say that Gemini 3.8 Flash, GPT-6 Luna, Kimi K3 and Muse Spark 1.3 can view images') + '); and a memory of the user (below).');
   lines.push('Desktop app only (NOT in this web edition): Janna Pro 1.1 and Janna Lite 1.1 local models, Work mode with project files and coding tools, and phone pairing. If the user asks for those, say they run in the Janna AI desktop app.');
-  lines.push('Your limits in this web edition: you cannot see images, cannot browse or search the web, and cannot run code or edit the user\'s files.');
+  lines.push('Your limits in this web edition: ' + (row.vision ? 'you cannot browse or search the web' : 'you cannot see images with the currently selected model, and you cannot browse or search the web') + ', and cannot run code or edit the user\'s files.');
   lines.push('This user\'s usage in this app: ' + (c.chats || 0) + ' conversations and ' + (c.messages || 0) + ' messages in total. Current conversation: "' + String(c.currentTitle || 'New chat').slice(0, 80) + '". Current theme: ' + (c.theme || 'rose') + '. Luna pets today: ' + (c.lunaPets || 0) + '.');
   if (Array.isArray(c.facts) && c.facts.length) {
     lines.push('Things you remember about this user (saved in this app, across all their chats):');
@@ -285,11 +285,19 @@ async function handleRun(req, res) {
         messages.push({ role: m.role, content: m.content.slice(0, 24000) });
     }
     let userContent = prompt;
+    const imageParts = [];
     for (const a of Array.isArray(body.attachments) ? body.attachments : []) {
       if (a && a.text) userContent += '\n\n[Attached file: ' + String(a.name || 'file') + ']\n' + String(a.text).slice(0, 12000);
+      else if (a && a.kind === 'image' && a.data) {
+        if (row.vision && imageParts.length < 4) {
+          const mime = a.mime || (/\.png$/i.test(a.name || '') ? 'image/png' : /\.webp$/i.test(a.name || '') ? 'image/webp' : /\.gif$/i.test(a.name || '') ? 'image/gif' : 'image/jpeg');
+          imageParts.push({ type: 'image_url', image_url: { url: 'data:' + mime + ';base64,' + String(a.data).replace(/^data:[^,]+,/, '') } });
+        } else if (!row.vision) userContent += '\n\n[An image was attached, but the currently selected model cannot view images. Apologize honestly, and tell the user that Gemini 3.8 Flash, GPT-6 Luna, Kimi K3 and Muse Spark 1.3 can view images if they switch models.]';
+      }
       else if (a && a.kind === 'image') userContent += '\n\n[An image was attached, but this web model cannot view images.]';
     }
-    messages.push({ role: 'user', content: userContent });
+    if (imageParts.length) messages.push({ role: 'user', content: [{ type: 'text', text: userContent }, ...imageParts] });
+    else messages.push({ role: 'user', content: userContent });
     const awareBlock = buildAwareness(body, row);
     if (awareBlock) messages[0].content += '\n\n' + awareBlock;
 
@@ -360,8 +368,11 @@ export default async function handler(req, res) {
       return json(res, 200, { ollama: true, models: rows.map((r) => r.id), openCode: false, busy: [], gpu: null, gpu_scheduler: null });
     if (method === 'GET' && path === '/api/models')
       return json(res, 200, { models: rows.map((r) => r.id), model_catalog: rows, pro: null });
-    if (method === 'GET' && path.startsWith('/api/reasoning/'))
-      return json(res, 200, { verified: false, vision: false, levels: ['default'] });
+    if (method === 'GET' && path.startsWith('/api/reasoning/')) {
+      const wanted = decodeURIComponent(path.slice('/api/reasoning/'.length));
+      const mrow = rows.find((r) => r.id === wanted);
+      return json(res, 200, { verified: !!mrow, vision: !!(mrow && mrow.vision), levels: ['default'] });
+    }
     if (method === 'GET' && path === '/api/luna')
       return json(res, 200, { name: 'Luna', model: 'Janna Cloud', members: LUNA_MEMBERS, selected: 'luna', unread: [], busy_sessions: [], notifications: [], goals: [], tasks: [] });
     if (method === 'GET' && path.startsWith('/api/luna/avatar/')) {

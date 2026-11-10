@@ -435,6 +435,7 @@ function renderPending(){
     tray.append(chip);
   }
 }
+function downscaleImageFile(file){return new Promise((resolve,reject)=>{const url=URL.createObjectURL(file);const img=new Image();img.onload=()=>{try{const scale=Math.min(1,1568/Math.max(img.naturalWidth||1,img.naturalHeight||1));const w=Math.max(1,Math.round(img.naturalWidth*scale)),h=Math.max(1,Math.round(img.naturalHeight*scale));const cv=document.createElement('canvas');cv.width=w;cv.height=h;const cx=cv.getContext('2d');cx.fillStyle='#ffffff';cx.fillRect(0,0,w,h);cx.drawImage(img,0,0,w,h);URL.revokeObjectURL(url);cv.toBlob(blob=>{if(!blob){reject(new Error('Could not shrink the image'));return}resolve(new File([blob],(file.name||'photo').replace(/\.[a-z0-9]+$/i,'')+'.jpg',{type:'image/jpeg'}))},'image/jpeg',0.85)}catch(err){URL.revokeObjectURL(url);reject(err)}};img.onerror=()=>{URL.revokeObjectURL(url);reject(new Error('Could not read the image'))};img.src=url})}
 function fileBase64(file){return new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result).split(',')[1]||'');reader.onerror=()=>reject(reader.error||new Error('Could not read the file'));reader.readAsDataURL(file)})}
 async function send(resumeRun=null){
   if(!resumeRun?.id)resumeRun=null;
@@ -1250,10 +1251,14 @@ async function runSearch(){const q=$('searchInput').value.trim();if(!q){renderSe
     try{
       if(image){
         if(/\.(svg|gif)$/i.test(name)){toast(name+' is not a PNG, JPEG, or WebP.');continue}
-        if(file.size>1200000){toast(name+' is over 1.2 MB.');continue}
+        let useFile=file,useName=name;
+        if(file.size>1200000){
+          if(window.__JANNA_WEB__){const small=await downscaleImageFile(file).catch(()=>null);if(!small){toast(name+' could not be shrunk to fit.');continue}useFile=small;useName=small.name}
+          else{toast(name+' is over 1.2 MB.');continue}
+        }
         if(state.pending.filter(item=>item.kind==='image').length>=2){toast('Attach at most 2 images.');continue}
-        const data=await fileBase64(file);
-        state.pending.push({kind:'image',name,data,file});
+        const data=await fileBase64(useFile);
+        state.pending.push({kind:'image',name:useName,data,file:useFile});
         if(!state.modelVision)toast(name+' stays on this PC. This model has not advertised vision, so its pixels will not be sent.');
       }else{
         if(file.size>180000){toast(name+' is over 180,000 characters. Put it in the project instead.');continue}
