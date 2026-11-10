@@ -67,10 +67,22 @@ class SettingsTests(unittest.TestCase):
         self.app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
         self.body = self.app[self.app.index('function drawSettings(){'):self.app.index("function speechTag(sample='')")]
 
-    def test_every_tab_is_reachable_and_has_a_body(self):
-        tabs = re.findall(r"\['([a-z]+)','[A-Z][a-z]+'\]", re.search(r'const tabs=\[(.*?)\];', self.body).group(1))
-        self.assertEqual(set(tabs), {'appearance', 'language', 'chat', 'reasoning', 'research', 'tools', 'privacy'})
-        self.assertEqual(set(re.findall(r"activeSettingsTab==='([a-z]+)'", self.body)), set(tabs))
+    def test_every_section_is_present_in_order_and_has_a_body(self):
+        # Settings is one stacked scrolling page (ChatGPT structure, 2026-11-10):
+        # every section heading appears in order and content follows each one.
+        heads = [(m.start(), m.group(1)) for m in re.finditer(r"el\('h3','','([^']+)'\)", self.body)]
+        expected = ['General', 'Themes', 'Personalization', 'How hard Janna works',
+                    'Checking answers', 'Web research', 'Tools and connections',
+                    'On-device control', 'Data controls']
+        positions = []
+        for name in expected:
+            match = [pos for pos, title in heads if title == name]
+            self.assertEqual(len(match), 1, name)
+            positions.append(match[0])
+        self.assertEqual(positions, sorted(positions))
+        for i, pos in enumerate(positions):
+            end = positions[i + 1] if i + 1 < len(positions) else len(self.body)
+            self.assertGreater(end - pos, 120, expected[i])
 
     def test_every_control_maps_to_a_setting_the_backend_accepts_and_uses(self):
         server = (ROOT / 'janna' / 'server.py').read_text(encoding='utf-8')

@@ -41,9 +41,13 @@ class Activity(unittest.TestCase):
     def setUp(self):
         self.app = (ROOT / 'web' / 'app.js').read_text('utf-8')
 
-    def test_raw_reasoning_starts_closed_but_stays_available(self):
-        self.assertIn("reason.className='reasoning-live';reason.open=false", self.app)
-        self.assertIn('Text from the model. This is not the answer.', self.app)
+    def test_raw_reasoning_panel_is_replaced_by_the_activity_chain(self):
+        # Her order (2026-11-10): no raw model-text panel anywhere; a run's
+        # thinking is the ChatGPT-style activity chain ("Thought for Ns").
+        self.assertNotIn('reasoning-live', self.app)
+        self.assertNotIn('Text from the model. This is not the answer.', self.app)
+        self.assertIn("chain.className='activity-chain'", self.app)
+        self.assertIn("'Thought for '+fmtDur(", self.app)
 
     def test_internal_noise_is_gone_from_the_feed(self):
         for noise in ('First response received', 'tokens/sec measured', 'Found ${sources.length} reference leads', 'providers unavailable', 'Live steps and verification results', 'Connection lost · reconnecting'):
