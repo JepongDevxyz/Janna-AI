@@ -151,6 +151,11 @@
       var dq = loadQueue(); if (dq[del.session_id]) { delete dq[del.session_id]; saveQueue(dq); }
       return Promise.resolve(jsonResponse({ ok: true }));
     }
+    if (path === '/api/sessions/clear' && method === 'POST') {
+      saveSessions([]);
+      saveQueue({});
+      return Promise.resolve(jsonResponse({ ok: true }));
+    }
     if (path.startsWith('/api/session/') && method === 'GET') {
       var sid = decodeURIComponent(path.slice('/api/session/'.length));
       var found = findSession(sid);

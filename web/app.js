@@ -260,7 +260,7 @@ function renderRecents(){
     const trash=el('button','recent-delete','×');trash.type='button';trash.title='Delete this conversation';trash.setAttribute('aria-label','Delete '+(s.title||'conversation'));
     trash.onclick=async()=>{
       if(state.busy)return toast('Stop the current task before deleting chats');
-      if(!window.confirm('Delete this conversation and its locally saved messages?'))return;
+      if(!trash.dataset.armed){trash.dataset.armed='1';trash.textContent='?';trash.classList.add('armed');setTimeout(()=>{if(trash.isConnected){delete trash.dataset.armed;trash.textContent='×';trash.classList.remove('armed')}},3000);return}
       try{
         await api('/api/sessions/delete',{session_id:s.id});
         state.sessions=state.sessions.filter(x=>x.id!==s.id);
@@ -1041,21 +1041,28 @@ function drawSettings(){
   const row=(title,description,child)=>{const node=el('div','settings-row'),texts=el('div','settings-row-description');texts.append(el('strong','',title),el('p','',description));node.append(texts);if(child)node.append(child);content.append(node);return node};
   const toggle=(name,key,description)=>{const box=el('input');box.type='checkbox';box.setAttribute('aria-label',name);box.checked=state.settings[key]===true;box.onchange=()=>persistSettings({[key]:box.checked});row(name,description,box)};
   const select=(name,key,description,values,wide=false)=>{const s=el('select','inline-input'+(wide?' settings-wide':''));for(const [label,value] of values)s.add(new Option(label,value));s.value=String(state.settings[key]??values[0][1]);s.onchange=async()=>{await persistSettings({[key]:s.value});if(key==='speed'){$('speed').value=s.value;state.speed=s.value}if(key==='effort'){$('effort').value=s.value;state.effort=s.value}if(key==='language')applyLocale()};row(name,description,s)};
+  const dangerBtn=(label,action)=>{const b=button(label,async()=>{if(b.dataset.armed){b.disabled=true;try{await action()}finally{b.disabled=false}}else{b.dataset.armed='1';b.textContent='Tap again to confirm';b.classList.add('armed');setTimeout(()=>{if(b.isConnected){delete b.dataset.armed;b.textContent=label;b.classList.remove('armed')}},3500)}},'text-btn danger-btn');return b};
   {
+    content.append(el('h3','','General'));
+    const appearance=el('select','inline-input');
+    for(const [label,value] of [['System','system'],['Light','light'],['Dark','dark']])appearance.add(new Option(label,value));
+    appearance.value=state.settings.appearance_mode||((state.settings.theme||'rose')==='velvet'?'dark':'light');
+    appearance.onchange=async()=>{const mode=appearance.value;const dark=mode==='dark'||(mode==='system'&&window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches);await persistSettings({appearance_mode:mode,theme:dark?'velvet':'rose'});drawSettings()};
+    row('Appearance','System follows your device. Light is the Rose theme; Dark is Velvet. Every color theme is under Themes below.',appearance);
+    const languageChoices=(state.languages&&state.languages.length?state.languages:[{id:'auto',name:'Automatic'},{id:'en',name:'English'},{id:'it',name:'Italiano'}]).map(item=>[item.name,item.id]);
+    const chosen=(state.languages||[]).find(item=>item.id===(state.settings.language||'auto'));
+    const note=chosen?.chrome==='full'?'Replies and menus are in English.':chosen?.chrome==='partial'?'Replies use this language. A few labels are translated; most menus stay in English.':'Replies use this language. Menus stay in English.';
+    select('Language','language',(state.settings.language||'auto')==='auto'?'Auto-detect: replies follow the language of your latest message. Menus stay in English.':note+' Code, paths, and technical names are never changed.',languageChoices,true);
+  }{
     const current=state.settings.theme||'rose';
     const grid=names=>{const box=el('div','theme-grid');for(const name of names){const palette=JANNA_THEMES[name];const choice=button(themeLabel(name),async()=>{await persistSettings({theme:name});drawSettings()},'theme-option'+(current===name?' selected':''));choice.setAttribute('aria-pressed',String(current===name));const swatch=el('span','theme-swatch');swatch.style.setProperty('--sample-side',palette[0]);swatch.style.setProperty('--sample-main',palette[1]);choice.prepend(swatch);box.append(choice)}return box};
     const names=Object.keys(JANNA_THEMES);
+    content.append(el('h3','','Themes'));
     content.append(el('h3','','Color themes'),grid(names.filter(name=>COLOR_THEMES[name])));
     content.append(el('h3','','Japanese-inspired themes'),grid(names.filter(name=>!COLOR_THEMES[name])));
     content.append(el('p','muted','The original Janna wave crest stays unchanged; dark themes place it on a clean ivory surface.'));
   }{
-    content.append(el('h3','','Language'));
-    const languageChoices=(state.languages&&state.languages.length?state.languages:[{id:'auto',name:'Automatic'},{id:'en',name:'English'},{id:'it',name:'Italiano'}]).map(item=>[item.name,item.id]);
-    const chosen=(state.languages||[]).find(item=>item.id===(state.settings.language||'auto'));
-    const note=chosen?.chrome==='full'?'Replies and menus are in English.':chosen?.chrome==='partial'?'Replies use this language. A few labels are translated; most menus stay in English.':'Replies use this language. Menus stay in English.';
-    select('Reply language','language',(state.settings.language||'auto')==='auto'?'Replies follow the language of your latest message. Menus stay in English.':note+' Code, paths, and technical names are never changed.',languageChoices,true);
-  }{
-    content.append(el('h3','','While you chat'));
+    content.append(el('h3','','Personalization'));
     select('Writing style','personality','Choose the tone of replies without changing evidence or technical rigor.',[['Precise','precise'],['Friendly','friendly'],['Technical','technical'],['Concise','concise'],['Craftsman','craftsman']]);
     toggle('Enter to send','send_on_enter','Use Enter to send; Shift+Enter inserts a line break.');
     toggle('Live work updates','show_progress','Show chronological source lookups, tool actions, and checks directly in chat.');
@@ -1082,7 +1089,8 @@ function drawSettings(){
     select('Live research','research_mode','Automatic searches when current information is useful. Every question sends a scrubbed search query each time. Offline never searches. Local source files are never uploaded.',[['Automatic','auto'],['Every question','always'],['Offline','off']]);
     toggle('Find source implementations','github_research','Search GitHub implementation references when a coding question benefits from current code.');
     row('When search is unavailable','Janna falls back to independent public sources, your GitHub sign-in, local project search, and clearly labelled saved references. No source result is presented as verified code.');
-    content.append(button('Open Research',()=>{closeDrawer();showView('research')},'text-btn'),button('Connect free search providers',()=>openDrawer('tools'),'text-btn'),button('Delete cached research',async()=>{if(!confirm('Delete saved public research leads from this PC?'))return;try{await api('/api/research/cache/clear',{});toast('Research cache cleared')}catch(e){toast(e.message)}},'text-btn'));
+    content.append(button('Open Research',()=>{closeDrawer();showView('research')},'text-btn'),button('Connect free search providers',()=>openDrawer('tools'),'text-btn'));
+    if(!window.__JANNA_WEB__)content.append(dangerBtn('Delete cached research',async()=>{try{await api('/api/research/cache/clear',{});toast('Research cache cleared')}catch(e){toast(e.message)}}));
   }{
     content.append(el('h3','','Tools and connections'));
     row('Plugins','Figma, Forge, and browser tools are turned on and off here, and only reach the model when enabled.');
@@ -1092,6 +1100,13 @@ function drawSettings(){
     row('Local model','Your chat model runs on your PC. Opt-in research requests connect to public search providers, so set research to Offline for confidential questions.');
     row('Project access','Run development tools in the selected project. Publishing requires a one-time local approval.');
     content.append(button('Manage paired phones',()=>openDrawer('remote'),'text-btn'));
+  }
+  if(window.__JANNA_WEB__){
+    content.append(el('h3','','Data controls'));
+    row('Your data in this browser','On the web edition, chats and settings are stored only in this browser. Janna does not train on your chats or upload them; only the message you send reaches the model.');
+    row('Export data','Download your chats and preferences as one JSON file.',button('Export',async()=>{try{const data=await api('/api/profile/export');const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));const a=el('a');a.href=url;a.download='janna_profile.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),5000);toast('Profile exported')}catch(e){toast(e.message)}},'text-btn'));
+    row('Import data','Bring chats and preferences from an exported Janna profile file.',button('Import',()=>openDrawer('profile'),'text-btn'));
+    row('Clear all chats','Delete every conversation stored in this browser. This cannot be undone.',dangerBtn('Clear all chats',async()=>{try{await api('/api/sessions/clear',{});state.sessions=[];closeDrawer();await newSession(state.project);await refreshBootstrap();toast('All chats cleared')}catch(e){toast(e.message)}}));
   }
 }
 function speechTag(sample=''){
@@ -1113,7 +1128,7 @@ function applyLocale(){
   if(hint)hint.lastChild.textContent=window.__JANNA_WEB__?'Cloud session · Chats stay in this browser':(it?'Sessione locale · File sul tuo computer':'Local session · Files stay on your machine');
   if(!state.busy){$('prompt').placeholder=it?'Chiedi qualcosa a Janna…':'Ask Janna anything…'}
 }
-async function refreshBootstrap(){const b=await api('/api/bootstrap');state.token=b.token||state.token;saveLocalToken();state.projects=b.projects||[];state.sessions=b.sessions||[];state.modelCatalog=b.model_catalog||[];state.library=b.library||[];state.clineInstalled=!!b.cline_installed;state.languages=b.languages||[];state.pro=b.pro||null;state.project=b.active_project||state.project;state.settings=b.settings||state.settings;applyLocale();refreshResearchSwitch();document.body.dataset.theme=state.settings.theme||'rose';syncDesktopChrome();state.speed=state.settings.speed||state.speed;state.effort=state.settings.effort||state.effort;$('speed').value=state.speed;$('effort').value=state.effort;renderModelOptions(b.models||[]);statusBadge({ollama:!!b.models?.length});renderRecents();$('workspaceLabel').textContent=selectedProject()?.name||'Workspace';$('projectQuickLabel').textContent=selectedProject()?.name||'Choose project';$('profileName').textContent=b.profile?.label||'Guest workspace';return b}
+async function refreshBootstrap(){const b=await api('/api/bootstrap');state.token=b.token||state.token;saveLocalToken();state.projects=b.projects||[];state.sessions=b.sessions||[];state.modelCatalog=b.model_catalog||[];state.library=b.library||[];state.clineInstalled=!!b.cline_installed;state.languages=b.languages||[];state.pro=b.pro||null;state.project=b.active_project||state.project;state.settings=b.settings||state.settings;applyLocale();refreshResearchSwitch();document.body.dataset.theme=state.settings.appearance_mode==='system'?(window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches?'velvet':'rose'):(state.settings.theme||'rose');syncDesktopChrome();state.speed=state.settings.speed||state.speed;state.effort=state.settings.effort||state.effort;$('speed').value=state.speed;$('effort').value=state.effort;renderModelOptions(b.models||[]);statusBadge({ollama:!!b.models?.length});renderRecents();$('workspaceLabel').textContent=selectedProject()?.name||'Workspace';$('projectQuickLabel').textContent=selectedProject()?.name||'Choose project';$('profileName').textContent=b.profile?.label||'Guest workspace';return b}
 async function initialConnection(){const r=await fetch('/api/remote-info',{signal:AbortSignal.timeout(15000)});if(!r.ok)throw new Error('Janna is not reachable from this device');const info=await r.json();state.remote=!!info.remote;if(state.remote){state.token=localStorage.getItem('janna-pair-token')||'';if(!state.token){$('pairDialog').showModal();return false}try{await refreshBootstrap()}catch(error){if(error.status!==403&&error.status!==401)throw error;$('pairDialog').showModal();return false}return true}await refreshBootstrap();return true}
 async function pairDevice(e){e.preventDefault();$('pairError').textContent='';try{const r=await fetch('/api/pair',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:$('pairCode').value,label:'iPhone / Janna PWA'})});const o=await r.json();if(!r.ok)throw new Error(o.error||'Pairing failed');state.token=o.token;saveLocalToken();$('pairDialog').close();await initializeWorkspace();workspaceReady=true}catch(err){$('pairError').textContent=err.message}}
 async function initializeWorkspace(){await refreshBootstrap();if(state.sessions.length)await openSession(state.sessions[0].id);else await newSession(state.project)}
