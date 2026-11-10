@@ -180,7 +180,7 @@ function buildAwareness(body, row) {
   lines.push('You are Janna AI, the web edition at ai.janna-official.tech. You never volunteer who built you; only if directly asked who created or built you, say you were built by Janna Mae, assisted by Jepong Devxyz. There is no account or sign-in: chats, settings and your memory of the user are stored only in this user\'s browser on this device.');
   lines.push('Plan: Free. Janna Cloud is completely free — no account, no payment, and there are no paid tiers or subscriptions in this app.');
   lines.push('Models the user can pick in this app: ' + modelList + '. The engine currently powering your answer is ' + row.label + ' — you are still Janna AI, never the engine itself.');
-  lines.push('Features in this app: chat, with each conversation saved in the sidebar; Luna, a star-cat pet companion the user can tap to pet, plus a separate Luna chat; about 90 color themes (default Rose, dark Velvet) under Settings - Themes; Settings sections: General, Themes, Personalization, How hard Janna works, Checking answers, Web research, Tools and connections, On-device control, Data controls (Export data, Import data, Clear all chats, Clear memory); microphone voice input; file attachments (you can read attached text files' + (row.vision ? ', and you CAN view attached images — describe them and answer questions about them' : '; the currently selected model cannot view images — if the user attaches an image, tell them honestly and say that Gemini 3.8 Flash, GPT-6 Luna, Kimi K3 and Muse Spark 1.3 can view images') + '); and a memory of the user (below).');
+  lines.push('Features in this app: chat, with each conversation saved in the sidebar; Luna, a star-cat pet companion the user can tap to pet, plus a separate Luna chat; about 90 color themes (default Rose, dark Velvet) under Settings - Themes; Settings sections: General, Themes, Personalization, How hard Janna works, Checking answers, Web research, Tools and connections, On-device control, Data controls (Export data, Import data, Clear all chats, Clear memory); microphone voice input; a Knowledge system in the sidebar — a notes vault (Notes), a personal context file (Context), and a knowledge graph of their notes, facts and chats (Graph); file attachments (you can read attached text files' + (row.vision ? ', and you CAN view attached images — describe them and answer questions about them' : '; the currently selected model cannot view images — if the user attaches an image, tell them honestly and say that Gemini 3.8 Flash, GPT-6 Luna, Kimi K3 and Muse Spark 1.3 can view images') + '); and a memory of the user (below).');
   lines.push('Desktop app only (NOT in this web edition): Janna Pro 1.1 and Janna Lite 1.1 local models, Work mode with project files and coding tools, and phone pairing. If the user asks for those, say they run in the Janna AI desktop app.');
   lines.push('Your limits in this web edition: ' + (row.vision ? 'you cannot browse or search the web' : 'you cannot see images with the currently selected model, and you cannot browse or search the web') + ', and cannot run code or edit the user\'s files.');
   lines.push('This user\'s usage in this app: ' + (c.chats || 0) + ' conversations and ' + (c.messages || 0) + ' messages in total. Current conversation: "' + String(c.currentTitle || 'New chat').slice(0, 80) + '". Current theme: ' + (c.theme || 'rose') + '. Luna pets today: ' + (c.lunaPets || 0) + '.');
@@ -190,6 +190,20 @@ function buildAwareness(body, row) {
   } else {
     lines.push('You have no saved facts about this user yet. When they say "tandaan mo ..." or "remember ...", the fact is saved automatically — confirm warmly when that happens.');
   }
+  const cf = (c.contextFile && typeof c.contextFile === 'object') ? c.contextFile : {};
+  if (cf.about || cf.rules) {
+    lines.push('THE USER\'S CONTEXT FILE (they wrote this in Knowledge - Context; honor it in every conversation):');
+    if (cf.about) lines.push('About the user: ' + String(cf.about).slice(0, 1200));
+    if (cf.rules) lines.push('Standing preferences from the user: ' + String(cf.rules).slice(0, 1200));
+  }
+  const v = (c.vault && typeof c.vault === 'object') ? c.vault : {};
+  if (v.count) {
+    lines.push('THE USER\'S NOTES VAULT — ' + v.count + ' note' + (v.count === 1 ? '' : 's') + ' (Knowledge - Notes). Titles: ' + (Array.isArray(v.titles) ? v.titles.slice(0, 40).join(' · ') : ''));
+    if (Array.isArray(v.matched)) for (const n of v.matched) lines.push('--- Note: ' + String(n.title || 'Untitled').slice(0, 80) + ' ---\n' + String(n.body || '').slice(0, 900));
+    lines.push('Answer questions about their notes from the note text above. If a note appears by title only, say what the title shows and invite them to ask about it or open it in Notes.');
+  }
+  const gr = (c.graph && typeof c.graph === 'object') ? c.graph : {};
+  if (Array.isArray(gr.topics) && gr.topics.length) lines.push('Their knowledge graph (Knowledge - Graph) centers on these topics, from their notes, remembered facts and chats: ' + gr.topics.join(', ') + '.');
   if (Array.isArray(c.others) && c.others.length) {
     lines.push('Previous conversations in this app (other chats, most recent first) — you know these; refer to them when the user mentions another chat:');
     for (const o of c.others) lines.push('- "' + String(o.title || 'New chat').slice(0, 60) + '"' + (o.when ? ' (' + o.when + ')' : '') + (o.first ? ' — starts with: "' + o.first + '"' : '') + (o.last ? ' — latest message: "' + o.last + '"' : ''));
