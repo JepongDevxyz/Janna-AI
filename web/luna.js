@@ -60,7 +60,7 @@
       var s = document.createElement('span');
       s.className = 'luna-spark';
       s.textContent = i % 2 ? '♥' : '✦';
-      s.style.left = (r.left + r.width / 2 + (Math.random() * 56 - 28)) + 'px';
+      s.style.left = Math.max(4, Math.min(window.innerWidth - 22, r.left + r.width / 2 + (Math.random() * 56 - 28))) + 'px';
       s.style.top = (r.top - 4) + 'px';
       s.style.animationDelay = (Math.random() * 0.15) + 's';
       document.body.appendChild(s);
