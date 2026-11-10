@@ -1279,3 +1279,120 @@ async function recoverConnection(){
 async function init(){bind();window.refreshLuna?.();try{document.body.dataset.theme=localStorage.getItem('janna-theme')||'rose';syncDesktopChrome()}catch{}await recoverConnection();setInterval(recoverConnection,10000);if('serviceWorker' in navigator&&location.protocol==='https:'){navigator.serviceWorker.register('/sw.js').catch(()=>{})}}
 init();
 
+// ---- Voice conversation mode (ChatGPT-style talk loop) ----
+// Tap the waveform button: Janna listens, answers in the chat, and speaks the
+// answer back, then listens again. Mic + speech are the browser's own engines.
+const voiceTalk = { active: false, phase: 'idle', muted: false, recog: null, watch: null, restart: null, quiet: 0 };
+function voiceOverlay() {
+  let ov = document.getElementById('voiceOverlay');
+  if (ov) return ov;
+  ov = document.createElement('div');
+  ov.className = 'voice-overlay'; ov.id = 'voiceOverlay'; ov.dataset.phase = 'idle';
+  ov.innerHTML = '<button class="voice-orb" id="voiceOrb" type="button" aria-label="Voice orb"><i></i><i></i><i></i><i></i><i></i></button><div class="voice-caption" id="voiceCaption">Nakikinig ako…</div><div class="voice-sub">Kausapin mo lang si Janna — sasagot siya nang pasalita.</div><div class="voice-controls"><button class="voice-ctl" id="voiceMuteBtn" type="button" title="Mute microphone" aria-label="Mute microphone"><svg><use href="#i-mic"/></svg></button><button class="voice-ctl close" id="voiceCloseBtn" type="button" title="End voice chat" aria-label="End voice chat"><svg><use href="#i-close"/></svg></button></div>';
+  document.body.appendChild(ov);
+  ov.querySelector('#voiceCloseBtn').onclick = () => voiceClose();
+  ov.querySelector('#voiceMuteBtn').onclick = () => voiceToggleMute();
+  ov.querySelector('#voiceOrb').onclick = () => voiceOrbTap();
+  return ov;
+}
+function voiceSetPhase(phase, caption) {
+  voiceTalk.phase = phase;
+  const ov = document.getElementById('voiceOverlay'); if (!ov) return;
+  ov.dataset.phase = phase;
+  if (caption != null) ov.querySelector('#voiceCaption').textContent = caption;
+}
+function voiceClean(text) {
+  return String(text || '').replace(/```[\s\S]*?```/g, ' [code block omitted] ').replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/[<>{}*_#~`>]/g, '').replace(/\s+/g, ' ').trim().slice(0, 1700);
+}
+function voiceTalkSpeak(text) {
+  const clean = voiceClean(text);
+  if (!clean || !('speechSynthesis' in window)) { voiceSetPhase('idle', 'Nasa chat ang sagot ko — hindi available ang boses dito.'); return; }
+  try { window.speechSynthesis.cancel(); } catch {}
+  const utter = new SpeechSynthesisUtterance(clean);
+  utter.lang = speechTag(clean); utter.rate = 1.05;
+  utter.onend = () => { if (voiceTalk.active && !voiceTalk.muted) voiceListen(); };
+  utter.onerror = () => { if (voiceTalk.active && !voiceTalk.muted) voiceListen(); };
+  voiceSetPhase('speaking', clean.length > 220 ? clean.slice(0, 220) + '…' : clean);
+  try { window.speechSynthesis.speak(utter); } catch { voiceSetPhase('idle', 'Nabigo ang boses — nasa chat ang sagot ko.'); }
+}
+function voiceExtract(el) {
+  const clone = el.cloneNode(true);
+  clone.querySelectorAll('.activity-chain,.message-actions,.work-stream,pre,button,details').forEach(n => n.remove());
+  return clone.textContent.replace(/\s+/g, ' ').trim();
+}
+function voiceWatchReply(beforeCount) {
+  const started = Date.now();
+  clearInterval(voiceTalk.watch);
+  voiceTalk.watch = setInterval(() => {
+    if (!voiceTalk.active) { clearInterval(voiceTalk.watch); return; }
+    if (state.busy) return;
+    clearInterval(voiceTalk.watch);
+    const els = document.querySelectorAll('.message.assistant');
+    const el = els[els.length - 1];
+    if (el && els.length > beforeCount) voiceTalkSpeak(voiceExtract(el));
+    else voiceTalkSpeak('Tapos na — nasa chat ang sagot ko.');
+  }, 700);
+  setTimeout(() => { clearInterval(voiceTalk.watch); }, 125000);
+}
+function voiceSubmit(text) {
+  const before = document.querySelectorAll('.message.assistant').length;
+  voiceSetPhase('thinking', '“' + text + '”');
+  $('prompt').value = text; syncSendState();
+  send();
+  voiceWatchReply(before);
+}
+function voiceListen() {
+  if (!voiceTalk.active || voiceTalk.muted) return;
+  const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!Rec) { voiceSetPhase('idle', 'Hindi suportado ng browser na ito ang pakikinig. Mag-type na lang o isara ito.'); return; }
+  try { voiceTalk.recog?.stop(); } catch {}
+  const recog = new Rec(); voiceTalk.recog = recog;
+  recog.lang = speechTag(); recog.interimResults = true; recog.continuous = false; recog.maxAlternatives = 1;
+  voiceSetPhase('listening', 'Nakikinig ako… magsalita ka lang.');
+  recog.onresult = e => {
+    let interim = '', finalText = '';
+    for (const r of e.results) { if (r.isFinal) finalText += r[0].transcript; else interim += r[0].transcript; }
+    if (interim) voiceSetPhase('listening', interim);
+    if (finalText.trim()) { voiceTalk.quiet = 0; try { recog.stop(); } catch {} voiceSubmit(finalText.trim()); }
+  };
+  recog.onerror = e => {
+    const err = String(e.error || '');
+    if (err === 'not-allowed' || err === 'service-not-allowed') { voiceSetPhase('idle', 'Hindi ako makarinig — i-allow ang microphone para kay Janna, tapos subukan ulit.'); voiceTalk.recog = null; }
+    else if (err === 'no-speech') { voiceTalk.quiet++; }
+  };
+  recog.onend = () => {
+    if (!voiceTalk.active || voiceTalk.muted || voiceTalk.phase !== 'listening') return;
+    if (voiceTalk.quiet >= 3) { voiceSetPhase('idle', 'Wala akong marinig — i-tap ang bilog para subukan ulit.'); return; }
+    clearTimeout(voiceTalk.restart);
+    voiceTalk.restart = setTimeout(() => voiceListen(), 350);
+  };
+  try { recog.start(); } catch {}
+}
+function voiceOrbTap() {
+  if (voiceTalk.phase === 'speaking') { try { window.speechSynthesis.cancel(); } catch {} voiceListen(); }
+  else if (voiceTalk.phase === 'listening') { try { voiceTalk.recog?.stop(); } catch {} voiceSetPhase('idle', 'Na-pause — i-tap ang bilog para magpatuloy.'); }
+  else if (voiceTalk.phase === 'idle' && !voiceTalk.muted) voiceListen();
+}
+function voiceToggleMute() {
+  voiceTalk.muted = !voiceTalk.muted;
+  const btn = document.getElementById('voiceMuteBtn'); if (btn) btn.classList.toggle('muted', voiceTalk.muted);
+  if (voiceTalk.muted) { try { voiceTalk.recog?.stop(); } catch {} try { window.speechSynthesis.cancel(); } catch {} voiceSetPhase('idle', 'Naka-mute ang mic — i-tap ang mic para magsalita ulit.'); }
+  else voiceListen();
+}
+function voiceOpen() {
+  voiceOverlay();
+  voiceTalk.active = true; voiceTalk.muted = false; voiceTalk.quiet = 0;
+  document.body.classList.add('voice-open');
+  const btn = document.getElementById('voiceMuteBtn'); if (btn) btn.classList.remove('muted');
+  voiceListen();
+}
+function voiceClose() {
+  voiceTalk.active = false;
+  clearInterval(voiceTalk.watch); clearTimeout(voiceTalk.restart);
+  try { voiceTalk.recog?.stop(); } catch {}
+  try { window.speechSynthesis.cancel(); } catch {}
+  document.body.classList.remove('voice-open');
+  document.getElementById('voiceOverlay')?.remove();
+}
+document.getElementById('voiceModeBtn')?.addEventListener('click', voiceOpen);
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && voiceTalk.active) voiceClose(); });
