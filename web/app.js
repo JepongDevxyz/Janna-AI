@@ -1293,7 +1293,7 @@ function voiceOverlay() {
   if (ov) return ov;
   ov = document.createElement('div');
   ov.className = 'voice-overlay'; ov.id = 'voiceOverlay'; ov.dataset.phase = 'idle';
-  ov.innerHTML = '<button class="voice-orb" id="voiceOrb" type="button" aria-label="Voice orb"><i></i><i></i><i></i><i></i><i></i></button><div class="voice-caption" id="voiceCaption">Nakikinig ako…</div><div class="voice-sub">Kausapin mo lang si Janna — sasagot siya nang pasalita.</div><div class="voice-controls"><button class="voice-ctl" id="voiceMuteBtn" type="button" title="Mute microphone" aria-label="Mute microphone"><svg><use href="#i-mic"/></svg></button><button class="voice-ctl close" id="voiceCloseBtn" type="button" title="End voice chat" aria-label="End voice chat"><svg><use href="#i-close"/></svg></button></div>';
+  ov.innerHTML = '<button class="voice-orb" id="voiceOrb" type="button" aria-label="Voice orb"><i></i><i></i><i></i><i></i><i></i></button><div class="voice-caption" id="voiceCaption">I’m listening…</div><div class="voice-sub">Just talk to Janna — she’ll answer out loud.</div><div class="voice-controls"><button class="voice-ctl" id="voiceMuteBtn" type="button" title="Mute microphone" aria-label="Mute microphone"><svg><use href="#i-mic"/></svg></button><button class="voice-ctl close" id="voiceCloseBtn" type="button" title="End voice chat" aria-label="End voice chat"><svg><use href="#i-close"/></svg></button></div>';
   document.body.appendChild(ov);
   ov.querySelector('#voiceCloseBtn').onclick = () => voiceClose();
   ov.querySelector('#voiceMuteBtn').onclick = () => voiceToggleMute();
@@ -1311,7 +1311,7 @@ function voiceClean(text) {
 }
 function voiceTalkSpeak(text) {
   const clean = voiceClean(text);
-  if (!clean || !('speechSynthesis' in window)) { voiceSetPhase('idle', 'Nasa chat ang sagot ko — hindi available ang boses dito.'); return; }
+  if (!clean || !('speechSynthesis' in window)) { voiceSetPhase('idle', 'My answer is in the chat — voice isn’t available here.'); return; }
   try { window.speechSynthesis.cancel(); } catch {}
   // Speak in sentence-sized chunks: one long utterance can silently never
   // start (or never end) in Chrome/Android TTS, which used to hang the whole
@@ -1368,11 +1368,11 @@ function voiceSubmit(text) {
 function voiceListen() {
   if (!voiceTalk.active || voiceTalk.muted) return;
   const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!Rec) { voiceSetPhase('idle', 'Hindi suportado ng browser na ito ang pakikinig. Mag-type na lang o isara ito.'); return; }
+  if (!Rec) { voiceSetPhase('idle', 'This browser doesn’t support listening. Just type, or close this.'); return; }
   try { voiceTalk.recog?.stop(); } catch {}
   const recog = new Rec(); voiceTalk.recog = recog;
   recog.lang = voiceTalk.langOverride || speechTag(); recog.interimResults = true; recog.continuous = false; recog.maxAlternatives = 1;
-  voiceSetPhase('listening', 'Nakikinig ako… magsalita ka lang.');
+  voiceSetPhase('listening', 'I’m listening… go ahead.');
   recog.onresult = e => {
     let interim = '', finalText = '';
     for (const r of e.results) { if (r.isFinal) finalText += r[0].transcript; else interim += r[0].transcript; }
@@ -1382,7 +1382,7 @@ function voiceListen() {
   recog.onerror = e => {
     const err = String(e.error || '');
     if (err === 'language-not-supported' && !voiceTalk.langRetried) { voiceTalk.langRetried = true; voiceTalk.langOverride = 'en-US'; voiceTalk.errStrikes = 0; }
-    else if (err === 'not-allowed' || err === 'service-not-allowed') { voiceSetPhase('idle', 'Hindi ako makarinig — i-allow ang microphone para kay Janna, tapos subukan ulit.'); voiceTalk.recog = null; voiceTalk.errStrikes = 0; }
+    else if (err === 'not-allowed' || err === 'service-not-allowed') { voiceSetPhase('idle', 'I can’t hear you — allow the microphone for Janna, then try again.'); voiceTalk.recog = null; voiceTalk.errStrikes = 0; }
     else if (err === 'no-speech') { voiceTalk.quiet++; }
     else if (err) { voiceTalk.errStrikes = (voiceTalk.errStrikes || 0) + 1; voiceTalk.errKind = err; }
   };
@@ -1390,21 +1390,21 @@ function voiceListen() {
     if (voiceTalk.recog !== recog) return;
     if (!voiceTalk.active || voiceTalk.muted || voiceTalk.phase !== 'listening') return;
     clearTimeout(voiceTalk.restart);
-    if ((voiceTalk.errStrikes || 0) >= 2) { const k = voiceTalk.errKind || ''; voiceTalk.errStrikes = 0; voiceTalk.stopped = true; voiceSetPhase('idle', k === 'network' ? 'Hindi maabot ng pandinig ko ang speech service — mahina o walang internet na abot nito. I-tap ang bilog para subukan ulit, o mag-type na lang.' : 'May problema sa pakikinig ko (' + k + ') — i-tap ang bilog para subukan ulit.'); return; }
-    if (voiceTalk.quiet >= 3) { voiceTalk.stopped = true; voiceSetPhase('idle', 'Wala akong marinig — i-tap ang bilog para subukan ulit.'); return; }
+    if ((voiceTalk.errStrikes || 0) >= 2) { const k = voiceTalk.errKind || ''; voiceTalk.errStrikes = 0; voiceTalk.stopped = true; voiceSetPhase('idle', k === 'network' ? 'My hearing can’t reach the speech service — the internet it needs is weak or unavailable. Tap the circle to try again, or just type.' : 'Something’s wrong with my listening (' + k + ') — tap the circle to try again.'); return; }
+    if (voiceTalk.quiet >= 3) { voiceTalk.stopped = true; voiceSetPhase('idle', 'I can’t hear anything — tap the circle to try again.'); return; }
     voiceTalk.restart = setTimeout(() => { if (!voiceTalk.stopped) voiceListen(); }, 350);
   };
   try { recog.start(); } catch {}
 }
 function voiceOrbTap() {
   if (voiceTalk.phase === 'speaking') { clearTimeout(voiceTalk.chunkTimer); try { window.speechSynthesis.cancel(); } catch {} voiceListen(); }
-  else if (voiceTalk.phase === 'listening') { try { voiceTalk.recog?.stop(); } catch {} voiceSetPhase('idle', 'Na-pause — i-tap ang bilog para magpatuloy.'); }
+  else if (voiceTalk.phase === 'listening') { try { voiceTalk.recog?.stop(); } catch {} voiceSetPhase('idle', 'Paused — tap the circle to continue.'); }
   else if (voiceTalk.phase === 'idle' && !voiceTalk.muted) { voiceTalk.stopped = false; voiceListen(); }
 }
 function voiceToggleMute() {
   voiceTalk.muted = !voiceTalk.muted;
   const btn = document.getElementById('voiceMuteBtn'); if (btn) btn.classList.toggle('muted', voiceTalk.muted);
-  if (voiceTalk.muted) { clearTimeout(voiceTalk.chunkTimer); try { voiceTalk.recog?.stop(); } catch {} try { window.speechSynthesis.cancel(); } catch {} voiceSetPhase('idle', 'Naka-mute ang mic — i-tap ang mic para magsalita ulit.'); }
+  if (voiceTalk.muted) { clearTimeout(voiceTalk.chunkTimer); try { voiceTalk.recog?.stop(); } catch {} try { window.speechSynthesis.cancel(); } catch {} voiceSetPhase('idle', 'Mic is muted — tap the mic to talk again.'); }
   else { voiceTalk.stopped = false; voiceListen(); }
 }
 function voiceOpen() {
@@ -1421,7 +1421,7 @@ function voiceOpen() {
   // without ever showing the prompt. getUserMedia shows the real prompt and
   // gives a definite answer we can act on.
   if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-    voiceSetPhase('idle', 'Sandali — hinihingi ko ang permiso sa microphone…');
+    voiceSetPhase('idle', 'One moment — asking for microphone permission…');
     navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
       stream.getTracks().forEach(t => { try { t.stop(); } catch {} });
       if (voiceTalk.active && !voiceTalk.muted) voiceListen();
@@ -1429,7 +1429,7 @@ function voiceOpen() {
       if (!voiceTalk.active) return;
       if (err && err.name === 'NotFoundError') { voiceListen(); return; }
       voiceTalk.stopped = true;
-      voiceSetPhase('idle', 'Hindi pinayagan ang microphone. Para ayusin: i-tap ang lock icon sa address bar → Permissions → Microphone → Allow, tapos isara at buksan ulit ito.');
+      voiceSetPhase('idle', 'The microphone wasn’t allowed. To fix it: tap the lock icon in the address bar → Permissions → Microphone → Allow, then close and reopen this.');
     });
   } else voiceListen();
 }
