@@ -54,6 +54,36 @@
   // Observe the run stream as it flows past and persist the exchange the
   // moment the terminal frame arrives — synchronously, before the app
   // re-reads the session and re-renders the conversation.
+  // --- queued follow-up messages (the app's "queue for the next step") ---
+  var QUEUE_KEY = 'janna-web-queue-v1';
+  var draining = {};
+  function loadQueue() { try { return JSON.parse(localStorage.getItem(QUEUE_KEY) || '{}'); } catch { return {}; } }
+  function saveQueue(q) { try { localStorage.setItem(QUEUE_KEY, JSON.stringify(q)); } catch { /* ignore */ } }
+  function queueFor(sid) { var q = loadQueue(); return Array.isArray(q[sid]) ? q[sid] : []; }
+  function scheduleDrain(sessionId) { setTimeout(function () { drainQueue(sessionId); }, 900); }
+  function drainQueue(sessionId) {
+    if (!sessionId || draining[sessionId]) return;
+    var items = queueFor(sessionId);
+    if (!items.length) return;
+    var sess = findSession(sessionId);
+    if (!sess) { var q0 = loadQueue(); delete q0[sessionId]; saveQueue(q0); return; }
+    draining[sessionId] = true;
+    var item = items[0];
+    var q = loadQueue(); q[sessionId] = items.slice(1); if (!q[sessionId].length) delete q[sessionId]; saveQueue(q);
+    var body = { session_id: sessionId, prompt: item.text, mode: 'chat', messages: (sess.messages || []).filter(function (m) { return m && (m.role === 'user' || m.role === 'assistant'); }).map(function (m) { return { role: m.role, content: m.content }; }) };
+    if (sess.purpose === 'luna') body.companion = 'luna';
+    window.fetch('/api/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      .then(function (r) { return r.text(); })
+      .catch(function () { /* the tap records errors as exchanges */ })
+      .then(function () {
+        draining[sessionId] = false;
+        try {
+          if (typeof state !== 'undefined' && state.session === sessionId && !state.busy && typeof openSession === 'function') openSession(sessionId);
+        } catch { /* app not ready */ }
+        if (queueFor(sessionId).length) scheduleDrain(sessionId);
+      });
+  }
+
   function tapRunStream(response, sessionId, prompt) {
     if (!response.body || typeof TransformStream === 'undefined') return response;
     var decoder = new TextDecoder();
@@ -71,7 +101,7 @@
               try {
                 var event = JSON.parse(lines[i].slice(5).trim());
                 var p = event.payload || event;
-                if (p.type === 'done') { appendExchange(sessionId, prompt, typeof p.text === 'string' ? p.text : '', ''); recorded = true; }
+                if (p.type === 'done') { appendExchange(sessionId, prompt, typeof p.text === 'string' ? p.text : '', ''); recorded = true; if (queueFor(sessionId).length) scheduleDrain(sessionId); }
                 else if (p.type === 'error') { appendExchange(sessionId, prompt, '', p.message || 'Run failed'); recorded = true; }
                 else if (p.type === 'recovery') { appendExchange(sessionId, prompt, '', p.message || 'Outcome unknown'); recorded = true; }
               } catch { /* partial frame */ }
@@ -116,13 +146,14 @@
       var del = {};
       try { del = JSON.parse((init && init.body) || '{}'); } catch { /* empty */ }
       saveSessions(loadSessions().filter(function (s) { return s.id !== del.session_id; }));
+      var dq = loadQueue(); if (dq[del.session_id]) { delete dq[del.session_id]; saveQueue(dq); }
       return Promise.resolve(jsonResponse({ ok: true }));
     }
     if (path.startsWith('/api/session/') && method === 'GET') {
       var sid = decodeURIComponent(path.slice('/api/session/'.length));
       var found = findSession(sid);
       if (!found) return Promise.resolve(jsonResponse({ error: 'Conversation not found.' }, 404));
-      return Promise.resolve(jsonResponse(Object.assign({}, found, { runs: [], inputs: [], goals: [] })));
+      return Promise.resolve(jsonResponse(Object.assign({}, found, { runs: [], inputs: queueFor(sid), goals: [] })));
     }
     if (path === '/api/kage/chat' && method === 'POST') {
       var kn = Math.floor(Date.now() / 1000);
@@ -167,6 +198,26 @@
     // --- saved-run activity: web runs are not persisted server-side ---
     if (/^\/api\/runs\/[^/]+\/activity$/.test(path) && method === 'GET')
       return Promise.resolve(jsonResponse({ state: 'completed', events: [] }));
+
+    // --- queued follow-ups: store locally; the tap drains them after the run ---
+    if (path === '/api/run/update' && method === 'POST') {
+      var qb = {};
+      try { qb = JSON.parse((init && init.body) || '{}'); } catch { /* empty */ }
+      if (!qb.session_id || !qb.prompt) return Promise.resolve(jsonResponse({ error: 'Queued message needs a session and text.' }, 400));
+      var qq = loadQueue(); var list = Array.isArray(qq[qb.session_id]) ? qq[qb.session_id] : [];
+      list.push({ id: 'q-' + Math.random().toString(36).slice(2, 9), text: String(qb.prompt), state: 'queued' });
+      qq[qb.session_id] = list; saveQueue(qq);
+      return Promise.resolve(jsonResponse({ queued: list.length }));
+    }
+    if (path === '/api/run/input/edit' && method === 'POST') {
+      var eb = {};
+      try { eb = JSON.parse((init && init.body) || '{}'); } catch { /* empty */ }
+      var eq = loadQueue(); var elist = Array.isArray(eq[eb.session_id]) ? eq[eb.session_id] : [];
+      if (eb.text == null) elist = elist.filter(function (x) { return x.id !== eb.input_id; });
+      else elist.forEach(function (x) { if (x.id === eb.input_id) x.text = String(eb.text); });
+      eq[eb.session_id] = elist; saveQueue(eq);
+      return Promise.resolve(jsonResponse({ ok: true }));
+    }
 
     // --- run: inject local history; tap the stream to persist the exchange ---
     if (path === '/api/run' && method === 'POST') {

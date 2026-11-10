@@ -74,7 +74,7 @@ async function* openAIStream({ baseUrl, keys, model, messages, extraHeaders = {}
   for (const key of pool) {
     let response;
     try {
-      response = await fetch(baseUrl + '/chat/completions', {
+      response = await fetch(baseUrl + '/chat/completions', { signal: AbortSignal.timeout(180000),
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -120,7 +120,7 @@ async function* openAIStream({ baseUrl, keys, model, messages, extraHeaders = {}
 }
 
 async function pollinationsText({ model, messages }) {
-  const response = await fetch('https://text.pollinations.ai/', {
+  const response = await fetch('https://text.pollinations.ai/', { signal: AbortSignal.timeout(180000),
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ model, messages }),
@@ -175,6 +175,8 @@ async function readBody(req) {
 }
 
 // ---------- the run stream (canonical schema v1, same as desktop) ----------
+const activeRuns = new Map();
+
 async function handleRun(req, res) {
   const body = await readBody(req);
   const sessionId = String(body.session_id || 'web-session');
@@ -183,6 +185,24 @@ async function handleRun(req, res) {
   const row = rows.find((r) => r.id === body.model) || rows[0];
   const runId = 'run-' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
   let seq = 0;
+  let stopped = false;
+  let stopResolve = null;
+  let resEnded = false;
+  let fullText = '';
+  const stopWait = new Promise((r) => { stopResolve = r; });
+  // Ending the response cannot wait for the provider: an async generator's
+  // return() only lands after its pending await settles, so a stop during a
+  // slow upstream call must close the stream directly from here.
+  const finishStopped = () => {
+    if (resEnded) return;
+    stopped = true;
+    try { emit({ type: 'done', text: fullText, model_used: row.id, run_state: 'stopped', metrics: {} }); } catch { /* closed */ }
+    resEnded = true;
+    clearInterval(keepalive);
+    try { res.end(); } catch { /* closed */ }
+    if (stopResolve) stopResolve();
+  };
+  activeRuns.set(runId, { requestStop() { finishStopped(); } });
 
   res.statusCode = 200;
   res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
@@ -192,6 +212,7 @@ async function handleRun(req, res) {
   if (typeof res.flushHeaders === 'function') res.flushHeaders();
 
   const emit = (payload) => {
+    if (resEnded) return;
     seq += 1;
     const event = { schema_version: 1, session_id: sessionId, run_id: runId, seq, event_id: runId + ':' + seq, payload };
     res.write('id: ' + event.event_id + '\ndata: ' + JSON.stringify(event) + '\n\n');
@@ -221,11 +242,17 @@ async function handleRun(req, res) {
     let full = '';
     let firstAt = 0;
     const started = Date.now();
-    for await (const chunk of providerStream(row, messages)) {
+    const streamIt = providerStream(row, messages)[Symbol.asyncIterator]();
+    while (true) {
+      const step = await Promise.race([streamIt.next(), stopWait.then(() => ({ stopped: true }))]);
+      if (stopped || step.stopped || step.done) { try { await streamIt.return(); } catch { /* already closed */ } break; }
+      const chunk = step.value;
       if (!firstAt) { firstAt = Date.now(); emit({ type: 'first_token', milliseconds: firstAt - started }); }
       full += chunk;
+      fullText = full;
       emit({ type: 'delta', text: chunk });
     }
+    if (stopped) return; // finishStopped already closed the stream
     if (!full.trim()) throw new Error('The model returned an empty answer. Try again.');
     const seconds = Math.max(0.001, (Date.now() - started) / 1000);
     emit({
@@ -235,8 +262,9 @@ async function handleRun(req, res) {
   } catch (e) {
     emit({ type: 'error', message: String(e && e.message || e || 'Run failed') });
   } finally {
+    activeRuns.delete(runId);
     clearInterval(keepalive);
-    res.end();
+    if (!resEnded) { resEnded = true; try { res.end(); } catch { /* closed */ } }
   }
 }
 
@@ -284,6 +312,12 @@ export default async function handler(req, res) {
       return json(res, 200, { profile: { id: 'web-guest', label: 'Guest workspace', kind: 'guest' }, discord_available: false, redirect_uri: '' });
     if (method === 'POST' && path === '/api/run') return await handleRun(req, res);
     if (method === 'POST' && path === '/api/kage/select') return json(res, 200, { ok: true });
+    if (method === 'POST' && path === '/api/stop') {
+      const b = await readBody(req);
+      const active = activeRuns.get(String(b.run_id || ''));
+      if (active) { active.requestStop(); return json(res, 200, { stop_requested: true, message: 'Stop requested. The current run is ending.' }); }
+      return json(res, 200, { stop_requested: false, message: 'That run already finished.' });
+    }
 
     if (path.startsWith('/api/')) return desktopOnly(res, 'This feature');
     return json(res, 404, { error: 'Not found' });
