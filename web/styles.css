@@ -473,3 +473,10 @@ body[data-theme='moon']{--paper:#fff8fb;--sidebar:#fde6ef;--hover:#f9d6e5;--line
 .message-action{border:0!important;background:transparent!important;box-shadow:none!important}
 
 body:has(#drawer:not([hidden])) .luna-bubble{opacity:0!important;pointer-events:none!important}
+
+/* Markdown tables (ChatGPT parity) */
+.md-table-wrap{overflow-x:auto;margin:10px 0;border:1px solid var(--line);border-radius:12px;background:var(--card)}
+.md-table{border-collapse:collapse;width:100%;font-size:.92em}
+.md-table th,.md-table td{padding:8px 12px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+.md-table thead th{font-weight:700;border-bottom:1.5px solid var(--line);white-space:nowrap}
+.md-table tbody tr:last-child td{border-bottom:none}

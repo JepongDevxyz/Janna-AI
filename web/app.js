@@ -66,9 +66,26 @@ function formatMarkdown(value){
   };
   const out=[],paragraph=[],items=[];
   function flush(){if(paragraph.length){out.push('<p>'+paragraph.map(inline).join('<br>')+'</p>');paragraph.length=0}if(items.length){out.push('<ul>'+items.map(v=>'<li>'+inline(v)+'</li>').join('')+'</ul>');items.length=0}}
+  // Markdown tables: a header row containing | followed by a --- separator row.
+  const tables=[];
+  const splitCells=r=>{let s=r.trim();if(s.startsWith('|'))s=s.slice(1);if(s.endsWith('|'))s=s.slice(0,-1);return s.split('|').map(c=>c.trim())};
+  const isSep=r=>{if(!r.includes('-'))return false;const cells=splitCells(r);return cells.length>0&&cells.every(c=>/^:?-{1,}:?$/.test(c))};
+  for(let li=0;li<lines.length;li++){
+    const row=lines[li];
+    if(row.includes('|')&&li+1<lines.length&&isSep(lines[li+1])){
+      const head=splitCells(row);const bodyRows=[];
+      let lj=li+2;
+      while(lj<lines.length&&lines[lj].includes('|')&&lines[lj].trim()){bodyRows.push(splitCells(lines[lj]));lj++}
+      const th=head.map(c=>`<th>${inline(c)}</th>`).join('');
+      const tb=bodyRows.map(r=>'<tr>'+head.map((_,ci)=>`<td>${inline(r[ci]||'')}</td>`).join('')+'</tr>').join('');
+      tables.push(`<div class="md-table-wrap"><table class="md-table"><thead><tr>${th}</tr></thead><tbody>${tb}</tbody></table></div>`);
+      lines.splice(li,lj-li,`\uE002${tables.length-1}\uE003`);
+    }
+  }
   for(const row of lines){
     if(!row.trim()){flush();continue}
     if(/^\uE000\d+\uE001$/.test(row)){flush();out.push(row);continue}
+    if(/^\uE002\d+\uE003$/.test(row)){flush();out.push(row);continue}
     const heading=row.match(/^(#{1,3})\s+(.+)$/);
     if(heading){flush();const level=Math.min(3,heading[1].length+1);out.push(`<h${level}>${inline(heading[2])}</h${level}>`);continue}
     const item=row.match(/^\s*[-*]\s+(.+)$/);
@@ -80,7 +97,7 @@ function formatMarkdown(value){
     const block=blocks[Number(id)];if(!block)return '';
     const label=languageLabel(block.language);const status=block.closed?'':'<span class="code-draft">Writing…</span>';
     return `<section class="code-block" data-code-index="${id}"><div class="code-block-header"><span class="code-language">${escapeHTML(label)}</span>${status}<span class="code-block-actions"><button type="button" class="code-action" data-code-action="copy" data-code-index="${id}" title="Copy this code">Copy</button><button type="button" class="code-action" data-code-action="open" data-code-index="${id}" title="Open the code panel">Open code</button></span></div><pre tabindex="0"><code>${escapeHTML(block.code)}</code></pre></section>`;
-  });
+  }).replace(/\uE002(\d+)\uE003/g,(_,id)=>tables[Number(id)]||'');
   return {html,blocks};
 }
 function markdown(value){return formatMarkdown(value).html}
