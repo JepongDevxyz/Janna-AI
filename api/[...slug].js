@@ -130,6 +130,32 @@ async function* openAIStream({ baseUrl, keys, model, messages, extraHeaders = {}
   throw lastError || new Error('All provider keys failed');
 }
 
+function buildAwareness(body, row) {
+  const c = body.context;
+  if (!c || typeof c !== 'object') return '';
+  const modelList = catalog().map((r) => r.label + ' (' + r.note + ')').join('; ');
+  const lines = [];
+  lines.push('WHAT YOU KNOW — facts about yourself, this app and this user. Use them to answer questions about Janna AI, the app, or the user accurately; do not recite them unprompted.');
+  lines.push('You are Janna AI, the web edition at ai.janna-official.tech, made by Jepong Devxyz. There is no account or sign-in: chats, settings and your memory of the user are stored only in this user\'s browser on this device.');
+  lines.push('Plan: Free. Janna Cloud is completely free — no account, no payment, and there are no paid tiers or subscriptions in this app.');
+  lines.push('Models the user can pick in this app: ' + modelList + '. You are currently answering as ' + row.label + '.');
+  lines.push('Features in this app: chat, with each conversation saved in the sidebar; Luna, a star-cat pet companion the user can tap to pet, plus a separate Luna chat; about 90 color themes (default Rose, dark Velvet) under Settings - Themes; Settings sections: General, Themes, Personalization, How hard Janna works, Checking answers, Web research, Tools and connections, On-device control, Data controls (Export data, Import data, Clear all chats, Clear memory); microphone voice input; file attachments (you can read attached text files; you cannot view images); and a memory of the user (below).');
+  lines.push('Desktop app only (NOT in this web edition): Janna Pro 1.1 and Janna Lite 1.1 local models, Work mode with project files and coding tools, and phone pairing. If the user asks for those, say they run in the Janna AI desktop app.');
+  lines.push('Your limits in this web edition: you cannot see images, cannot browse or search the web, and cannot run code or edit the user\'s files.');
+  lines.push('This user\'s usage in this app: ' + (c.chats || 0) + ' conversations and ' + (c.messages || 0) + ' messages in total. Current conversation: "' + String(c.currentTitle || 'New chat').slice(0, 80) + '". Current theme: ' + (c.theme || 'rose') + '. Luna pets today: ' + (c.lunaPets || 0) + '.');
+  if (Array.isArray(c.facts) && c.facts.length) {
+    lines.push('Things you remember about this user (saved in this app, across all their chats):');
+    for (const f of c.facts.slice(0, 30)) lines.push('- ' + String(f).slice(0, 140));
+  } else {
+    lines.push('You have no saved facts about this user yet. When they say "tandaan mo ..." or "remember ...", the fact is saved automatically — confirm warmly when that happens.');
+  }
+  if (Array.isArray(c.others) && c.others.length) {
+    lines.push('Previous conversations in this app (other chats, most recent first) — you know these; refer to them when the user mentions another chat:');
+    for (const o of c.others) lines.push('- "' + String(o.title || 'New chat').slice(0, 60) + '"' + (o.when ? ' (' + o.when + ')' : '') + (o.first ? ' — starts with: "' + o.first + '"' : '') + (o.last ? ' — latest message: "' + o.last + '"' : ''));
+  }
+  return lines.join('\n').slice(0, 6000);
+}
+
 async function pollinationsText({ model, messages }) {
   const response = await fetch('https://text.pollinations.ai/', { signal: AbortSignal.timeout(180000),
     method: 'POST',
@@ -250,6 +276,8 @@ async function handleRun(req, res) {
       else if (a && a.kind === 'image') userContent += '\n\n[An image was attached, but this web model cannot view images.]';
     }
     messages.push({ role: 'user', content: userContent });
+    const awareBlock = buildAwareness(body, row);
+    if (awareBlock) messages[0].content += '\n\n' + awareBlock;
 
     const chainT = ' ' + String(body.prompt || '').toLowerCase() + ' ';
     const chain = /```/.test(String(body.prompt || '')) || /\b(code|function|bug|error|debug|script|python|javascript|typescript|html|css|compile|syntax)\b/.test(chainT)

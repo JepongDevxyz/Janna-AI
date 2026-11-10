@@ -54,6 +54,45 @@
   // Observe the run stream as it flows past and persist the exchange the
   // moment the terminal frame arrives — synchronously, before the app
   // re-reads the session and re-renders the conversation.
+  // --- Janna's memory of the user + awareness context (her order: Janna
+  // must know the previous chats, the whole app, and the user's plan/usage,
+  // the way Muse does) ---
+  var MEMKEY = 'janna-web-memory-v1';
+  function loadMemory() { try { return JSON.parse(localStorage.getItem(MEMKEY) || '[]'); } catch { return []; } }
+  function saveMemory(list) { try { localStorage.setItem(MEMKEY, JSON.stringify((list || []).slice(-30))); } catch { /* ignore */ } }
+  function captureMemory(prompt) {
+    if (!prompt) return;
+    var facts = loadMemory();
+    var add = function (text) {
+      text = String(text || '').trim().replace(/\s+/g, ' ');
+      if (text.length < 3 || text.length > 140) return;
+      if (facts.some(function (f) { return f.text.toLowerCase() === text.toLowerCase(); })) return;
+      facts.push({ text: text, at: Date.now() });
+    };
+    var m;
+    if ((m = prompt.match(/(?:tandaan mo|remember(?: that)?|note that)[:\s]+(.+)/i))) add(m[1].replace(/[.\s]+$/, ''));
+    if ((m = prompt.match(/(?:my name is|pangalan ko ay|ako si)\s+([A-Za-z][A-Za-z .'-]{1,40})/i))) add("The user's name is " + m[1].trim());
+    if ((m = prompt.match(/(?:call me|tawagin mo akong)\s+([A-Za-z][A-Za-z .'-]{1,40})/i))) add('The user wants to be called ' + m[1].trim());
+    saveMemory(facts);
+  }
+  function clipText(s, n) { s = String(s || '').replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 1) + '\u2026' : s; }
+  function buildContext(current) {
+    var sessions = loadSessions();
+    var totalMsgs = 0;
+    sessions.forEach(function (x) { totalMsgs += (x.messages || []).length; });
+    var others = sessions.filter(function (x) { return !current || x.id !== current.id; }).slice(0, 6).map(function (x) {
+      var msgs = (x.messages || []).filter(function (mm) { return mm && (mm.role === 'user' || mm.role === 'assistant'); });
+      var firstUser = null;
+      for (var i = 0; i < msgs.length; i++) if (msgs[i].role === 'user') { firstUser = msgs[i]; break; }
+      var last = msgs[msgs.length - 1];
+      return { title: x.title || 'New chat', when: x.updated ? new Date(x.updated * 1000).toISOString().slice(0, 10) : '', first: firstUser ? clipText(firstUser.content, 130) : '', last: last ? clipText(last.content, 130) : '' };
+    });
+    var lunaPets = 0;
+    try { var lj = JSON.parse(localStorage.getItem('janna-luna-v1') || '{}'); if (lj && typeof lj.pets === 'number') lunaPets = lj.pets; } catch (e) { /* ignore */ }
+    var st = loadSettings();
+    return { facts: loadMemory().map(function (f) { return f.text; }), chats: sessions.length, messages: totalMsgs, others: others, currentTitle: current ? (current.title || 'New chat') : 'New chat', theme: st.theme || 'rose', lunaPets: lunaPets };
+  }
+
   // --- queued follow-up messages (the app's "queue for the next step") ---
   var QUEUE_KEY = 'janna-web-queue-v1';
   var draining = {};
@@ -178,11 +217,18 @@
       return Promise.resolve(jsonResponse({ settings: merged }));
     }
 
+    if (path === '/api/memory' && method === 'GET')
+      return Promise.resolve(jsonResponse({ facts: loadMemory() }));
+    if (path === '/api/memory/clear' && method === 'POST') {
+      saveMemory([]);
+      return Promise.resolve(jsonResponse({ ok: true }));
+    }
+
     // --- profile transfer: export/import work on the browser's own data ---
     if (path === '/api/profile/select' && method === 'POST')
       return Promise.resolve(jsonResponse({ ok: true }));
     if (path === '/api/profile/export' && method === 'GET')
-      return Promise.resolve(jsonResponse({ format: 'janna-web-profile', version: 1, exported_at: new Date().toISOString(), sessions: loadSessions(), settings: loadSettings() }));
+      return Promise.resolve(jsonResponse({ format: 'janna-web-profile', version: 1, exported_at: new Date().toISOString(), sessions: loadSessions(), settings: loadSettings(), memory: loadMemory() }));
     if (path === '/api/profile/import' && method === 'POST') {
       var imp = {};
       try { imp = JSON.parse((init && init.body) || '{}'); } catch { /* empty */ }
@@ -195,6 +241,7 @@
       if (added) saveSessions(existing);
       var notes = 0;
       if (imp.settings && typeof imp.settings === 'object') { saveSettings(Object.assign({}, imp.settings, loadSettings())); notes = 1; }
+      if (Array.isArray(imp.memory) && imp.memory.length) { var cur = loadMemory(); imp.memory.forEach(function (f) { if (f && f.text && !cur.some(function (x) { return x.text === f.text; })) cur.push(f); }); saveMemory(cur); }
       return Promise.resolve(jsonResponse({ imported: { conversations: added, notes: notes } }));
     }
 
@@ -231,6 +278,8 @@
       var runBody = {};
       try { runBody = JSON.parse((init && init.body) || '{}'); } catch { /* empty */ }
       var sess = runBody.session_id ? findSession(runBody.session_id) : null;
+      captureMemory(runBody.prompt);
+      runBody.context = buildContext(sess);
       if (sess && Array.isArray(sess.messages))
         runBody.messages = sess.messages.filter(function (m) { return m && (m.role === 'user' || m.role === 'assistant'); }).map(function (m) { return { role: m.role, content: m.content }; });
         if (sess.purpose === 'luna') runBody.companion = 'luna';

@@ -1107,6 +1107,7 @@ function drawSettings(){
     row('Your data in this browser','On the web edition, chats and settings are stored only in this browser. Janna does not train on your chats or upload them; only the message you send reaches the model.');
     row('Export data','Download your chats and preferences as one JSON file.',button('Export',async()=>{try{const data=await api('/api/profile/export');const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));const a=el('a');a.href=url;a.download='janna_profile.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),5000);toast('Profile exported')}catch(e){toast(e.message)}},'text-btn'));
     row('Import data','Bring chats and preferences from an exported Janna profile file.',button('Import',()=>openDrawer('profile'),'text-btn'));
+    row('Memory','Facts Janna remembers about you in this browser, across all your chats. Ask Janna what she remembers about you, or say "tandaan mo..." in any chat to save a fact.',dangerBtn('Clear memory',async()=>{try{await api('/api/memory/clear',{});toast('Memory cleared')}catch(e){toast(e.message)}}));
     row('Clear all chats','Delete every conversation stored in this browser. This cannot be undone.',dangerBtn('Clear all chats',async()=>{try{await api('/api/sessions/clear',{});state.sessions=[];closeDrawer();await newSession(state.project);await refreshBootstrap();toast('All chats cleared')}catch(e){toast(e.message)}}));
   }
 }
