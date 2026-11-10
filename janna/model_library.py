@@ -1,7 +1,7 @@
 """Fixed list of extra local models Janna may download.
 
 These are registry tags for the already installed local runtime. They are not
-Sumi or Rei, and a request cannot substitute its own tag or shell command.
+Janna Pro or Janna Lite, and a request cannot substitute its own tag or shell command.
 Sizes are described by fit on a 16 GB GPU, not by a measured byte count.
 """
 from __future__ import annotations
@@ -10,11 +10,11 @@ from .models import canonical_tag
 
 LIBRARY = (
     {'id': 'qwen3:4b', 'label': 'Qwen3 4B', 'fit': 'Small',
-     'note': 'Faster general Qwen. Less capable than Sumi.'},
+     'note': 'Faster general Qwen. Less capable than Janna Pro.'},
     {'id': 'qwen3:8b', 'label': 'Qwen3 8B', 'fit': 'Fits a 16 GB GPU',
      'note': 'General Qwen3. Not a Janna profile.'},
     {'id': 'qwen2.5-coder:7b', 'label': 'Qwen2.5 Coder 7B', 'fit': 'Fits a 16 GB GPU',
-     'note': 'Coding-focused Qwen. Not Sumi or Rei.'},
+     'note': 'Coding-focused Qwen. Not Janna Pro or Janna Lite.'},
     {'id': 'qwen2.5-coder:14b', 'label': 'Qwen2.5 Coder 14B', 'fit': 'Tight on 16 GB',
      'note': 'Larger coding Qwen. It may crowd the GPU.'},
     {'id': 'qwen3:14b', 'label': 'Qwen3 14B', 'fit': 'Tight on 16 GB',
@@ -24,7 +24,7 @@ LIBRARY = (
     {'id': 'gemma3:4b', 'label': 'Gemma 3 4B', 'fit': 'Small',
      'note': 'Small Gemma model from the local registry.'},
     {'id': 'deepseek-r1:8b', 'label': 'DeepSeek R1 8B', 'fit': 'Fits a 16 GB GPU',
-     'note': 'Small reasoning model. It was not measured as Sumi.'},
+     'note': 'Small reasoning model. It was not measured as Janna Pro.'},
     {'id': 'phi4-mini', 'label': 'Phi-4 mini', 'fit': 'Small',
      'note': 'Small Phi model from the local registry.'},
 )

@@ -29,7 +29,7 @@ from .forge_bridge import status as forge_status
 from .vibe.manager import VibeManager
 from .vibe.scaffold import create as create_scaffold
 from .companion import Companion, BotSupervisor, connections_status
-from .kage import KageManager, context as kage_context
+from .luna import LunaManager, context as luna_context
 from .desktop_controls import ProcessSupervisor
 from .oauth import initiate_sign_in
 from .research import research as conduct_research, should_research, context as research_context, public_query, EvidenceCache
@@ -41,7 +41,7 @@ from .harness import Harness, completion_contract
 from .completion import verify_completion
 from .source_miner import map_repository, inspect_file
 from .expertise import catalogue as expertise_catalogue, retrieve as retrieve_expertise, ReviewedLessons, VERSION as EXPERTISE_VERSION
-from .models import catalog as model_catalog, state as sumi_state, register_sumi, register_rei, default_model
+from .models import catalog as model_catalog, state as janna_pro_state, register_janna_pro, register_lite, default_model
 from .model_library import library_catalog
 from .prompting import compose_turn, normalize_attachments, prepare_model_history
 from .provisioning import Provisioner, start_installed_engine_if_needed
@@ -121,9 +121,9 @@ def resilient_chat_events(streamer, url: str, messages: list[dict], model: str,
         # alternative that could make VRAM exhaustion worse.
         def size_b(name):
             lower = name.lower()
-            if lower.startswith(('rei-1.0', 'sumi-1.0-lite')):
+            if lower.startswith(('janna-lite-1.0', 'janna-pro-1.0-lite')):
                 return 9.0
-            if lower.startswith('sumi-1.0'):
+            if lower.startswith('janna-pro-1.0'):
                 return 27.0
             matches = re.findall(r"(\d+(?:\.\d+)?)b\b", lower)
             return float(matches[-1]) if matches else None
@@ -215,7 +215,7 @@ class Runtime:
         self.bots = BotSupervisor(self.store, self.companion)
         self.processes = ProcessSupervisor(self.store)
         self.gpu_scheduler = GpuScheduler(
-            is_model_busy=lambda: bool(self.busy) or getattr(self, "_kage_inference", False) or (hasattr(self, "vibe") and self.vibe.is_busy()),
+            is_model_busy=lambda: bool(self.busy) or getattr(self, "_luna_inference", False) or (hasattr(self, "vibe") and self.vibe.is_busy()),
             unload=self._unload_models_for_gpu_test)
         self.harness = Harness(self.store, gpu_scheduler=self.gpu_scheduler)
         self.trainer = Trainer(self.store.base, ROOT, self.gpu_scheduler)
@@ -247,10 +247,10 @@ class Runtime:
                 self.settings.update({k: v for k, v in data.items() if k in self.settings})
         except (ValueError, OSError):
             pass
-        self._kage_inference = False
-        self.kage = KageManager(self.store, research=self.get_research, summarize=self._summarize_kage, harness=self.harness)
+        self._luna_inference = False
+        self.luna = LunaManager(self.store, research=self.get_research, summarize=self._summarize_luna, harness=self.harness)
         self.companion.start()
-        self.kage.start()
+        self.luna.start()
         self.bots.start_background()
 
     def _unload_models_for_gpu_test(self) -> None:
@@ -264,12 +264,12 @@ class Runtime:
             if name and isinstance(name, str):
                 json_request("/api/generate", {"model": name, "keep_alive": 0}, timeout=20)
 
-    def _summarize_kage(self, member: str, title: str, evidence: str) -> str | None:
-        """Short, explicitly opt-in Sumi briefing; never modifies files or invents work."""
+    def _summarize_luna(self, member: str, title: str, evidence: str) -> str | None:
+        """Short, explicitly opt-in Janna Pro briefing; never modifies files or invents work."""
         with self.lock:
-            if self.busy or self._kage_inference or self.gpu_scheduler.is_reserved():
+            if self.busy or self._luna_inference or self.gpu_scheduler.is_reserved():
                 return None
-            self._kage_inference = True
+            self._luna_inference = True
         try:
             model = default_model(installed_models())
             if not model:
@@ -278,7 +278,7 @@ class Runtime:
                       "If evidence is missing, say so. Do not claim tests, changes or online checks occurred "
                       "unless the evidence proves they did. No tool use is available in this call.")
             payload = {"model": model, "stream": False,
-                       "messages": [{"role": "system", "content": kage_context(member) + "\n" + prompt + time_context() + ANSWER_STYLE_GUIDANCE},
+                       "messages": [{"role": "system", "content": luna_context(member) + "\n" + prompt + time_context() + ANSWER_STYLE_GUIDANCE},
                                     {"role": "user", "content": "Task: " + title[:100] + "\nEvidence:\n" + evidence[:1800]}],
                        "options": {"num_ctx": 4096, "num_predict": 400, "temperature": 0.15}}
             result = json_request("/api/chat", payload, timeout=65)
@@ -288,13 +288,13 @@ class Runtime:
             return None
         finally:
             with self.lock:
-                self._kage_inference = False
+                self._luna_inference = False
 
     def update_settings(self, body: dict):
         allowed = {"figma_enabled": [False, True], "forge_enabled": [False, True], "browser_enabled": [False, True], "refine_reports": [False, True],
                    "autonomy_passes": [4, 8, 12],
                    "personality": ["precise", "friendly", "technical", "concise", "craftsman"],
-                   "theme": ["porcelain", "sumi", "sakura", "matcha", "indigo", "midnight",
+                   "theme": ["porcelain", "pro", "sakura", "matcha", "indigo", "midnight",
                              "washi", "kintsugi", "ume", "yoru", "kyoto", "moss", "sora", "akane", "zen",
                              "beni", "shinku", "shu", "botan", "tsuki", "ruri", "sage", "asagi", "fuji", "momiji", "yuzu", "take", "mizu", "kinari", "kohaku", "murasaki", "toki", "moegi", "gin", "chawan", "yanagi", "wakatake", "usuzumi", "ao", "enji", "suzu", "kakishibu", "hanada", "kujaku", "komugi", "shirayuki", "nuri", "tetsu", "kurocha", "nezumi", "fukamidori", "konpeki", "budou", "akatsuki", "roiro", "kachi", "miru", "susutake", "namari", "enkai", "karasuba", "sumizome", "benibana", "yamabuki", "rikyunezu", "soba", "ember", "dusk", "slate", "crimson", "leaf", "lilac", "blaze", "harbor", "violet", "forest", "tide", "blossom", "azure", "moon"],
                    "speed": ["standard", "boost"],
@@ -341,8 +341,8 @@ class Runtime:
 
     def claim(self, session_id: str, agent: Agent) -> threading.Event:
         with self.lock:
-            if self.busy or self._kage_inference or self.gpu_scheduler.is_reserved():
-                raise ValueError("A local run is already active, or Sumi briefing / GPU-exclusive test is active. Retry after it finishes.")
+            if self.busy or self._luna_inference or self.gpu_scheduler.is_reserved():
+                raise ValueError("A local run is already active, or Janna Pro briefing / GPU-exclusive test is active. Retry after it finishes.")
             cancel = threading.Event()
             agent.cancel = cancel
             self.busy[session_id] = (cancel, agent)
@@ -594,7 +594,7 @@ def handler_factory(runtime: Runtime):
                     "library": library_catalog(found_models),
                     "cline_installed": shutil.which("cline") is not None,
                     "languages": language_menu(),
-                    "sumi": sumi_state(found_models), "agentInstalled": bool(open_code_path()),
+                    "pro": janna_pro_state(found_models), "agentInstalled": bool(open_code_path()),
                     "busy": list(runtime.busy.keys()), "settings": runtime.settings,
                     "remote": self._remote(), "profile": runtime.profiles.current(),
                     "research_connectors": key_status(runtime.store.base),
@@ -605,7 +605,7 @@ def handler_factory(runtime: Runtime):
                 return self._json(200, runtime.provisioner.status())
             if route == "/api/models":
                 found = installed_models()
-                return self._json(200, {"models": found, "model_catalog": model_catalog(found), "sumi": sumi_state(found)})
+                return self._json(200, {"models": found, "model_catalog": model_catalog(found), "pro": janna_pro_state(found)})
             if route == "/api/expertise":
                 kb = expertise_catalogue()
                 return self._json(200, {"version": EXPERTISE_VERSION,
@@ -628,10 +628,10 @@ def handler_factory(runtime: Runtime):
                                         "gpu_scheduler": runtime.gpu_scheduler.status()})
             if route == "/api/companion":
                 return self._json(200, runtime.companion.status())
-            if route == "/api/kage":
-                return self._json(200, {**runtime.kage.status(), 'busy_sessions': list(runtime.busy)})
-            if route.startswith("/api/kage/avatar/"):
-                return self._json(200, runtime.kage.avatar(route.rsplit("/", 1)[-1]))
+            if route == "/api/luna":
+                return self._json(200, {**runtime.luna.status(), 'busy_sessions': list(runtime.busy)})
+            if route.startswith("/api/luna/avatar/"):
+                return self._json(200, runtime.luna.avatar(route.rsplit("/", 1)[-1]))
             if route == "/api/memory":
                 return self._json(200, {"items": runtime.memory.list()})
             if route == "/api/processes":
@@ -717,7 +717,7 @@ def handler_factory(runtime: Runtime):
             if not self._api_token_ok():
                 return self._fail(403, "Workspace authorization required.")
             try:
-                body = self._read(6_000_000 if route == "/api/run" else 4_000_000 if route == "/api/kage/avatar/import" else 1_000_000 if route == "/api/profile/import" else 40000)
+                body = self._read(6_000_000 if route == "/api/run" else 4_000_000 if route == "/api/luna/avatar/import" else 1_000_000 if route == "/api/profile/import" else 40000)
                 if route.startswith('/api/training/'):
                     if self._remote():
                         return self._fail(403, 'Control training from the Windows PC')
@@ -775,12 +775,12 @@ def handler_factory(runtime: Runtime):
                     if not path:
                         return self._fail(400, "Folder selection canceled.")
                     return self._json(200, {"project": runtime.store.register_project(path)})
-                if route == "/api/kage/select":
-                    return self._json(200, runtime.kage.select(str(body.get("member", ""))))
-                if route == '/api/kage/notifications/read':
-                    return self._json(200, runtime.kage.acknowledge(body.get('ids', [])))
-                if route == '/api/kage/goals':
-                    if self._remote(): return self._fail(403, 'Start independent Kage goals on the Windows PC')
+                if route == "/api/luna/select":
+                    return self._json(200, runtime.luna.select(str(body.get("member", ""))))
+                if route == '/api/luna/notifications/read':
+                    return self._json(200, runtime.luna.acknowledge(body.get('ids', [])))
+                if route == '/api/luna/goals':
+                    if self._remote(): return self._fail(403, 'Start independent Luna goals on the Windows PC')
                     pid = str(body.get('project_id', ''))
                     if not runtime.store.get_project(pid): raise ValueError('Choose a registered project')
                     prompt = str(body.get('prompt', '')).strip()
@@ -789,37 +789,37 @@ def handler_factory(runtime: Runtime):
                     if type(seconds) not in (int, float) or not 1 <= seconds <= 43200: raise ValueError('Choose a budget up to 12 hours')
                     session = runtime.store.new_session(pid)
                     with runtime.store.lock:
-                        session.update(purpose='kage', title='Kage · ' + prompt[:65]); runtime.store.save()
+                        session.update(purpose='luna', title='Luna · ' + prompt[:65]); runtime.store.save()
                     payload = {'session_id': session['id'], 'prompt': '/goal ' + prompt, 'mode': 'agent',
-                               'model': str(body.get('model', '')), 'kage_member': runtime.kage.selected,
+                               'model': str(body.get('model', '')), 'luna_member': runtime.luna.selected,
                                'effort': 'high', 'speed': 'standard', 'polish': False}
-                    job = runtime.kage.queue_goal(payload, title=prompt, project_id=pid, seconds=seconds)
+                    job = runtime.luna.queue_goal(payload, title=prompt, project_id=pid, seconds=seconds)
                     return self._json(201, {'job': job})
-                if route == '/api/kage/goals/stop':
+                if route == '/api/luna/goals/stop':
                     with runtime.lock:
-                        job = runtime.kage.cancel_job(str(body.get('job_id', '')))
+                        job = runtime.luna.cancel_job(str(body.get('job_id', '')))
                         if job.get('run_id'): runtime.stop(job['session_id'], job['run_id'])
                     return self._json(200, {'stopped': True})
-                if route == "/api/kage/tasks":
-                    return self._json(201, {"task": runtime.kage.add(
+                if route == "/api/luna/tasks":
+                    return self._json(201, {"task": runtime.luna.add(
                         kind=str(body.get("kind", "")), cadence=str(body.get("cadence", "manual")),
-                        member=str(body.get("member", "ren")), title=str(body.get("title", "")),
+                        member=str(body.get("member", "luna")), title=str(body.get("title", "")),
                         project_id=str(body.get("project_id") or "") or None,
                         query=str(body.get("query", "")), clock=str(body.get("clock", "09:00")),
                         test_id=str(body.get("test_id", "")),
                         allow_network=body.get("allow_network") is True,
-                        use_sumi=body.get("use_sumi") is True)})
-                if route == "/api/kage/tasks/delete":
-                    return self._json(200, {"deleted": runtime.kage.remove(str(body.get("task_id", "")))})
-                if route == "/api/kage/tasks/enable":
-                    return self._json(200, {"task": runtime.kage.set_enabled(
+                        use_pro=body.get("use_pro") is True)})
+                if route == "/api/luna/tasks/delete":
+                    return self._json(200, {"deleted": runtime.luna.remove(str(body.get("task_id", "")))})
+                if route == "/api/luna/tasks/enable":
+                    return self._json(200, {"task": runtime.luna.set_enabled(
                         str(body.get("task_id", "")), body.get("enabled"))})
-                if route == "/api/kage/tasks/run":
-                    return self._json(202, {"task": runtime.kage.run_now(str(body.get("task_id", "")))})
-                if route == "/api/kage/avatar/import":
+                if route == "/api/luna/tasks/run":
+                    return self._json(202, {"task": runtime.luna.run_now(str(body.get("task_id", "")))})
+                if route == "/api/luna/avatar/import":
                     if self._remote():
                         return self._fail(403, "Import your licensed companion artwork on your Windows PC")
-                    return self._json(200, runtime.kage.import_avatar(
+                    return self._json(200, runtime.luna.import_avatar(
                         str(body.get("member", "")), str(body.get("data", "")),
                         str(body.get("source", "")), str(body.get("attribution", "")),
                         rights_confirmed=body.get("rights_confirmed") is True))
@@ -828,16 +828,16 @@ def handler_factory(runtime: Runtime):
                     if pid and not runtime.store.get_project(str(pid)):
                         raise ValueError("Select a registered project.")
                     return self._json(201, runtime.store.new_session(pid))
-                if route == '/api/kage/chat':
+                if route == '/api/luna/chat':
                     pid = body.get('project_id') or None
                     if pid and not runtime.store.get_project(pid):
                         raise ValueError('Select a registered project.')
                     with runtime.store.lock:
                         session = next((s for s in runtime.store.data['sessions']
-                            if s.get('purpose') == 'kage' and s.get('project_id') == pid), None)
+                            if s.get('purpose') == 'luna' and s.get('project_id') == pid), None)
                         if session is None:
                             session = runtime.store.new_session(pid)
-                            session.update(purpose='kage', title='Kage coordination')
+                            session.update(purpose='luna', title='Luna coordination')
                             runtime.store.save()
                     return self._json(200, session)
                 if route == "/api/sessions/delete":
@@ -845,7 +845,7 @@ def handler_factory(runtime: Runtime):
                     with runtime.lock:
                         if sid in runtime.busy:
                             raise ValueError("Stop the active run before deleting its conversation.")
-                        runtime.kage.forget_session(sid)
+                        runtime.luna.forget_session(sid)
                         runtime.runs.delete_session(sid)
                         runtime.goals.delete_session(sid)
                         return self._json(200, {"deleted": runtime.store.delete_session(sid)})
@@ -980,7 +980,7 @@ def handler_factory(runtime: Runtime):
                                                   origin="verified_build", verification=report.get("verification") or {})
 
                     return self._json(202, runtime.vibe.start(Path(project["path"]), task,
-                                                              model=str(body.get("model") or "sumi-1.0:latest"), allow_config=allow_config,
+                                                              model=str(body.get("model") or "janna-pro-1.0:latest"), allow_config=allow_config,
                                                               listen=listen if session_id else None,
                                                               on_finished=finished if session_id else None))
                 if route == "/api/vibe/stop":
@@ -1045,10 +1045,10 @@ def handler_factory(runtime: Runtime):
                         return self._fail(403, "Set up models from your Windows PC")
                     if runtime.busy:
                         raise ValueError("Finish or stop active work before configuring the model")
-                    profile_name = body.get('profile', 'sumi')
-                    if profile_name not in ('sumi', 'rei'):
-                        raise ValueError('Choose Sumi or Rei')
-                    result = (register_rei if profile_name == 'rei' else register_sumi)(installed_models())
+                    profile_name = body.get('profile', 'pro')
+                    if profile_name not in ('pro', 'lite'):
+                        raise ValueError('Choose Janna Pro or Janna Lite')
+                    result = (register_lite if profile_name == 'lite' else register_janna_pro)(installed_models())
                     invalidate_installed_models()
                     return self._json(200, result)
                 if route == "/api/expertise/search":
@@ -1173,8 +1173,8 @@ def handler_factory(runtime: Runtime):
             speed = str(payload.get("speed", runtime.settings.get("speed", "standard")))
             effort = str(payload.get("effort", runtime.settings.get("effort", "balanced")))
             personality = runtime.settings.get("personality", "precise")
-            kage_member = str(payload.get("kage_member") or runtime.kage.selected)
-            persona_context = kage_context(kage_member)
+            luna_member = str(payload.get("luna_member") or runtime.luna.selected)
+            persona_context = luna_context(luna_member)
             language_setting = runtime.settings.get('language', 'auto')
             reply_language = resolve_language(prompt, language_setting)
             hardware_snapshot = safe_temperature()
@@ -1738,7 +1738,7 @@ def handler_factory(runtime: Runtime):
                                               metrics=metrics, sources=(research_data or {}).get("results", []),
                                               research_freshness=(research_data or {}).get("freshness", "none"),
                                               research_note=correction,
-                                              kage_member=kage_member, model_used=used_model if mode == "chat" else model,
+                                              luna_member=luna_member, model_used=used_model if mode == "chat" else model,
                                               code_validation=code_validation, initial_code_validation=initial_code_validation,
                                               code_repaired=code_repaired, evidence=evidence_report,
                                               reasoning=reasoning_text)
@@ -1750,7 +1750,7 @@ def handler_factory(runtime: Runtime):
                                 "sources": (research_data or {}).get("results", []),
                                 "research_freshness": (research_data or {}).get("freshness", "none"),
                                 "research_note": correction,
-                                "kage_member": kage_member, "model_used": used_model if mode == "chat" else model,
+                                "luna_member": luna_member, "model_used": used_model if mode == "chat" else model,
                                 "code_validation": code_validation, "initial_code_validation": initial_code_validation, "code_repaired": code_repaired,
                                 "reasoning": reasoning_text})
                 except Exception as exc:
@@ -1776,7 +1776,7 @@ def handler_factory(runtime: Runtime):
                     try:
                         finished = runtime.runs.get(run['id'])
                         if finished and finished['state'] in TERMINAL:
-                            runtime.kage.notify_run(finished, project_id=session.get('project_id'), member=kage_member)
+                            runtime.luna.notify_run(finished, project_id=session.get('project_id'), member=luna_member)
                     except (OSError, ValueError):
                         pass  # Notification storage must never strand the active-run lock.
                     if deadline_timer:
@@ -1789,26 +1789,26 @@ def handler_factory(runtime: Runtime):
         existing = runtime.runs.find_request(job['payload']['request_id'], job['payload'])
         if existing:
             if existing['state'] in TERMINAL:
-                runtime.kage.notify_run(existing, project_id=job['project_id'], member=job['member'])
+                runtime.luna.notify_run(existing, project_id=job['project_id'], member=job['member'])
             return {'run_id': existing['id'], 'state': existing['state'] if existing['state'] in TERMINAL else 'running'}
         if time.time() >= job['deadline']:
             return {'state': 'budget_exhausted'}
         with runtime.lock:
             # Re-read the queued job under the same lock used by the Stop route.
-            with runtime.kage.lock:
-                actual = next((j for j in runtime.kage.jobs if j['id'] == job['id']), None)
+            with runtime.luna.lock:
+                actual = next((j for j in runtime.luna.jobs if j['id'] == job['id']), None)
                 if not actual or actual['state'] == 'stopped': return None
-            if runtime.busy or runtime._kage_inference or runtime.gpu_scheduler.is_reserved(): return None
+            if runtime.busy or runtime._luna_inference or runtime.gpu_scheduler.is_reserved(): return None
             try:
                 started = Handler._run(None, job['payload'], subscribe=False)
                 update = {'run_id': started['id'], 'state': started['state'] if started['state'] in TERMINAL else 'running'}
-                with runtime.kage.lock:
+                with runtime.luna.lock:
                     actual.update(update)
-                    runtime.kage._save()
+                    runtime.luna._save()
                 return update
             except (OSError, ValueError) as exc:
                 return {'state': 'blocked', 'reason': str(exc)[:300]}
-    runtime.kage.coordinator = coordinate
+    runtime.luna.coordinator = coordinate
     return Handler
 
 
@@ -1841,7 +1841,7 @@ def _serve(port: int, open_browser: bool, base: Path):
             runtime.stop(session)
         server.server_close()
         runtime.companion.stop()
-        runtime.kage.stop()
+        runtime.luna.stop()
         runtime.bots.close(stop_bots=False)
 
 

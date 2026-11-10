@@ -7,11 +7,9 @@ from __future__ import annotations
 import re
 
 KNOWN_PROJECTS = {
-    "nx infinity": "NX Infinity is Coye's emulator development project, with NX Infinity Core and Nintendo Switch 1 / experimental Switch 2 work. Pokémon Pokopia rendering has been a current engineering target. Exact status requires inspecting the active repository and real logs.",
-    "nxi": "NXI is short for NX Infinity, Coye's emulator project. Current game compatibility and build status must be verified against its latest source and actual tests.",
-    "janna": "Janna AI is an AI developer application by Jepong Devxyz, based on the open-source Takumi workspace created by Coye. Sumi 1.1 and Rei 1.1 are its full and lightweight local model profiles; this is a specialized configuration, not a newly pre-trained foundation model.",
-    "rei": "Rei 1.1 is Janna's lower-memory 9B engineering profile, configured for 8 GB GPUs. Like Sumi, it uses separately installed upstream weights and is not newly retrained.",
-    "sumi": "Sumi 1.1 is the named local engineering model profile for Janna AI, inherited from the upstream Takumi project by Coye. It reuses separately licensed base-model weights and does not imply weights were retrained.",
+    "janna": "Janna AI is an AI developer application by Jepong Devxyz. Janna Pro 1.1 and Janna Lite 1.1 are its full and lightweight local model profiles; this is a specialized configuration, not a newly pre-trained foundation model.",
+    "janna lite": "Janna Lite 1.1 is Janna's lower-memory 9B engineering profile, configured for 8 GB GPUs. Like Janna Pro, it uses separately installed upstream weights and is not newly retrained.",
+    "janna pro": "Janna Pro 1.1 is the named local engineering model profile for Janna AI. It reuses separately licensed base-model weights and does not imply weights were retrained.",
 }
 _NO_SEARCH_CLAIM = re.compile(r"(?i)(?:i\s+(?:do\s+not|don't|can(?:not|'t)|have\s+no)\s+(?:have\s+)?(?:a\s+)?(?:live\s+)?(?:web\s+)?(?:search\s+tool|internet\s+access|search\s+access|access\s+to\s+the\s+internet)|i\s+can\s+only\s+(?:use|work\s+with)\s+(?:my\s+)?training)")
 
@@ -20,14 +18,12 @@ def project_facts(prompt: str) -> str:
     text = re.sub(r"[^a-zA-Z0-9 ]", " ", str(prompt)).lower()
     text = re.sub(r"\s+", " ", text)
     found = []
-    if "nx infinity" in text or re.search(r"\bnxi\b",text):
-        found.append(KNOWN_PROJECTS["nx infinity"])
-    if re.search(r"\bjanna\b",text):
+    if re.search(r"\bjanna\s+pro\b",text):
+        found.append(KNOWN_PROJECTS["janna pro"])
+    elif re.search(r"\bjanna\s+lite\b",text):
+        found.append(KNOWN_PROJECTS["janna lite"])
+    elif re.search(r"\bjanna\b",text):
         found.append(KNOWN_PROJECTS["janna"])
-    if re.search(r"\bsumi\b",text):
-        found.append(KNOWN_PROJECTS["sumi"])
-    if re.search(r"\brei\b",text):
-        found.append(KNOWN_PROJECTS["rei"])
     return ("Creator-provided background (NOT live validation):\n" + "\n".join(found)) if found else ""
 
 

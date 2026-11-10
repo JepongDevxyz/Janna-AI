@@ -15,7 +15,7 @@ export const config = { maxDuration: 60 };
 const APP_VERSION = '1.6.0-web.1';
 const SYSTEM_PROMPT =
   'You are Janna AI, a helpful AI assistant in the Janna AI workspace by Jepong Devxyz ' +
-  '(the web edition of the open-source Janna AI workspace, based on Takumi by Coye). ' +
+  '(the web edition of the Janna AI workspace by Jepong Devxyz). ' +
   'Answer helpfully, clearly and directly. Use Markdown when it helps. ' +
   'If you do not know something, say so instead of inventing it.';
 
@@ -59,7 +59,7 @@ const DEFAULT_SETTINGS = {
   repair_generated_html: true, repair_generated_code: true, send_on_enter: true, voice_output: false,
 };
 
-const KAGE_MEMBERS = [
+const LUNA_MEMBERS = [
   { id: 'luna', name: 'Luna', role: 'Pet companion', description: 'Your little star cat — she keeps you company, celebrates finished work, and loves pets.', avatar: '/luna/luna-384.png' },
 ];
 const LUNA_PROMPT = 'You are Luna, a sweet and playful pet companion inside the Janna AI app: a little indigo star cat with a golden crescent moon on her forehead. Chat warmly in the user\'s language, with gentle pet-like charm — an occasional soft "mrrp" or purr, never excessive and never in the way of the answer. You are also a capable assistant: answer questions and help with tasks clearly and accurately. Keep replies friendly and reasonably concise unless detail is needed.';
@@ -283,7 +283,7 @@ export default async function handler(req, res) {
         library: [], cline_installed: false,
         languages: [{ id: 'auto', name: 'Automatic', english: 'Automatic', speech: '', dir: 'ltr', chrome: 'english' },
                     { id: 'en', name: 'English', english: 'English', speech: 'en', dir: 'ltr', chrome: 'full' }],
-        sumi: null, agentInstalled: false, busy: [], settings: { ...DEFAULT_SETTINGS },
+        pro: null, agentInstalled: false, busy: [], settings: { ...DEFAULT_SETTINGS },
         remote: false, profile: { id: 'web-guest', label: 'Guest workspace', kind: 'guest' }, research_connectors: {},
       });
     }
@@ -292,14 +292,14 @@ export default async function handler(req, res) {
     if (method === 'GET' && path === '/api/status')
       return json(res, 200, { ollama: true, models: rows.map((r) => r.id), openCode: false, busy: [], gpu: null, gpu_scheduler: null });
     if (method === 'GET' && path === '/api/models')
-      return json(res, 200, { models: rows.map((r) => r.id), model_catalog: rows, sumi: null });
+      return json(res, 200, { models: rows.map((r) => r.id), model_catalog: rows, pro: null });
     if (method === 'GET' && path.startsWith('/api/reasoning/'))
       return json(res, 200, { verified: false, vision: false, levels: ['default'] });
-    if (method === 'GET' && path === '/api/kage')
-      return json(res, 200, { name: 'Luna', model: 'Janna Cloud', members: KAGE_MEMBERS, selected: 'luna', unread: [], busy_sessions: [], notifications: [], goals: [], tasks: [] });
-    if (method === 'GET' && path.startsWith('/api/kage/avatar/')) {
+    if (method === 'GET' && path === '/api/luna')
+      return json(res, 200, { name: 'Luna', model: 'Janna Cloud', members: LUNA_MEMBERS, selected: 'luna', unread: [], busy_sessions: [], notifications: [], goals: [], tasks: [] });
+    if (method === 'GET' && path.startsWith('/api/luna/avatar/')) {
       const id = path.split('/').pop();
-      const member = KAGE_MEMBERS.find((m) => m.id === id) || KAGE_MEMBERS[0];
+      const member = LUNA_MEMBERS.find((m) => m.id === id) || LUNA_MEMBERS[0];
       return json(res, 200, { src: member.avatar });
     }
     if (method === 'GET' && path === '/api/connections')
@@ -311,7 +311,7 @@ export default async function handler(req, res) {
     if (method === 'GET' && path === '/api/profile')
       return json(res, 200, { profile: { id: 'web-guest', label: 'Guest workspace', kind: 'guest' }, discord_available: false, redirect_uri: '' });
     if (method === 'POST' && path === '/api/run') return await handleRun(req, res);
-    if (method === 'POST' && path === '/api/kage/select') return json(res, 200, { ok: true });
+    if (method === 'POST' && path === '/api/luna/select') return json(res, 200, { ok: true });
     if (method === 'POST' && path === '/api/stop') {
       const b = await readBody(req);
       const active = activeRuns.get(String(b.run_id || ''));

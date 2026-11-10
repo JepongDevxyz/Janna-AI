@@ -1,4 +1,4 @@
-"""Opt-in, local-only Sumi diagnostic benchmark. No paid APIs or hidden downloads.
+"""Opt-in, local-only Janna Pro diagnostic benchmark. No paid APIs or hidden downloads.
 
 Reports observed timings, token throughput, and a shallow rubric-coverage heuristic.
 Rubric coverage is NOT correctness; tasks are not run against real games here.
@@ -118,14 +118,14 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--model', action='append', dest='models', default=None, help='Already installed local model; repeat for comparisons')
     parser.add_argument('--limit', type=int, default=4, help='Number of diagnostic cases to run (default 4, max 10)')
-    parser.add_argument('--output', type=Path, default=Path.home()/'.janna'/'benchmark-sumi-1.0.json')
+    parser.add_argument('--output', type=Path, default=Path.home()/'.janna'/'benchmark-janna-pro-1.0.json')
     args = parser.parse_args(argv)
     if not 1 <= args.limit <= min(10, len(suite()['cases'])):
         parser.error('Choose 1 through 10 cases')
-    models = args.models or ['sumi-1.0:latest']
+    models = args.models or ['janna-pro-1.0:latest']
     if any(len(m) > 150 or not re.fullmatch(r'[a-zA-Z0-9_./:-]+', m) for m in models):
         parser.error('Invalid local model name')
-    print('Sumi diagnostic: local model, no online API, no file edits. Real GPU timing may vary.', flush=True)
+    print('Janna Pro diagnostic: local model, no online API, no file edits. Real GPU timing may vary.', flush=True)
     report = evaluate(models, args.limit, args.output)
     for row in report['summaries']:
         print(f'  {row["model"]}: {row["completed"]}/{row["requested"]} completed | median {row["median_tokens_per_second"]} tok/sec | first {row["median_first_token_ms"]} ms | rubric presence {row["mean_rubric_fraction_not_accuracy"]}', flush=True)

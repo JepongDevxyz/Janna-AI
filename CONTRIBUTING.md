@@ -10,7 +10,7 @@ Use Python 3.11+ and Node.js 22+ for checks. Windows desktop builds need the .NE
 python -m unittest discover -s tests -v
 python -m compileall -q janna
 node --check web/app.js
-node --check web/kage.js
+node --check web/luna.js
 node scripts/test-markdown.cjs
 node tests/test_run_stream.cjs
 ```
@@ -22,7 +22,7 @@ Run `python -m janna --no-browser --port 8765` and open the local URL to use the
 | Directory | Purpose |
 | --- | --- |
 | `janna/` | Local server, model transport, runs, projects and integrations |
-| `web/` | Desktop/browser interface and Kage assets |
+| `web/` | Desktop/browser interface and Luna assets |
 | `desktop/` | Native WinForms/WebView2 host |
 | `models/`, `expertise/` | Model profiles, engineering references and playbooks |
 | `scripts/`, `installer/` | Build, setup, repair and packaging tools |

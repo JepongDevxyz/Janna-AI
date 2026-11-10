@@ -21,7 +21,7 @@ Official interfaces: [OpenCode MCP](https://opencode.ai/docs/mcp-servers/) and
 
 ## Experimental exact-model training
 
-The desktop trainer checks the exact Sumi Bonsai 2 27B blob hash and coordinates
+The desktop trainer checks the exact Janna Pro Bonsai 2 27B blob hash and coordinates
 GPU access with Janna. Configure the existing WSL MLX Python, GGUF reader,
 exact tokenizer and model paths in the trainer. These dependencies and weights
 are not bundled. Actions include a forward check, a bounded 64-step learning check, a 64-step
@@ -29,7 +29,7 @@ coding pilot, fresh-process checkpoint verification and cooperative Stop. The
 learning check memorizes two artificial associations. The pilot trains on eight
 MIT-authored engineering fixtures checked against independent integer oracles,
 then compares four fixed held-out tasks using bounded, non-executing AST checks.
-This small synthetic suite does not establish whole-project coding capability. Training does not automatically replace Sumi.
+This small synthetic suite does not establish whole-project coding capability. Training does not automatically replace Janna Pro.
 
 The Windows guard requires 12 GiB available RAM before loading and stops below
 2 GiB. The wrapper also stops when observed free GPU memory falls below 1 GiB.

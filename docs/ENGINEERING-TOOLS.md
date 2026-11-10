@@ -42,4 +42,4 @@ The example capture script is not shipped; add and review your own before runnin
 
 ## Genuine proficiency requires measured evidence
 
-For a hard emulator or decomp problem, collect the exact Git commit and repro, faulting guest state, relevant code and specification, run controlled differential experiments, patch one causal issue, and rerun tests. A locally hosted model cannot be made infallible by system prompts alone. See `docs/SUMI-ENGINEERING.md` and the opt-in benchmark script for documented, reproducible measurements.
+For a hard emulator or decomp problem, collect the exact Git commit and repro, faulting guest state, relevant code and specification, run controlled differential experiments, patch one causal issue, and rerun tests. A locally hosted model cannot be made infallible by system prompts alone. See `docs/JANNA PRO-ENGINEERING.md` and the opt-in benchmark script for documented, reproducible measurements.

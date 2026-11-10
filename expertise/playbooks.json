@@ -211,7 +211,7 @@
       "endianness",
       "loader"
     ],
-    "method": "Identify magic, version, offsets, alignment, pointers and compression first. Parse untrusted inputs with bounded sizes and overflow checks. Distinguish extraction, decoding, linkage, address relocation and execution startup.",
+    "method": "Identify magic, version, offsets, alignment, pointers and compression first. Parse untrusted inputs with bounded sizes and overflow checks. Distinguish extraction, decoding, linluna, address relocation and execution startup.",
     "verification": "Malformed input fuzz corpus, known-good fixture hashes, endianness/bounds tests, loader ABI smoke tests.",
     "source_ids": [
       "ghidra",

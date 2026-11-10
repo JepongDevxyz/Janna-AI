@@ -5,7 +5,7 @@
 1. Download `Janna-v1.5.0-preview.1-Windows-x64.zip` from the [official release](https://github.com/JepongDevxyz/Janna-AI/releases/tag/v1.5.0-preview.1).
 2. Extract the complete ZIP to a folder you control. Keep `Janna.exe` and its accompanying folders together.
 3. Install Python 3.11+ and Microsoft Edge WebView2 if missing. The .NET runtime is included; the .NET SDK is only needed for source builds and source-based updates.
-4. Open `Janna.exe`. Use the app's model setup, `SETUP-SUMI.cmd` or `SETUP-REI.cmd` to configure inference.
+4. Open `Janna.exe`. Use the app's model setup, `SETUP-JANNA-PRO.cmd` or `SETUP-JANNA-LITE.cmd` to configure inference.
 5. Start a chat. Choose a project folder when you want to work on code.
 
 Official dependency sources: [Python](https://www.python.org/downloads/windows/), [WebView2](https://developer.microsoft.com/en-us/microsoft-edge/webview2/), [Ollama](https://ollama.com/download/windows), [.NET](https://dotnet.microsoft.com/download/dotnet/10.0), and [OpenCode](https://github.com/anomalyco/opencode).
@@ -20,9 +20,9 @@ The portable download avoids compilation; source-based repair needs the .NET 10 
 
 ## Choose a model
 
-Sumi 1.0 uses a separately downloaded Bonsai 2 27B model, approximately 8.3 GB on disk. A 16 GB GPU and 32 GB RAM are recommended for the full profile. Rei 1.0 uses the smaller 9B base, approximately 3.2 GB, and is intended for lower-memory systems. Context, other applications and driver behavior affect memory use. Physical 8 GB GPU qualification is pending.
+Janna Pro 1.0 uses a separately downloaded Bonsai 2 27B model, approximately 8.3 GB on disk. A 16 GB GPU and 32 GB RAM are recommended for the full profile. Janna Lite 1.0 uses the smaller 9B base, approximately 3.2 GB, and is intended for lower-memory systems. Context, other applications and driver behavior affect memory use. Physical 8 GB GPU qualification is pending.
 
-Allow at least 14 GB additional free space for full-model setup. Runtime and model downloads are separate from Janna's ZIP; their licenses apply independently. See [Sumi setup](SETUP-SUMI.md) for recovery and details.
+Allow at least 14 GB additional free space for full-model setup. Runtime and model downloads are separate from Janna's ZIP; their licenses apply independently. See [Janna Pro setup](SETUP-JANNA-PRO.md) for recovery and details.
 
 ## Optional tools
 

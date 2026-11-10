@@ -34,7 +34,7 @@ class Provisioner:
         self.process: subprocess.Popen | None = None
         self.lines: deque[str] = deque(maxlen=55)
         self.phase = "idle"
-        self.kind = "sumi"
+        self.kind = "pro"
         self.exit_code: int | None = None
         self.started_at: float | None = None
 
@@ -47,9 +47,9 @@ class Provisioner:
     def start(self, *, lightweight: bool = False, skip_coding_agent: bool = False) -> dict:
         if self.platform != "nt":
             raise RuntimeError("Guided model installation is available from the Windows desktop application.")
-        script = self.root / "scripts" / "Ensure-Sumi-1.0.ps1"
+        script = self.root / "scripts" / "Ensure-Janna-Pro-1.0.ps1"
         if not script.is_file():
-            raise RuntimeError("Sumi setup script is missing from the installation. Repair Janna first.")
+            raise RuntimeError("Janna Pro setup script is missing from the installation. Repair Janna first.")
         exe = self.executable or shutil.which("powershell.exe")
         if not exe:
             raise RuntimeError("Windows PowerShell is not available. Repair your Windows installation.")
@@ -58,7 +58,7 @@ class Provisioner:
             args.append("-PreferSmallModel")
         if skip_coding_agent:
             args.append("-SkipCodingAgent")
-        return self._begin(args, "Preparing Rei 1.1 (lightweight) or Sumi 1.1 on this PC. Downloads use official sources.", "sumi")
+        return self._begin(args, "Preparing Janna Lite 1.1 (lightweight) or Janna Pro 1.1 on this PC. Downloads use official sources.", "pro")
 
     def install_library(self, tag: str, *, engine: str | None = None) -> dict:
         """Pull one allowlisted registry tag. The tag argument cannot change the command."""
@@ -67,20 +67,20 @@ class Provisioner:
             raise ValueError("Choose a model from the install list")
         exe = engine or ollama_executable()
         if not exe:
-            raise RuntimeError("The local model runtime is not installed. Set up Sumi or Rei first.")
+            raise RuntimeError("The local model runtime is not installed. Set up Janna Pro or Janna Lite first.")
         return self._begin(
             [exe, "pull", row["id"]],
-            f"Downloading {row['label']} ({row['id']}). This does not change Sumi or Rei.",
+            f"Downloading {row['label']} ({row['id']}). This does not change Janna Pro or Janna Lite.",
             "library")
 
     def install_cline(self, *, npm: str | None = None) -> dict:
-        """Install the official Cline command. It does not replace OpenCode or Sumi."""
+        """Install the official Cline command. It does not replace OpenCode or Janna Pro."""
         exe = npm or shutil.which("npm")
         if not exe:
             raise RuntimeError("Node.js npm was not found, so Cline was not installed.")
         return self._begin(
             [exe, "install", "-g", "cline"],
-            "Installing the Cline command from the official npm package. Sumi, Rei, and OpenCode stay as they are.",
+            "Installing the Cline command from the official npm package. Janna Pro, Janna Lite, and OpenCode stay as they are.",
             "cline")
 
     def _begin(self, args: list[str], opening: str, kind: str) -> dict:
@@ -126,9 +126,9 @@ class Provisioner:
                     }.get(kind, "Model setup complete."))
                 else:
                     self.lines.append({
-                        "library": "The model download did not finish. Sumi and Rei were not changed.",
-                        "cline": "Cline install did not finish. Sumi, Rei, and OpenCode were not changed.",
-                    }.get(kind, "Sumi setup did not complete. See the full log under Janna\\Logs."))
+                        "library": "The model download did not finish. Janna Pro and Janna Lite were not changed.",
+                        "cline": "Cline install did not finish. Janna Pro, Janna Lite, and OpenCode were not changed.",
+                    }.get(kind, "Janna Pro setup did not complete. See the full log under Janna\\Logs."))
             if code == 0 and kind == "library":
                 from .core import invalidate_installed_models
                 invalidate_installed_models()

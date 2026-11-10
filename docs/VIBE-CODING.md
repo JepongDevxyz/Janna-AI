@@ -1,6 +1,6 @@
 # Verified build
 
-Describe a change. Sumi edits the project, the project's real build and tests run, and Sumi repairs from the errors. It is opt-in, under **Tools → Verified build**. The default Work path still runs on the installed OpenCode engine, and nothing here changes a model profile or weights.
+Describe a change. Janna Pro edits the project, the project's real build and tests run, and Janna Pro repairs from the errors. It is opt-in, under **Tools → Verified build**. The default Work path still runs on the installed OpenCode engine, and nothing here changes a model profile or weights.
 
 ## What a result means
 
@@ -12,7 +12,7 @@ Describe a change. Sumi edits the project, the project's real build and tests ru
 | `failed`, `stuck`, `no_change`, `cancelled` | Your files are put back as they were |
 | `model_unavailable` | The local model did not answer. Your files are put back |
 
-With Sumi, `verified` also requires the edge-case step to pass. If that step cannot finish, its edits are undone, the rest of the change is kept, and the result is `partially_verified` with the failure named. `verified` still does not prove the change is right, because those checks may be incomplete. In the held-out run below, 2 of 8 tasks passed their visible tests and failed hidden ones. A report also flags any run that edited test files.
+With Janna Pro, `verified` also requires the edge-case step to pass. If that step cannot finish, its edits are undone, the rest of the change is kept, and the result is `partially_verified` with the failure named. `verified` still does not prove the change is right, because those checks may be incomplete. In the held-out run below, 2 of 8 tasks passed their visible tests and failed hidden ones. A report also flags any run that edited test files.
 
 ## Safety
 
@@ -33,7 +33,7 @@ With Sumi, `verified` also requires the edge-case step to pass. If that step can
 | C++ | CMake and CTest, native or through WSL | The starter was configured, built, and tested on Linux with CMake and g++ (`training/evidence/2026-11-06/cpp-starter.json`). The checks report a build and a test, not a runtime step. Running the built app separately printed `Hello, world`. That was not the owner's Windows PC, and WSL was not used |
 | Android | Manifest rules, Gradle unit tests and assemble | Manifest checks and Java logic with the Android Studio JDK. **Gradle and Kotlin builds not run**: the starter has no wrapper yet, so run `gradle wrapper` in it first |
 | iOS apps | `Info.plist` rules, `swift`, `xcodebuild` | `Info.plist` checks run here. Compiling Swift needs macOS with Xcode, so results stay `partially_verified` |
-| Go | `go build`, then `go test ./...` | The starter's greeting check passed on this Linux machine with Go 1.22.2 (`training/evidence/2026-11-06/go-starter.json`). A wrong greeting failed the test after the build passed. A `go test` comparison failure was reported at `main_test.go:8` with both `Hi, Sumi` and `Hello, Sumi` (`training/evidence/2026-11-06/go-test-failure.json`). A compile error `undefined: Missing` was reported at `main.go:4` (`training/evidence/2026-11-06/go-rust-compile.json`). This was not the owner's PC |
+| Go | `go build`, then `go test ./...` | The starter's greeting check passed on this Linux machine with Go 1.22.2 (`training/evidence/2026-11-06/go-starter.json`). A wrong greeting failed the test after the build passed. A `go test` comparison failure was reported at `main_test.go:8` with both `Hi, Janna Pro` and `Hello, Janna Pro` (`training/evidence/2026-11-06/go-test-failure.json`). A compile error `undefined: Missing` was reported at `main.go:4` (`training/evidence/2026-11-06/go-rust-compile.json`). This was not the owner's PC |
 | Rust | `cargo build`, then `cargo test` | The starter's greeting check passed on this Linux machine with Cargo 1.83.0 (`training/evidence/2026-11-06/rust-starter.json`). A wrong greeting failed the test after the build passed, and the diagnostic named `src/main.rs` with both values. A compile error `E0425` was reported at `src/main.rs:2` (`training/evidence/2026-11-06/go-rust-compile.json`). This was not the owner's PC |
 
 The Android and iOS starters are untested beyond their static checks. The Go and Rust starters were built and tested here; running each binary separately printed `Hello, world`. The check steps themselves report a build and a test, not a runtime step.
@@ -42,7 +42,7 @@ The Android and iOS starters are untested beyond their static checks. The Go and
 
 ## Context and inference on the RTX 4060 Ti 16 GB
 
-From `training/evidence/2026-11-04/context-sweep.json`, using Sumi (Q2_0), Ollama, about half of each window filled:
+From `training/evidence/2026-11-04/context-sweep.json`, using Janna Pro (Q2_0), Ollama, about half of each window filled:
 
 | `num_ctx` | GPU | GPU memory in use | Output tok/s | First prompt | Same prefix again |
 | --- | --- | --- | --- | --- | --- |
@@ -51,7 +51,7 @@ From `training/evidence/2026-11-04/context-sweep.json`, using Sumi (Q2_0), Ollam
 | 24,576 | 100% | 10,548 MiB | 25.3 | 13,683 tokens, 15.8 s | 0.9 s |
 | 32,768 | 100% | 10,860 MiB | 24.6 | 18,204 tokens, 22.0 s | 1.0 s |
 
-So Sumi uses 32K for this loop, and each prompt puts files and the repo map first, with changing diagnostics last. That keeps repair turns inside Ollama's prefix cache. Chat keeps its own budgets, so switching between chat and a run can reload the model. Rei stays at 8K.
+So Janna Pro uses 32K for this loop, and each prompt puts files and the repo map first, with changing diagnostics last. That keeps repair turns inside Ollama's prefix cache. Chat keeps its own budgets, so switching between chat and a run can reload the model. Janna Lite stays at 8K.
 
 **Do not raise this past 32K without a guarded test.** The 49K attempt was followed by an unclean reboot under low RAM. The cause is not established, and the PC also had three other unclean reboots that day before this work started. Batch tools refuse to start below 6 GiB of available RAM.
 
@@ -65,7 +65,7 @@ Training uses the existing exact-base LoRA path (`training/bonsai/smoke.py`), on
 py -3 -m training.vibe.dataset build training/vibe/vibe-coding-v1.json
 ```
 
-Start it from **Sumi trainer → Coding tasks · 64 steps**. Then score the recorded replies with real toolchains:
+Start it from **Janna Pro trainer → Coding tasks · 64 steps**. Then score the recorded replies with real toolchains:
 
 ```bash
 py -3 -m training.vibe.mlx_eval RUN_FOLDER
@@ -74,9 +74,9 @@ py -3 -m training.vibe.mlx_eval RUN_FOLDER
 Limits to keep in mind:
 
 - The wrapper needs **12 GiB of available RAM** to start, and that is not always enough. The first attempt started at 13.4 GiB and was stopped by the 2 GiB guard as the model finished loading, with a test suite also running (`training/evidence/2026-11-05/training-attempt-001.json`). Attempt 2 stored no steps: full-row logits for the 22 training rows exceeded the 6 GiB host guard, so parity checks now keep 32 positions per row. Attempt 3 ran **19 optimizer steps** on that 22-row set, then stopped because GPU display headroom fell below 1 GiB (`training/evidence/2026-11-05/training-attempt-003.json`). The partial adapter was not scored and is not a candidate. Aim for 16 GiB free, keep the display light, and run nothing else heavy. The repair rows were added after attempt 3. The first complete 64-step run trained on them and was rejected; see below.
-- A trained adapter **cannot be served through Ollama yet**. Scores come from the MLX trainer, and export to the served model is unbuilt. The running Sumi does not wait on that export: when a visible check fails, the repair turn includes a short worked example from the training split (`key in Object(value)`, and copying a reverse-DNS id the task already named). Held-out answers are not in that example.
+- A trained adapter **cannot be served through Ollama yet**. Scores come from the MLX trainer, and export to the served model is unbuilt. The running Janna Pro does not wait on that export: when a visible check fails, the repair turn includes a short worked example from the training split (`key in Object(value)`, and copying a reverse-DNS id the task already named). Held-out answers are not in that example.
 - If display memory stays under 1 GiB for three samples, the guard asks the trainer to finish the current step and save, instead of killing it on the first dip. **Continue saved run · 32 steps** loads that adapter and trains another slice of the same suite, including after repair rows were added. A different suite is refused. The saved adapter still does not replace the served model.
-- Sumi is Bonsai 2 27B (`qwen35` architecture). It is not a diffusion model, so generic trainers do not apply.
+- Janna Pro is Bonsai 2 27B (`qwen35` architecture). It is not a diffusion model, so generic trainers do not apply.
 
 ### Latest training result: no gain
 
@@ -84,7 +84,7 @@ Three gentler settings were compared on dev under a rule fixed in advance (`trai
 
 | Setting | Dev, 11 tasks | `holdout2`, 13 tasks |
 | --- | --- | --- |
-| Untrained Sumi | 7 | **6** |
+| Untrained Janna Pro | 7 | **6** |
 | Learning rate 0.00003, scale 4.0, step 28 (selected) | 8 | **5** |
 | Same setting, step 64 | 7 | Not run |
 | Learning rate 0.0001, scale 1.0, step 28 | 7, stopped before step 64 | Not run |
@@ -96,7 +96,7 @@ A first held-out attempt stopped at 7 replies, so those replies were seen before
 
 ### Earlier training result: rejected
 
-The first complete run (`training/evidence/2026-11-05/training-run-007.json`) made Sumi worse. The adapter is not deployed and the Sumi profile is unchanged.
+The first complete run (`training/evidence/2026-11-05/training-run-007.json`) made Janna Pro worse. The adapter is not deployed and the Janna Pro profile is unchanged.
 
 | Measure | Untrained | After 64 steps |
 | --- | --- | --- |
@@ -113,7 +113,7 @@ The 8 test tasks are no longer a clean measure, because checks and repair rows w
 py -3 -m training.vibe.evaluate --split test --out report.json
 ```
 
-Latest result: `training/evidence/2026-11-05/heldout-loop.json`, Sumi digest `fcf3a5e5a5af`.
+Latest result: `training/evidence/2026-11-05/heldout-loop.json`, Janna Pro digest `fcf3a5e5a5af`.
 
 | Measure | Result |
 | --- | --- |
@@ -123,7 +123,7 @@ Latest result: `training/evidence/2026-11-05/heldout-loop.json`, Sumi digest `fc
 | Reached `verified` from visible tests | 8 of 8, so 2 were false confidence |
 | Median time per task | 8.0 s |
 
-These are small fixtures. All 8 finished on the first attempt, so this run **did not exercise repair**, and it says nothing about large projects or how Sumi compares with any other product.
+These are small fixtures. All 8 finished on the first attempt, so this run **did not exercise repair**, and it says nothing about large projects or how Janna Pro compares with any other product.
 
 Two visible checks were added after that run, aimed at the two false `verified` results. A JavaScript `in` used on a value that was only compared with null (`==` or `!=`) is now a static error (`key in Object(value)` is the safe form). A reverse-DNS name the task asks for, such as `dev.janna.link`, must appear in a project file before the loop accepts the edit. The prompt renderer is unchanged. The training-set hash changed later, when the repair tasks were added; the 6 of 8 above was scored at `72de82793ba89c7531e0b281ed1c2cda888908a85683c70c854678dc0e33a53e` and these checks do not by themselves raise it.
 
@@ -131,7 +131,7 @@ Attempt 3 also scored the base model inside the trainer, greedy, one reply, no r
 
 ### New held-out tasks, through the loop
 
-`training/evidence/2026-11-05/loop-holdout2.json` and `loop-dev.json`, scored by hidden tests. Repair fixed real Sumi failures here for the first time.
+`training/evidence/2026-11-05/loop-holdout2.json` and `loop-dev.json`, scored by hidden tests. Repair fixed real Janna Pro failures here for the first time.
 
 | Tasks | First reply | With repair | Checks passed, hidden tests failed |
 | --- | --- | --- | --- |
@@ -142,7 +142,7 @@ These ran before the repair examples added to the prompt in `110f5c0`. The main 
 
 ### Edge-case step: rule fixed before scoring
 
-After the project's checks pass, the edge-case step asks Sumi to add tests that try to break its change, then runs them with the project's own test command. It started as opt-in and had to earn its place.
+After the project's checks pass, the edge-case step asks Janna Pro to add tests that try to break its change, then runs them with the project's own test command. It started as opt-in and had to earn its place.
 
 The rule below was committed before `holdout3` was scored. `holdout3` is 14 new tasks in `training/vibe/holdout3.py`, outside the training set, scored once. One run gives both arms: hidden tests score the project just before the step and again at the end, so model randomness cannot separate them. Hidden scoring restores the visible tests and ignores test files the run added.
 
@@ -154,7 +154,7 @@ The step becomes the default only if all of these hold:
 
 If any fails, it stays an opt-in setting and the numbers are recorded either way. Dev runs before the rule (`dev` is already used): 9 of 11 and 8 of 11 hidden passes, no change from the step in either run. False verified fell from 2 to 0 and from 2 to 1. In each run the step refused one correct result.
 
-Result on `holdout3` (14 tasks, one run, Sumi `fcf3a5e5a5af`, evidence in `training/evidence/2026-11-06/edge-holdout3.json`):
+Result on `holdout3` (14 tasks, one run, Janna Pro `fcf3a5e5a5af`, evidence in `training/evidence/2026-11-06/edge-holdout3.json`):
 
 | | Without the step | With the step |
 | --- | --- | --- |
@@ -163,11 +163,11 @@ Result on `holdout3` (14 tasks, one run, Sumi `fcf3a5e5a5af`, evidence in `train
 | Falsely verified | 4 | 1 |
 | Correct work not called verified | 0 | 2 |
 
-All three conditions held (10 is not below 10, 1 is below 4, 2 does not exceed 3), so the step is now on for Sumi in the Janna panel. It stays off for Rei, which was not measured.
+All three conditions held (10 is not below 10, 1 is below 4, 2 does not exceed 3), so the step is now on for Janna Pro in the Janna panel. It stays off for Janna Lite, which was not measured.
 
 What this does and does not show:
 
-- The step made the label more trustworthy, not the code better. It fixed no task: gained none, lost none. Sumi's tests often found the real bug, but it could not repair the bug in the two tries it had.
+- The step made the label more trustworthy, not the code better. It fixed no task: gained none, lost none. Janna Pro's tests often found the real bug, but it could not repair the bug in the two tries it had.
 - 14 tasks is small, and one run. Before-and-after use the same run, so randomness cannot separate the arms, but a repeat would give different individual results.
 - These tasks are now used. A later claim needs new ones.
 - It cost time: tasks that passed the step took 17 to 36 seconds in total. `cs-grid` took 496 seconds because three replies ran to the length limit. After scoring, a reply that hits the limit now ends the step at once. No other scored task hit it, and `cs-grid` still ends `partially_verified`, so the table stands.
@@ -175,7 +175,7 @@ What this does and does not show:
 
 ## Reasoning in the loop
 
-Sumi supports native reasoning, and the loop has always turned it off. In `holdout3` that fits what went wrong: repairs that copied the code unchanged, tests with wrong hand-worked answers, and in `py-invoice` a correct repair undone because Sumi's own wrong tests kept failing.
+Janna Pro supports native reasoning, and the loop has always turned it off. In `holdout3` that fits what went wrong: repairs that copied the code unchanged, tests with wrong hand-worked answers, and in `py-invoice` a correct repair undone because Janna Pro's own wrong tests kept failing.
 
 Both switches are off until measured. `Options.edge_think` lets the edge-case step reason, and `Options.main_think` also covers the first reply and its repairs. A reasoning reply gets 8,192 output tokens instead of 4,096.
 
@@ -187,7 +187,7 @@ Trying them on the used `holdout3` tasks (development, not evidence):
 | Edge-case step | 11 of 14 | 9 | 1 | 106 |
 | Every reply | 12 of 14 | 11 | 2 | 197 |
 
-The rule below was committed before any new task was scored. `holdout4` has 17 tasks from families not used before. Each arm runs once, in the order A, B, C, with Sumi `fcf3a5e5a5af`:
+The rule below was committed before any new task was scored. `holdout4` has 17 tasks from families not used before. Each arm runs once, in the order A, B, C, with Janna Pro `fcf3a5e5a5af`:
 
 - A: the current panel, edge-case step on, no reasoning.
 - B: reasoning in the edge-case step.
@@ -204,7 +204,7 @@ If both qualify, the one with more hidden passes wins, then fewer falsely verifi
 
 The chosen arm is B. On the first holdout4 run, A passed 10 hidden tests with 2 falsely verified, B passed 14 with 0 falsely verified, and C passed 14 with 2 falsely verified. B and C both cleared the rule. They tied on hidden passes, so B won because it falsely verified none. C's first reply passed 14, against 7 for A and B. Median seconds were 48.5, 107.2, and 171.1. Correct work not called verified was 4, 0, and 0. `edge_lost` was empty for B.
 
-That comparison is the decision. The tasks are used, so the merged-code rerun below is a regression check, not new evidence. Same Sumi digest `fcf3a5e5a5af`, edge-case step on, reasoning only in that step. One run, 17 tasks, evidence `training/evidence/2026-11-06/reasoning-holdout4-b-merged.json`.
+That comparison is the decision. The tasks are used, so the merged-code rerun below is a regression check, not new evidence. Same Janna Pro digest `fcf3a5e5a5af`, edge-case step on, reasoning only in that step. One run, 17 tasks, evidence `training/evidence/2026-11-06/reasoning-holdout4-b-merged.json`.
 
 | | Original B | Merged-code B |
 | --- | --- | --- |
@@ -217,23 +217,23 @@ That comparison is the decision. The tasks are used, so the merged-code rerun be
 
 `js-ordinal` was still verified, with the hidden test passing. This run did not catch the known bad-test path. The decision stays B.
 
-## Trusting the tests Sumi writes
+## Trusting the tests Janna Pro writes
 
-In `js-ordinal`, Sumi wrote `ordinal(121) == '121th'`, changed correct code to match it, and the run ended `verified`. In the merged rerun, `js-table` was falsely verified after Sumi's own tests fixed the wrong separator format. `Options.edge_review` adds two checks, both off until they meet this rule:
+In `js-ordinal`, Janna Pro wrote `ordinal(121) == '121th'`, changed correct code to match it, and the run ended `verified`. In the merged rerun, `js-table` was falsely verified after Janna Pro's own tests fixed the wrong separator format. `Options.edge_review` adds two checks, both off until they meet this rule:
 
-- **Review:** when the edge-case step's checks fail or it changed code, a separate reasoning call judges the new test lines from the task alone. It never receives the code. If it finds a wrong line, the step's code changes are undone and Sumi must correct the test.
+- **Review:** when the edge-case step's checks fail or it changed code, a separate reasoning call judges the new test lines from the task alone. It never receives the code. If it finds a wrong line, the step's code changes are undone and Janna Pro must correct the test.
 - **Strength:** the changed code lines are broken in up to 4 small ways, and the files always go back, including on Stop. If most breaks still pass, the tests are too weak for `verified`.
 
 This rule was committed before scoring. The change is kept only if all of these hold:
 
 1. A wrong test is not counted as verified: a scripted run where the code bends to a test the reviewer rejects does not keep that code.
 2. A mutation of correct code fails the tests, and weak tests that survive mutation do not end `verified`.
-3. The `js-ordinal` replay does not end `verified` with the code changed to match `ordinal(121) == '121th'`, including one call to the real Sumi reviewer on that exact test.
+3. The `js-ordinal` replay does not end `verified` with the code changed to match `ordinal(121) == '121th'`, including one call to the real Janna Pro reviewer on that exact test.
 4. On `holdout4`, against the merged-code B run: hidden passes do not fall from 15, and falsely verified does not rise from 1.
 
 `edge_lost` and correct work refused are reported whatever the result. `holdout4` is used, so this can only show no regression, not a new gain.
 
-Result: **the rule was missed, so `edge_review` stays off.** Same Sumi digest, one run, evidence in `training/evidence/2026-11-06/edge-review-holdout4.json` and `edge-review-live.json`:
+Result: **the rule was missed, so `edge_review` stays off.** Same Janna Pro digest, one run, evidence in `training/evidence/2026-11-06/edge-review-holdout4.json` and `edge-review-live.json`:
 
 | | Merged-code B | With review and strength checks |
 | --- | --- | --- |
@@ -251,7 +251,7 @@ The two tasks behind that drop, `py-tiered` and `cpp-big-add`, failed before the
 
 `training/vibe/features.py` builds an 83-file service and asks for features that span several layers, scored by hidden end-to-end tests. `--check` proves each hidden suite fails on the untouched project and passes with a reference solution. There are 2 development features and 2 unseen features (`customer-tier`, `shipment-tracking`), 11 hidden tests each way.
 
-This rule was committed before any feature was run on Sumi:
+This rule was committed before any feature was run on Janna Pro:
 
 1. Run the current product on the development features and on the unseen features. The unseen result stays sealed: it is written to a file and not read until the change is finished.
 2. Change the product using only the development results.
@@ -267,21 +267,21 @@ Baseline, with reasoning in the edge-case step (evidence in `training/evidence/2
 | Development | 10 of 10 | 2 of 2 | 500 to 522 s |
 | Unseen | 7 of 11 | 1 of 2 | 535 to 825 s |
 
-Sumi found and changed every file the reference solutions touch, including 7 across layers for `customer-tier`. The development results gave no failure to design a change from, so no product change was made and steps 2 to 4 did not run. The rule stays open for a change with a real reason. `shipment-tracking` was left `partially_verified` with 2 of 6 hidden tests passing, so that label warned correctly. These tasks are small compared with a real product, other work shared the GPU, and this says little about a project as large as NX Infinity.
+Janna Pro found and changed every file the reference solutions touch, including 7 across layers for `customer-tier`. The development results gave no failure to design a change from, so no product change was made and steps 2 to 4 did not run. The rule stays open for a change with a real reason. `shipment-tracking` was left `partially_verified` with 2 of 6 hidden tests passing, so that label warned correctly. These tasks are small compared with a real product, other work shared the GPU, and this says little about a project as large as NX Infinity.
 
 ## What stays local
 
-A request that starts by asking to add, fix, implement, or test the project is not sent to web search. Search still runs when the request asks for it (`look up`, `search`, `what is`, a subreddit, or research mode set to always) and when the request is a repository review. This does not change Sumi, Rei, or the training prompts.
+A request that starts by asking to add, fix, implement, or test the project is not sent to web search. Search still runs when the request asks for it (`look up`, `search`, `what is`, a subreddit, or research mode set to always) and when the request is a repository review. This does not change Janna Pro, Janna Lite, or the training prompts.
 
 After a project's own checks pass, including after the edge-case step, a named JavaScript or TypeScript import that the target file does not export is still a failure. A Go file in the same package is checked the same way before `go` runs: a call to a function the package does not define, and a method call on a value that file builds with `Box{}` or `&Box{}` when the method is missing or the argument count does not match. A call on another package, or on a value assigned more than one type, is left for the compiler. A missing method names the methods that type already defines, and the repair opens those functions even when they sit far below the type. `export *` is left alone, because that file's exports are not visible to a lexical read. The report's `verification` field keeps source edits, a static source check, a build, tests, a runtime step, and an end-to-end pass as separate facts. A passing test does not count as a passing build, and a static check does not count as either. A test command that exits 0 after running zero tests is a failure. Removing `#[test]`, marking the only test `#[ignore]`, a `go test -v` log of only `SKIP`, a Node summary of `# pass 0` and `# fail 0`, or unittest `OK (skipped=N)` for every test it ran, does not count as a pass. Python checks delete `__pycache__` first, so a fix saved in the same second is the code the test imports. `verified` is the only state that means the end-to-end checks passed. A task id `run` or `runtime` in `janna.tasks.json` is that runtime step.
 
-No adapter was trained for this change. Sumi and Rei are the same models.
+No adapter was trained for this change. Janna Pro and Janna Lite are the same models.
 
 While a verified run is working, the panel and the open conversation receive events from the run itself: `task_started`, `project_inspection`, `plan_updated`, `context_retrieval`, `file_changed`, `build_started`, `build_completed`, `test_started`, `test_completed`, `diagnostic_found`, `repair_started`, `checkpoint_saved`, `task_blocked`, and `task_completed`. A step that did not run does not get an event. A passing check is not run again when the files are still the ones that passed. The conversation gets the run's own final sentence when a session was selected.
 
 The last run is remembered only for those exact file bytes. Editing a file drops it, so a later run is not told that an older result still holds. A Python file that calls or imports a name another project file no longer defines is a failure, the same as a missing JavaScript export.
 
-A verified run refreshes the project index before each attempt. A file whose bytes still match is kept, and only a changed file is parsed again. The attempt then reads a symbol the task names at its definition line instead of the head of a long file. A failure line in that file is read as well, so the error does not hide the definition. A failure that quotes a name, or writes it as `Box.store`, `save_invoice`, or `CamelCase`, is read at that definition even when the task does not say the name. A Python or JavaScript traceback keeps the line that raised and up to three project callers above it. Pytest's `file:line: in function` form is read the same way. A library frame is left out. JavaScript keeps the first `at file:line` frame as the raise. A `node --test` assertion keeps the stack line and the expected-value diff, and leaves `node:internal` frames out. A Rust panic keeps `panicked at file:line` and the left and right values, instead of Cargo's `error: test failed` line. A Go compile line `file:line:col: message` and a rustc `error[E1234]` with `--> file:line:col` keep that source line. A Go test line `file:line: message` keeps that line and both compared values. Pytest's `file:line: in function` stays a traceback. A sentence such as "value must be 2" does not name a symbol. A call is read at the call only when the index records that call's target as that definition, including a JavaScript name imported from a relative file. `Box().save()` and `module.Box().save()` record the target as `Box.save`, and a relative `from .a import Box` does the same. `box = Box()` followed by `box.save()` records `Box.save` when every assignment of that name in the scope is that constructor, including an assignment in the surrounding module. A parameter, `box = None`, two different constructors, and a comprehension that reuses the name stay a call on `box`. The same assignment is checked for a missing method and a wrong argument count. A JavaScript class method is indexed at `Class.method`. `new Box().save()` and `const box = new Box(); box.save()` record that method. A parameter in one function does not unbind a different function's `box`, and `const box = null` stays unbound. A missing method or a wrong argument count on that call is reported. The index schema is 6, so a snapshot written by an older parser is read again. At most four other files are added for those calls. A call that only shares the short name, such as `box.save()`, is left out. A hash that no longer matches the file is ignored. A name defined in one fresh file is that definition. The same name in several files is read from the file the task names, or, when the task names no file, from the one definition other files actually call. A call inside the defining file does not decide it. When both definitions are called, neither is treated as the only one. On a repair turn the files in the prompt are the copies on disk, and a previous reply that disagrees with them is not. When a repository has at least six indexed files, a word that appears in 40 percent or more of them does not pull those files into the prompt. A function the task names, and a file that calls it, still rank first. In a 12-file fixture, `save_invoice` and its caller were selected and the ten files that only repeat the word "invoice" were not. The same measurement windowed a 4,000-line caller at `return save_invoice()` and the definition at `return 1`. It also windowed `return Box().save(1)` and `box = Box(); return box.save(1)`, and left `box = None` unanchored. A JavaScript `const box = new Box(); return box.save(1)` was windowed at the call and at `save(item)`. `const box = null` was not anchored. A name that appears in the failure is ranked even when the task and the failing file never write it. A long file then opens at that definition, including a Go function the source index does not parse. When a few files define that name, each definition is opened. A name defined across the tree is not. The window then includes that function through its return. A longer function keeps its start and its return. A SEARCH block that copies an `... omitted middle ...` banner is applied as the pieces on either side, so the return can change while the hidden lines stay. A Go project that fails `go test` can be repaired that way: the build and the test stay separate facts, and `verified` requires both. Once the index has resolved a name, a file that only contains that word is not ranked as a caller. In a nine-file fixture that unbound file was left out of the prompt, while the same prompt without the index still read it. A crash that quoted `Box` while the task said only "fix the crash" was windowed at `def save`. A traceback that raised in `invoice.py` and called it from `checkout.py` kept both lines and left the library frame out. The same two lines were kept from pytest's `file:line: in function` form, with the message `ZeroDivisionError: division by zero`. A real `node --test` run failed on `logic.test.js:4` and the diagnostic included `Hello, Sumi`. The same measurement, given two `save` definitions and a checkout that imports `billing.invoice`, read `billing/invoice.py` and the caller and left `notes/draft.py` out. Refreshing that index after one file changed parsed that file and reused the other eleven (`training/evidence/2026-11-06/agent-system-bench.json`). That run did not use a model or a GPU.
+A verified run refreshes the project index before each attempt. A file whose bytes still match is kept, and only a changed file is parsed again. The attempt then reads a symbol the task names at its definition line instead of the head of a long file. A failure line in that file is read as well, so the error does not hide the definition. A failure that quotes a name, or writes it as `Box.store`, `save_invoice`, or `CamelCase`, is read at that definition even when the task does not say the name. A Python or JavaScript traceback keeps the line that raised and up to three project callers above it. Pytest's `file:line: in function` form is read the same way. A library frame is left out. JavaScript keeps the first `at file:line` frame as the raise. A `node --test` assertion keeps the stack line and the expected-value diff, and leaves `node:internal` frames out. A Rust panic keeps `panicked at file:line` and the left and right values, instead of Cargo's `error: test failed` line. A Go compile line `file:line:col: message` and a rustc `error[E1234]` with `--> file:line:col` keep that source line. A Go test line `file:line: message` keeps that line and both compared values. Pytest's `file:line: in function` stays a traceback. A sentence such as "value must be 2" does not name a symbol. A call is read at the call only when the index records that call's target as that definition, including a JavaScript name imported from a relative file. `Box().save()` and `module.Box().save()` record the target as `Box.save`, and a relative `from .a import Box` does the same. `box = Box()` followed by `box.save()` records `Box.save` when every assignment of that name in the scope is that constructor, including an assignment in the surrounding module. A parameter, `box = None`, two different constructors, and a comprehension that reuses the name stay a call on `box`. The same assignment is checked for a missing method and a wrong argument count. A JavaScript class method is indexed at `Class.method`. `new Box().save()` and `const box = new Box(); box.save()` record that method. A parameter in one function does not unbind a different function's `box`, and `const box = null` stays unbound. A missing method or a wrong argument count on that call is reported. The index schema is 6, so a snapshot written by an older parser is read again. At most four other files are added for those calls. A call that only shares the short name, such as `box.save()`, is left out. A hash that no longer matches the file is ignored. A name defined in one fresh file is that definition. The same name in several files is read from the file the task names, or, when the task names no file, from the one definition other files actually call. A call inside the defining file does not decide it. When both definitions are called, neither is treated as the only one. On a repair turn the files in the prompt are the copies on disk, and a previous reply that disagrees with them is not. When a repository has at least six indexed files, a word that appears in 40 percent or more of them does not pull those files into the prompt. A function the task names, and a file that calls it, still rank first. In a 12-file fixture, `save_invoice` and its caller were selected and the ten files that only repeat the word "invoice" were not. The same measurement windowed a 4,000-line caller at `return save_invoice()` and the definition at `return 1`. It also windowed `return Box().save(1)` and `box = Box(); return box.save(1)`, and left `box = None` unanchored. A JavaScript `const box = new Box(); return box.save(1)` was windowed at the call and at `save(item)`. `const box = null` was not anchored. A name that appears in the failure is ranked even when the task and the failing file never write it. A long file then opens at that definition, including a Go function the source index does not parse. When a few files define that name, each definition is opened. A name defined across the tree is not. The window then includes that function through its return. A longer function keeps its start and its return. A SEARCH block that copies an `... omitted middle ...` banner is applied as the pieces on either side, so the return can change while the hidden lines stay. A Go project that fails `go test` can be repaired that way: the build and the test stay separate facts, and `verified` requires both. Once the index has resolved a name, a file that only contains that word is not ranked as a caller. In a nine-file fixture that unbound file was left out of the prompt, while the same prompt without the index still read it. A crash that quoted `Box` while the task said only "fix the crash" was windowed at `def save`. A traceback that raised in `invoice.py` and called it from `checkout.py` kept both lines and left the library frame out. The same two lines were kept from pytest's `file:line: in function` form, with the message `ZeroDivisionError: division by zero`. A real `node --test` run failed on `logic.test.js:4` and the diagnostic included `Hello, Janna Pro`. The same measurement, given two `save` definitions and a checkout that imports `billing.invoice`, read `billing/invoice.py` and the caller and left `notes/draft.py` out. Refreshing that index after one file changed parsed that file and reused the other eleven (`training/evidence/2026-11-06/agent-system-bench.json`). That run did not use a model or a GPU.
 
 A plain call whose argument count cannot match the function it imports is an error, even when the project's tests pass. The same check applies to `Class().method()` when the class is defined in another project file and does not inherit. Defaults, rest arguments, keywords, and stars are left alone. When that failure names the defining file, the next repair reads it as well as the caller. Diagnostic room this turn does not use is spent on source instead. A repair that deletes or rewrites a test line that was already in the project is put back and tried again. An assertion in the same file as the function, such as Rust's `assert_eq!` in `src/main.rs`, is kept the same way. The function around it can still change. The task can still change a test when it names that file. The edit prompt lists the checks this run will execute and any check that is blocked, by name and kind. It does not include the command line. The training rows do not include that section, because their prompts are rendered without a project plan. A file that is already included in full is left out of the repository map, so the prompt does not carry a second copy of the same source. Up to four uncommitted source files are read even when the task does not name them. The three repair rows in `training/vibe/vibe-coding-v1.json` were re-rendered to match that prompt. Their fixes were not changed, and no adapter was trained on the new wording.
 

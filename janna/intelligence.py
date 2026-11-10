@@ -50,8 +50,8 @@ def profile_for(speed: str = "standard", effort: str = "balanced", model: str = 
     base = PROFILES[EFFORT[effort]]
     if speed == "boost" and effort in ("quick", "balanced"):
         base = PROFILES["boost"]
-    # Rei uses a smaller context/cache budget to leave VRAM for 8 GB GPUs.
-    if model.lower().startswith(('rei-1.0', 'sumi-1.0-lite', 'bonsai-2:9b')):
+    # Janna Lite uses a smaller context/cache budget to leave VRAM for 8 GB GPUs.
+    if model.lower().startswith(('janna-lite-1.0', 'janna-pro-1.0-lite', 'bonsai-2:9b')):
         ceiling = {'boost': 4096, 'standard': 8192, 'deep': 12288, 'maximum': 16384}[base.name]
         return replace(base, context=min(base.context, ceiling),
                        output_tokens=min(base.output_tokens, 2600),

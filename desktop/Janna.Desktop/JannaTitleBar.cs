@@ -126,10 +126,10 @@ internal sealed class JannaTitleBar : Panel
 
     internal void ApplyTheme(string name)
     {
-        var dark = name is "sumi" or "midnight" or "yoru" or "kintsugi" or "moss" or "beni" or "shinku" or "tsuki" or "ruri" or "nuri" or "tetsu" or "kurocha" or "nezumi" or "fukamidori" or "konpeki" or "budou" or "akatsuki" or "roiro" or "kachi" or "miru" or "susutake" or "namari" or "enkai" or "karasuba" or "sumizome" or "benibana" or "yamabuki" or "rikyunezu" or "soba" or "dusk" or "slate" or "crimson" or "violet" or "tide" or "azure";
+        var dark = name is "pro" or "midnight" or "yoru" or "kintsugi" or "moss" or "beni" or "shinku" or "tsuki" or "ruri" or "nuri" or "tetsu" or "kurocha" or "nezumi" or "fukamidori" or "konpeki" or "budou" or "akatsuki" or "roiro" or "kachi" or "miru" or "susutake" or "namari" or "enkai" or "karasuba" or "sumizome" or "benibana" or "yamabuki" or "rikyunezu" or "soba" or "dusk" or "slate" or "crimson" or "violet" or "tide" or "azure";
         var side = name switch
         {
-            "sumi" => "#181D21", "midnight" => "#121722", "yoru" => "#131C29",
+            "pro" => "#181D21", "midnight" => "#121722", "yoru" => "#131C29",
             "kintsugi" => "#1B2529", "moss" => "#26382F", "sakura" => "#F6ECEE",
             "sage" => "#D8E2D3", "matcha" => "#EAF0E4", "indigo" => "#EAEAF3", "ume" => "#F1E1E5",
             "washi" => "#F3EEE4", "kyoto" => "#EDE4D7", "sora" => "#D9EAF0",

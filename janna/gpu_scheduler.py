@@ -24,7 +24,7 @@ class GpuScheduler:
             if self.active is not None:
                 raise ValueError("A GPU-exclusive task is already running")
             if self.is_model_busy():
-                raise ValueError("Stop active Sumi/Rei inference before a GPU-exclusive performance test")
+                raise ValueError("Stop active Janna Pro/Janna Lite inference before a GPU-exclusive performance test")
             self.active = task_id
             self.since = time.time()
         if self.unload:

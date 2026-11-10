@@ -22,7 +22,7 @@ internal static class Program
         AppDomain.CurrentDomain.UnhandledException += (_, error) => LaunchDiagnostics.Write("Unhandled exception: " + error.ExceptionObject);
         try
         {
-            LaunchDiagnostics.Write("Janna.exe started; version 1.6.0 with Sumi 1.1 and Rei 1.1.");
+            LaunchDiagnostics.Write("Janna.exe started; version 1.6.0 with Janna Pro 1.1 and Janna Lite 1.1.");
             Application.Run(new JannaWindow());
         }
         catch (Exception error)

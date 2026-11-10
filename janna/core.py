@@ -24,7 +24,7 @@ from .intelligence import profile_for, repo_snapshot
 
 OLLAMA_URL = "http://127.0.0.1:11434"
 from .language import resolve_language, model_instruction
-from .models import is_rei, is_sumi_lite
+from .models import is_lite, is_pro_lite
 from .model_transport import open_stream
 
 APP_VERSION = "1.6.0"
@@ -95,7 +95,7 @@ ANSWER_STYLE_GUIDANCE = (
 AGENT_MARKER = re.compile(r"(?im)^\s*JANNA_STATUS:\s*(COMPLETE|CONTINUE|BLOCKED)\s*$")
 SECRETS = re.compile(r"(?i)(api[_ -]?key|password|secret|access[_ -]?token|discord[_ -]?token|bot[_ -]?token|client[_ -]?secret)\s*[:=]\s*([^\s,;]+)")
 
-# Consistent guidance for Chat and Agent across Sumi and Rei profiles.
+# Consistent guidance for Chat and Agent across Janna Pro and Janna Lite profiles.
 # A request's engineering topic is not a reason for application-level rejection.
 ENGINEERING_TASK_GUIDANCE = (
     "Treat legitimate console-emulation, CPU/JIT/dynarec, kernel and driver modeling, "
@@ -139,7 +139,7 @@ def web_design_context(task: str) -> str:
 
 
 def model_identity(model: str) -> str:
-    return 'Rei 1.1' if is_rei(model) or is_sumi_lite(model) else 'Sumi 1.1'
+    return 'Janna Lite 1.1' if is_lite(model) or is_pro_lite(model) else 'Janna Pro 1.1'
 
 
 # Explicit model-origin refusals must stay visible and unchanged, including if
@@ -344,7 +344,7 @@ def classify_opencode_failure(diagnostics: list[str]) -> str:
     if re.search(r"(?:econnrefused|connection refused|ollama.{0,70}(?:unavailable|offline|unreachable)|127\.0\.0\.1:11434.{0,60}(?:failed|refused))", evidence):
         return "OpenCode could not contact the local model service. Verify Ollama is running on this PC."
     if re.search(r"(?:model.{0,70}(?:not found|not installed|unknown model)|modelnotfound|no such model)", evidence):
-        return "OpenCode could not find the selected Sumi/Rei model. Check that it is installed and mapped."
+        return "OpenCode could not find the selected Janna Pro/Janna Lite model. Check that it is installed and mapped."
     if re.search(r"(?:unknown option|unrecognized option|unexpected option|unknown flag|usage: opencode)", evidence):
         return "The installed OpenCode CLI rejected an argument. Compare its installed version against supported run options."
     if re.search(r"(?:invalid configuration|invalid config|configuration error|config.{0,70}invalid|zoderror)", evidence):
@@ -377,7 +377,7 @@ def ui_event_stream(url: str, messages: list[dict], model: str, level: str,
         if "off" in reasoning_profile(model)["levels"]:
             think = False
     system = (
-        "You are " + model_identity(model) + ", a local engineering model behind Janna AI, a local AI workspace by Jepong Devxyz based on the open-source Takumi project by Coye. You communicate as Janna AI in the app. "
+        "You are " + model_identity(model) + ", a local engineering model behind Janna AI, a local AI workspace by Jepong Devxyz. You communicate as Janna AI in the app. "
         "Your specialties are console emulators, graphics APIs, GPU synchronization, shaders, "
         "rendering reconstruction, binary formats, reverse engineering and decompilation. "
         "Approach these as testable engineering problems, not as facts you have already verified. "
@@ -665,8 +665,8 @@ class Agent:
             return output
         local_name = model.split("/", 1)[-1] if model else "bonsai-2:27b"
         # OpenCode 1.19.5 subtracts output allowance from context before
-        # deciding to compact. A fixed 8192 consumes all of Rei's standard
-        # window and half of Sumi's, causing repeated summaries on small jobs.
+        # deciding to compact. A fixed 8192 consumes all of Janna Lite's standard
+        # window and half of Janna Pro's, causing repeated summaries on small jobs.
         output_tokens = min(8192, max(1024, context_tokens // 4))
         output = {"$schema": "https://opencode.ai/config.json", "share": "disabled",
                 "provider": {"ollama": {"npm": "@ai-sdk/openai-compatible", "name": "Ollama (Janna local)",
@@ -813,9 +813,9 @@ class Agent:
 def instruction_prompt(task: str, extra: bool = False, *,
                        project: Path | None = None, memory: str = "",
                        effort: str = "balanced", personality: str = "precise",
-                       language: str = "auto", model: str = "sumi-1.0:latest") -> str:
+                       language: str = "auto", model: str = "janna-pro-1.0:latest") -> str:
     prefix = (
-        "You are " + model_identity(model) + ", a local engineering model powering Janna AI, a local AI workspace by Jepong Devxyz based on the open-source Takumi project by Coye: an exceptionally careful senior engineer specializing "
+        "You are " + model_identity(model) + ", a local engineering model powering Janna AI, a local AI workspace by Jepong Devxyz: an exceptionally careful senior engineer specializing "
         "in emulators for many consoles, CPU/OS service behavior, binary formats, graphics reconstruction, "
         "Vulkan/D3D, synchronization, shader translation, reverse engineering and decompilation. "
         "This is a specialization in methods, not a claim of superhuman knowledge. "

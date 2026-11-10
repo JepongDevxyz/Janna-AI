@@ -25,36 +25,35 @@
 
 Janna AI is an open-source Windows workspace for local AI chat and coding. It brings your model, project files, coding tools and research into a quiet desktop interface, with saved conversations and visible task progress.
 
-> **Based on [Takumi](https://github.com/coye2/Takumi)** — Janna AI is an independent rebrand of the open-source Takumi local AI workspace by Coye, developed by Jepong Devxyz. The upstream MIT license and third-party notices are preserved in this repository.
 
-**Sumi 1.1** is the full local model profile. **Rei 1.1** offers a smaller profile for machines with less memory. **Kage** adds a companion panel with task coordination and selectable ninja characters, including Akane, the crimson ninja.
+**Janna Pro 1.1** is the full local model profile. **Janna Lite 1.1** offers a smaller profile for machines with less memory. **Luna** is Janna's pet companion — a little star cat who lives in the companion panel, reacts to your work, and chats in her own persona.
 
 ## What you can do
 
 - **Talk through an idea.** Get clear explanations, keep local notes, and return to saved conversations.
 - **Work in a real project.** Use the separately installed OpenCode engine for edits and commands, with live activity, cancellation and saved run history.
-- **Check changes with the real build.** Opt-in [Verified build](docs/VIBE-CODING.md) has Sumi edit a project, run its own build and tests, and repair from the errors, then labels how far the result was actually checked.
+- **Check changes with the real build.** Opt-in [Verified build](docs/VIBE-CODING.md) has Janna Pro edit a project, run its own build and tests, and repair from the errors, then labels how far the result was actually checked.
 - **Explore source.** Search local symbols and inspect bounded, commit-pinned GitHub excerpts using your existing GitHub CLI login.
 - **Investigate engineering problems.** Use optional compiler, shader and binary-analysis tools. Review evidence and test results alongside the answer.
-- **Choose your working style.** Change themes, language, model settings and Kage companions. Code blocks and references stay accessible.
+- **Choose your working style.** Change themes, language, model settings and Luna companions. Code blocks and references stay accessible.
 - **Connect optional services.** Configure research providers, Figma MCP, a project Discord bot or private phone access when you need them.
 
-![Kage companions](docs/images/kage.jpg)
+![Luna companions](docs/images/luna.jpg)
 
 ## Get started
 
 Download the **Windows x64** ZIP from [Releases](https://github.com/JepongDevxyz/Janna-AI/releases/tag/v1.6.0), extract it completely, and open `Janna.exe`. The portable desktop requires **Windows 10/11 x64, Python 3.11+ and Microsoft Edge WebView2**. The .NET runtime is included in the desktop executable.
 
-Use **Set up Sumi 1.1** in the app, or `SETUP-SUMI.cmd`, to configure local inference. Setup downloads the separate inference engine and model when needed. For a smaller model, use `SETUP-REI.cmd`. Coding mode also needs the separately installed OpenCode CLI.
+Use **Set up Janna Pro 1.1** in the app, or `SETUP-JANNA-PRO.cmd`, to configure local inference. Setup downloads the separate inference engine and model when needed. For a smaller model, use `SETUP-JANNA-LITE.cmd`. Coding mode also needs the separately installed OpenCode CLI.
 
 For a source-based installation that installs missing prerequisites and builds the desktop, download the **Source** ZIP and run `REPAIR-Janna.cmd`. Read the [setup guide](docs/GETTING-STARTED.md) for downloads, requirements and troubleshooting.
 
 | Profile | Intended hardware | Base-model download |
 | --- | --- | --- |
-| Sumi 1.1 | 16 GB GPU memory and 32 GB system RAM recommended | About 8.3 GB |
-| Rei 1.1 | Smaller-memory systems; intended for 8 GB GPUs | About 3.2 GB |
+| Janna Pro 1.1 | 16 GB GPU memory and 32 GB system RAM recommended | About 8.3 GB |
+| Janna Lite 1.1 | Smaller-memory systems; intended for 8 GB GPUs | About 3.2 GB |
 
-Actual memory use varies with context and workload. Sumi was tested on an RTX 4060 Ti 16 GB; the 8 GB Rei target still needs physical-device qualification. Sumi and Rei are application profiles over separately downloaded Bonsai models, not newly trained foundation models.
+Actual memory use varies with context and workload. Janna Pro was tested on an RTX 4060 Ti 16 GB; the 8 GB Janna Lite target still needs physical-device qualification. Janna Pro and Janna Lite are application profiles over separately downloaded Bonsai models, not newly trained foundation models.
 
 ## Local by default
 
@@ -96,7 +95,7 @@ Open `http://127.0.0.1:8765` for the browser UI. On Windows with the .NET 10 SDK
 - [Release status and known limitations](docs/RELEASE-STATUS.md)
 - [Engineering tools](docs/ENGINEERING-TOOLS.md)
 - [Verified build](docs/VIBE-CODING.md)
-- [Sumi setup](docs/SETUP-SUMI.md) and [engineering guide](docs/SUMI-ENGINEERING.md)
+- [Janna Pro setup](docs/SETUP-JANNA-PRO.md) and [engineering guide](docs/JANNA PRO-ENGINEERING.md)
 - [Private iPhone access](docs/REMOTE-IPHONE.md)
 - [Changelog](CHANGELOG.md)
 

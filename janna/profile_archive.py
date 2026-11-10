@@ -21,14 +21,14 @@ def export_profile(runtime) -> dict:
                         for m in row.get("messages", [])[:100]
                         if m.get("role") in ("user", "assistant")]
             sessions.append({"title": str(row.get("title", "Chat"))[:120], "messages": messages})
-    return {"format": "janna-profile", "version": 1, "exported": int(time.time()),
+    return {"format": "janna_profile", "version": 1, "exported": int(time.time()),
             "display_profile": runtime.profiles.current(), "settings": {k: v for k, v in runtime.settings.items() if k in EXPORTABLE_SETTINGS},
             "sessions": sessions, "memory": [{"text": str(note.get("text", ""))[:900]}
                                             for note in runtime.memory.list()[:100]]}
 
 
 def validate_import(payload: dict) -> dict:
-    if not isinstance(payload, dict) or payload.get("format") != "janna-profile" or payload.get("version") != 1:
+    if not isinstance(payload, dict) or payload.get("format") != "janna_profile" or payload.get("version") != 1:
         raise ValueError("Choose a Janna profile export (version 1)")
     if not isinstance(payload.get("sessions"), list) or len(payload["sessions"]) > 200:
         raise ValueError("Too many conversations in profile export")

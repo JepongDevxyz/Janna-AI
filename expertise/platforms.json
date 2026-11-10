@@ -526,7 +526,7 @@
       "sega model"
     ],
     "architecture": "Hardware differs per board; define machine/device/bus map, clocks, video/audio and cartridge security for the specific board.",
-    "diagnostic_probes": "Check actual board revision, ROM region layout and device configuration; use per-device tests rather than assuming generic arcade hardware.",
+    "diagnostic_probes": "Check actual board revision, ROM region layout and device configuration; use per-device tests rather than asjanna_prong generic arcade hardware.",
     "source_ids": [
       "mame",
       "ares"

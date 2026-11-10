@@ -42,7 +42,7 @@ func main() {
 		show("The setup files are missing. Extract the entire ZIP first, then run Janna-Setup.exe from the extracted Janna folder.", "Janna - Setup files missing", mbOK|mbIconError)
 		return
 	}
-	if show("Build or repair the native Janna app on this PC? The console will remain visible and save a diagnostic log. The installer will select Sumi 1.0 (~8.3 GB) or Rei 1.0 (~3.2 GB) according to this PC's hardware. Official external runtimes will be downloaded if missing. Nothing paid is required.", "Janna - Native Setup", mbYesNo|mbIconQuestion) != idYes {
+	if show("Build or repair the native Janna app on this PC? The console will remain visible and save a diagnostic log. The installer will select Janna Pro 1.0 (~8.3 GB) or Janna Lite 1.0 (~3.2 GB) according to this PC's hardware. Official external runtimes will be downloaded if missing. Nothing paid is required.", "Janna - Native Setup", mbYesNo|mbIconQuestion) != idYes {
 		return
 	}
 	cmd := exec.Command("cmd.exe", "/d", "/c", repair)

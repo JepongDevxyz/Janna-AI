@@ -2,7 +2,7 @@
 
 **1.6.0 · 2026-11-07**
 
-Adds the opt-in Verified build loop, Sumi 1.1 and Rei 1.1 profiles, reviewable project tasks, phone readiness checks and clearer coding-engine failures. Sumi and Rei remain configurations over separately downloaded Bonsai weights; no trained adapter is bundled or promoted.
+Adds the opt-in Verified build loop, Janna Pro 1.1 and Janna Lite 1.1 profiles, reviewable project tasks, phone readiness checks and clearer coding-engine failures. Janna Pro and Janna Lite remain configurations over separately downloaded Bonsai weights; no trained adapter is bundled or promoted.
 
 Verified build was measured on the owner's RTX 4060 Ti 16 GB. With reasoning in the edge-case step, 17 unseen tasks passed hidden tests on 14 with none falsely verified (previous setup: 10, with two falsely verified). A regression rerun on the merged code passed 15 with one falsely verified. `verified` is not proof of correctness: the project's checks may be incomplete. These are small tasks; see [Verified build](VIBE-CODING.md) for every run, including failures.
 
@@ -55,7 +55,7 @@ The installed service retained its paired device and private HTTPS access.
 
 
 
-The development build ran on Windows 11 with an Intel Core i7-14700F, 32 GB RAM and RTX 4060 Ti 16 GB. The installed runtime was Ollama 0.40.13, with the Sumi 1.0 profile over a 26.9B Q2_0 model. Native WebView2 startup and actual local generation were exercised.
+The development build ran on Windows 11 with an Intel Core i7-14700F, 32 GB RAM and RTX 4060 Ti 16 GB. The installed runtime was Ollama 0.40.13, with the Janna Pro 1.0 profile over a 26.9B Q2_0 model. Native WebView2 startup and actual local generation were exercised.
 
 The prior full Python suite ran 182 tests: 177 passed and five environment-dependent tests were skipped. The final communication change also passed 26 targeted tests, frontend syntax checks and Markdown regressions. Public-export checks and its separately built native artifact are recorded in the GitHub release notes and CI.
 
@@ -67,7 +67,7 @@ Readability tests improved a long review from 761 words to three paragraphs tota
 - GitHub review reads selected, bounded source excerpts and branch heads. It is not an exhaustive latest-work audit or a build/test run.
 - Vague project requests that omit repository/GitHub wording can still take the wrong research route. Public search can return irrelevant results; Reddit access was blocked on the development PC.
 - Source syntax checks do not establish linking, ABI behavior, runtime correctness or gameplay.
-- Rei's physical 8 GB GPU target, private phone access, Figma OAuth, Discord endurance and long unattended goals still need broader qualification.
+- Janna Lite's physical 8 GB GPU target, private phone access, Figma OAuth, Discord endurance and long unattended goals still need broader qualification.
 - The source-based installer and updater have recovery logic and automated tests; a clean-machine upgrade/rollback matrix has not been completed for this public preview.
 - Voice depends on browser capabilities and may use external services. The desktop is not a full remote-control environment.
 
