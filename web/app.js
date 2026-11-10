@@ -296,7 +296,7 @@ function evidencePanel(report){
 }
 function makeMessage(m){const wrapper=document.createElement('article');wrapper.className='message '+(m.role==='user'?'user':'assistant');if(m.role==='user'){const bubble=document.createElement('div');bubble.className='user-bubble';bubble.textContent=m.content||'';wrapper.appendChild(bubble);if(Array.isArray(m.attached)&&m.attached.length)wrapper.append(el('div','attachment-note',m.attached.map(item=>item.name+' · '+(item.kind==='image'?'image':'log')).join(' · ')));const uact=el('div','message-actions user-actions');const ucopy=el('button','message-action');ucopy.title='Copy';ucopy.setAttribute('aria-label','Copy');ucopy.innerHTML='<svg><use href="#i-copy"/></svg>';ucopy.onclick=async()=>{toast(await copyCodeText(m.content||'')?'Copied':'Copy failed')};uact.append(ucopy);wrapper.appendChild(uact);return wrapper}const header=document.createElement('div');header.className='assistant-head';const img=document.createElement('img');img.className='small-mark';img.src='/mark-clean.png';img.alt='';header.append(img,document.createTextNode('Janna'));wrapper.appendChild(header);const content=document.createElement('div');content.className='message-body';content._codeValidation=m.code_validation||null;renderMarkdown(content,m.content||'');wrapper.appendChild(content);
   const actions=el('div','message-actions');const copyBtn=el('button','message-action');copyBtn.title='Copy response';copyBtn.setAttribute('aria-label','Copy response');copyBtn.innerHTML='<svg><use href="#i-copy"/></svg>';copyBtn.onclick=async()=>{toast(await copyCodeText(m.content||'')?'Copied':'Copy failed')};const shareBtn=el('button','message-action');shareBtn.title='Share';shareBtn.setAttribute('aria-label','Share');shareBtn.innerHTML='<svg><use href="#i-share"/></svg>';shareBtn.onclick=async()=>{const text=m.content||'';if(navigator.share){try{await navigator.share({text})}catch{}}else toast(await copyCodeText(text)?'Copied to share':'Copy failed')};actions.append(copyBtn,shareBtn);wrapper.appendChild(actions);
-  if(typeof m.reasoning==='string'&&m.reasoning.trim()){const saved=document.createElement('details');saved.className='reasoning-live';const sum=document.createElement('summary');sum.textContent='Thought process';const note=document.createElement('p');note.className='reasoning-note';note.textContent='Text from the model. This is not the answer.';const pre=document.createElement('pre');pre.className='reasoning-text';pre.textContent=m.reasoning;saved.append(sum,note,pre);wrapper.insertBefore(saved,content);}
+  if(m.activity&&Array.isArray(m.activity.steps)&&m.activity.steps.length){const chain=document.createElement('details');chain.className='activity-chain';const sum=document.createElement('summary');sum.textContent='Thought for '+(m.activity.seconds||1)+'s';const ol=document.createElement('ol');ol.className='activity-steps';for(const label of m.activity.steps){const li=document.createElement('li');li.textContent=label;ol.append(li)}chain.append(sum,ol);wrapper.insertBefore(chain,content);}
   if(m.evidence?.claims?.length)wrapper.append(evidencePanel(m.evidence));
   if(m.completion_verification)wrapper.append(completionPanel(m.completion_verification));
   if(m.code_repaired)wrapper.append(el('small','muted','Syntax errors corrected in one checked pass. Original draft retained below; runtime behavior remains unverified.'));
@@ -420,13 +420,6 @@ async function send(resumeRun=null){
   }
   const response=makeMessage({role:'assistant',content:''});
   if(!resumeRun)$('messages').append(user);$('messages').append(response);
-  const reason=document.createElement('details');reason.className='reasoning-live';reason.open=false;reason.hidden=true;
-  const reasonSummary=document.createElement('summary');const reasonClock=document.createElement('span');reasonClock.className='reasoning-clock';reasonClock.textContent='0s';
-  reasonSummary.append('Thought process · ',reasonClock);
-  const reasonNote=document.createElement('p');reasonNote.className='reasoning-note';reasonNote.textContent='Text from the model. This is not the answer.';
-  const reasonPre=document.createElement('pre');reasonPre.className='reasoning-text';
-  reason.append(reasonSummary,reasonNote,reasonPre);response.append(reason);
-  let reasoningText='',reasoningCut=false;
   const body=response.querySelector('.message-body');
   const live=document.createElement('section');
   live.className='work-stream';live.setAttribute('aria-label','Live task activity');
@@ -438,7 +431,7 @@ async function send(resumeRun=null){
   const clock=live.querySelector('.work-stream-clock');
   const wrap=live.querySelector('.work-stream-body');
   const timeline=[];let droppedFrom='';
-  let sources=[],began=performance.now()-(resumeRun?.created?Math.max(0,Date.now()-resumeRun.created*1000):0),done=false,recovered=false,reasoningNoted=false,codeReport=null;
+  let sources=[],began=performance.now()-(resumeRun?.created?Math.max(0,Date.now()-resumeRun.created*1000):0),done=false,recovered=false,codeReport=null;
   live.querySelector('.work-stream-heading').onclick=()=>{wrap.hidden=!wrap.hidden;live.querySelector('.work-stream-heading').setAttribute('aria-expanded',String(!wrap.hidden))};
   const elapsed=setInterval(()=>{if(!done)clock.textContent=Math.max(0,Math.round((performance.now()-began)/1000))+'s'},1000);
   function add(stage,label,info='',url=''){
@@ -479,21 +472,16 @@ async function send(resumeRun=null){
           case 'progress':
             window.lunaSetState?.(ev.stage==='research'?'researching':ev.stage==='verification'?'checking':'thinking');
             setTitle(ev.message||'Working');
-            if(ev.stage!=='analysis')add(ev.stage,ev.message||'Progress updated');break;
+            if(ev.message)add(ev.stage,ev.message);break;
           case 'specialization':
             // Expertise is already provided to the model. Do not clutter chat with internal plumbing.
             break;
           case 'reasoning':{
-            const chunk=typeof ev.text==='string'?ev.text:'';
-            if(!chunk)break;
-            reason.hidden=false;reasoningText+=chunk;
-            if(reasoningText.length>32000){reasoningText=reasoningText.slice(-32000);reasoningCut=true}
-            reasonPre.textContent=reasoningText+(reasoningCut?'\n[earlier reasoning omitted]':'');
-            if(typeof ev.elapsed_ms==='number')reasonClock.textContent=(ev.elapsed_ms/1000).toFixed(1)+'s';
-            setTitle('Thinking');break}
+            // ChatGPT-style: reasoning shows as an activity status in the chain,
+            // never as raw model text.
+            setTitle('Thinking');add('analysis','Thinking through the problem');break}
           case 'reasoning_activity':
-            setTitle('Thinking');
-            if(!reasoningText){reason.hidden=false;reasonNote.textContent='The model signaled reasoning but did not send the text.';reasoningNoted=true}break;
+            setTitle('Thinking');add('analysis','Thinking through the problem');break;
           case 'sources':
             window.lunaSetState?.('researching');sources=ev.sources||[];
             {
@@ -527,9 +515,11 @@ async function send(resumeRun=null){
             {
               const selection=window.getSelection();
               const preserveSelection=selection&&!selection.isCollapsed&&response.contains(selection.anchorNode);
-              const finished=makeMessage({role:'assistant',content:state.stream,original:ev.original,status:ev.status,status_origin:ev.status_origin,refusal_origin:ev.refusal_origin,polished:ev.polished,metrics:ev.metrics,code_validation:ev.code_validation||codeReport,code_repaired:ev.code_repaired,evidence:ev.evidence,completion_verification:ev.completion_verification,sources,research_freshness:ev.research_freshness,research_note:ev.research_note,model_used:ev.model_used,reasoning:reasoningText});
-              if(!reason.hidden&&preserveSelection){reason.open=false;reasonClock.textContent=Math.max(0,Math.round((performance.now()-began)/1000))+'s'}
-              if(timeline.length){setTitle(ev.run_state==='stopped'?'Stopped':ev.run_state==='blocked'?'Work blocked':'Activity');clock.textContent=timeline.length+' steps';live.classList.add('is-done');[...list.children].forEach(n=>n.classList.remove('is-current'));wrap.hidden=true;if(!preserveSelection)finished.append(live);}
+              const isChatRun=options.mode!=='agent';
+              const secs=Math.max(1,Math.round((performance.now()-began)/1000));
+              const activity=isChatRun&&timeline.length?{steps:timeline.map(t=>t.label),seconds:secs}:null;
+              const finished=makeMessage({role:'assistant',content:state.stream,original:ev.original,status:ev.status,status_origin:ev.status_origin,refusal_origin:ev.refusal_origin,polished:ev.polished,metrics:ev.metrics,code_validation:ev.code_validation||codeReport,code_repaired:ev.code_repaired,evidence:ev.evidence,completion_verification:ev.completion_verification,sources,research_freshness:ev.research_freshness,research_note:ev.research_note,model_used:ev.model_used,activity});
+              if(timeline.length){setTitle(ev.run_state==='stopped'?'Stopped':ev.run_state==='blocked'?'Work blocked':isChatRun?`Thought for ${secs}s`:'Activity');clock.textContent=timeline.length+' steps';live.classList.add('is-done');[...list.children].forEach(n=>n.classList.remove('is-current'));wrap.hidden=true;if(!preserveSelection&&!activity)finished.append(live);}
               if(preserveSelection){if(dirty)render();}
               else {response.replaceWith(finished);const code=finished.querySelector('.message-body');if(codeByBody.get(code)?.length&&window.innerWidth>=1150)openCodeFromBody(code,0);}
             }

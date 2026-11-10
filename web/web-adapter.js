@@ -38,13 +38,13 @@
 
   function findSession(id) { return loadSessions().find(function (s) { return s.id === id; }); }
 
-  function appendExchange(sessionId, prompt, assistantText, errorMessage) {
+  function appendExchange(sessionId, prompt, assistantText, errorMessage, activity) {
     var list = loadSessions();
     var s = list.find(function (x) { return x.id === sessionId; });
     if (!s) return;
     s.messages = s.messages || [];
     if (prompt) s.messages.push({ role: 'user', content: prompt });
-    if (assistantText) s.messages.push({ role: 'assistant', content: assistantText });
+    if (assistantText) { var am = { role: 'assistant', content: assistantText }; if (activity && activity.steps && activity.steps.length) am.activity = activity; s.messages.push(am); }
     else if (errorMessage) s.messages.push({ role: 'assistant', content: '\u26a0\ufe0f ' + errorMessage });
     if ((!s.title || s.title === 'New chat') && prompt) s.title = prompt.slice(0, 60);
     s.updated = Math.floor(Date.now() / 1000);
@@ -88,6 +88,7 @@
     if (!response.body || typeof TransformStream === 'undefined') return response;
     var decoder = new TextDecoder();
     var buffer = '', recorded = false;
+    var actSteps = [], actStart = Date.now();
     var tap = new TransformStream({
       transform: function (chunk, controller) {
         try {
@@ -101,7 +102,8 @@
               try {
                 var event = JSON.parse(lines[i].slice(5).trim());
                 var p = event.payload || event;
-                if (p.type === 'done') { appendExchange(sessionId, prompt, typeof p.text === 'string' ? p.text : '', ''); recorded = true; if (queueFor(sessionId).length) scheduleDrain(sessionId); }
+                if (p.type === 'progress' && p.message) { if (actSteps[actSteps.length - 1] !== p.message) actSteps.push(p.message); }
+                else if (p.type === 'done') { var act = actSteps.length ? { steps: actSteps.slice(0, 12), seconds: Math.max(1, Math.round((Date.now() - actStart) / 1000)) } : null; appendExchange(sessionId, prompt, typeof p.text === 'string' ? p.text : '', '', act); recorded = true; if (queueFor(sessionId).length) scheduleDrain(sessionId); }
                 else if (p.type === 'error') { appendExchange(sessionId, prompt, '', p.message || 'Run failed'); recorded = true; }
                 else if (p.type === 'recovery') { appendExchange(sessionId, prompt, '', p.message || 'Outcome unknown'); recorded = true; }
               } catch { /* partial frame */ }

@@ -15,6 +15,7 @@ export const config = { maxDuration: 60 };
 const APP_VERSION = '1.6.0-web.1';
 const SYSTEM_PROMPT =
   'You are Janna AI, a helpful AI assistant in the Janna AI workspace by Jepong Devxyz. ' +
+  'Always write in the same language the user used: Tagalog in, Tagalog out; English in, English out. ' +
   'HOW YOU ANSWER — follow this style: ' +
   '(1) Answer directly first: give the answer, formula or definition up front; never open with a clarifying question — follow-up questions, if any, go at the very end. ' +
   '(2) Show your reasoning: for math, logic and procedures, break the work into labelled steps (Step 1, Step 2, ...), put each calculation on its own line, carry one worked example all the way through, and finish with a clearly marked line like **Final answer: ...** plus a quick check when you can. ' +
@@ -199,6 +200,7 @@ async function handleRun(req, res) {
   let stopResolve = null;
   let resEnded = false;
   let fullText = '';
+  let thinkTimer = null;
   const stopWait = new Promise((r) => { stopResolve = r; });
   // Ending the response cannot wait for the provider: an async generator's
   // return() only lands after its pending await settles, so a stop during a
@@ -208,6 +210,7 @@ async function handleRun(req, res) {
     stopped = true;
     try { emit({ type: 'done', text: fullText, model_used: row.id, run_state: 'stopped', metrics: {} }); } catch { /* closed */ }
     resEnded = true;
+    if (thinkTimer) clearTimeout(thinkTimer);
     clearInterval(keepalive);
     try { res.end(); } catch { /* closed */ }
     if (stopResolve) stopResolve();
@@ -248,7 +251,8 @@ async function handleRun(req, res) {
     }
     messages.push({ role: 'user', content: userContent });
 
-    emit({ type: 'progress', stage: 'analysis', message: 'Thinking' });
+    emit({ type: 'progress', stage: 'analysis', message: 'Analyzing your question' });
+    thinkTimer = setTimeout(() => { if (!resEnded && !stopped) emit({ type: 'progress', stage: 'thinking', message: 'Thinking through the problem' }); }, 2500);
     let full = '';
     let firstAt = 0;
     const started = Date.now();
@@ -257,7 +261,7 @@ async function handleRun(req, res) {
       const step = await Promise.race([streamIt.next(), stopWait.then(() => ({ stopped: true }))]);
       if (stopped || step.stopped || step.done) { try { await streamIt.return(); } catch { /* already closed */ } break; }
       const chunk = step.value;
-      if (!firstAt) { firstAt = Date.now(); emit({ type: 'first_token', milliseconds: firstAt - started }); }
+      if (!firstAt) { firstAt = Date.now(); if (thinkTimer) { clearTimeout(thinkTimer); thinkTimer = null; } emit({ type: 'first_token', milliseconds: firstAt - started }); emit({ type: 'progress', stage: 'writing', message: 'Writing the answer' }); }
       full += chunk;
       fullText = full;
       emit({ type: 'delta', text: chunk });
@@ -273,6 +277,7 @@ async function handleRun(req, res) {
     emit({ type: 'error', message: String(e && e.message || e || 'Run failed') });
   } finally {
     activeRuns.delete(runId);
+    if (thinkTimer) clearTimeout(thinkTimer);
     clearInterval(keepalive);
     if (!resEnded) { resEnded = true; try { res.end(); } catch { /* closed */ } }
   }
