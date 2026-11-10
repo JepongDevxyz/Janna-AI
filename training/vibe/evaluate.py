@@ -1,4 +1,4 @@
-"""Measure Sumi through the verified loop on tasks it did not train on.
+"""Measure Janna Pro through the verified loop on tasks it did not train on.
 
     py -3 -m training.vibe.evaluate --split test --out report.json
 

@@ -77,14 +77,14 @@ class Diagnostics(unittest.TestCase):
     def test_node_test_assertion_keeps_the_diff_and_the_stack_line(self):
         log = ("TAP version 13\n# Subtest: greeting\nnot ok 1 - greeting\n  ---\n"
                "  location: '/tmp/app/logic.test.js:3:1'\n  error: |-\n"
-               "    Expected values to be strictly equal:\n\n    + 'Hello, world'\n    - 'Hello, Sumi'\n"
+               "    Expected values to be strictly equal:\n\n    + 'Hello, world'\n    - 'Hello, Janna Pro'\n"
                "  code: 'ERR_ASSERTION'\n  name: 'AssertionError'\n  stack: |-\n"
                "    TestContext.<anonymous> (/tmp/app/logic.test.js:4:10)\n"
                "    Test.run (node:internal/test_runner/test:1047:25)\n  ...\n")
         found = diagnostics.parse(log, project='/tmp/app')
         self.assertEqual(found[0].file, 'logic.test.js')
         self.assertEqual(found[0].line, 4)
-        self.assertIn('Hello, Sumi', found[0].message)
+        self.assertIn('Hello, Janna Pro', found[0].message)
         self.assertNotIn('node:internal', ' '.join(item.file for item in found))
 
     @unittest.skipUnless(shutil.which('node'), 'node')
@@ -94,18 +94,18 @@ class Diagnostics(unittest.TestCase):
             folder = Path(raw)
             (folder / 'logic.test.js').write_text(
                 "const assert = require('node:assert');\nconst test = require('node:test');\n"
-                "test('greeting', () => {\n  assert.strictEqual('Hello, world', 'Hello, Sumi');\n});\n",
+                "test('greeting', () => {\n  assert.strictEqual('Hello, world', 'Hello, Janna Pro');\n});\n",
                 encoding='utf-8')
             result = subprocess.run(['node', '--test', 'logic.test.js'], cwd=folder, capture_output=True, text=True, timeout=30)
             found = diagnostics.parse(result.stdout + result.stderr, project=str(folder))
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual((found[0].file, found[0].line), ('logic.test.js', 4))
-        self.assertIn('Hello, Sumi', found[0].message)
+        self.assertIn('Hello, Janna Pro', found[0].message)
 
     def test_a_go_test_failure_keeps_the_line_and_both_values(self):
-        text = '--- FAIL: TestGreeting (0.00s)\n    main_test.go:8: Greeting("Sumi") = "Hi, Sumi", want "Hello, Sumi"\nFAIL\n'
+        text = '--- FAIL: TestGreeting (0.00s)\n    main_test.go:8: Greeting("Janna Pro") = "Hi, Janna Pro", want "Hello, Janna Pro"\nFAIL\n'
         found = diagnostics.parse(text)
-        self.assertEqual((found[0].file, found[0].line, found[0].message), ('main_test.go', 8, 'Greeting("Sumi") = "Hi, Sumi", want "Hello, Sumi"'))
+        self.assertEqual((found[0].file, found[0].line, found[0].message), ('main_test.go', 8, 'Greeting("Janna Pro") = "Hi, Janna Pro", want "Hello, Janna Pro"'))
         pytest_line = diagnostics.parse('checkout.py:12: in pay\ninvoice.py:40: in save_invoice\nE   ZeroDivisionError: division by zero\ninvoice.py:40: ZeroDivisionError\n')
         self.assertEqual([(item.file, item.line) for item in pytest_line if item.file], [('invoice.py', 40), ('checkout.py', 12)])
         self.assertIn('ZeroDivisionError', pytest_line[0].message)
@@ -118,14 +118,14 @@ class Diagnostics(unittest.TestCase):
             (root / 'go.mod').write_text('module example.com/g\n\ngo 1.22\n', encoding='utf-8')
             (root / 'main.go').write_text('package main\n\nfunc Greeting(name string) string { return "Hi, " + name }\n', encoding='utf-8')
             (root / 'main_test.go').write_text(
-                'package main\n\nimport "testing"\n\nfunc TestGreeting(t *testing.T) {\n\tgot := Greeting("Sumi")\n\tif got != "Hello, Sumi" {\n\t\tt.Fatalf("Greeting(%q) = %q, want %q", "Sumi", got, "Hello, Sumi")\n\t}\n}\n',
+                'package main\n\nimport "testing"\n\nfunc TestGreeting(t *testing.T) {\n\tgot := Greeting("Janna Pro")\n\tif got != "Hello, Janna Pro" {\n\t\tt.Fatalf("Greeting(%q) = %q, want %q", "Janna Pro", got, "Hello, Janna Pro")\n\t}\n}\n',
                 encoding='utf-8')
             result = subprocess.run(['go', 'test', '.'], cwd=root, capture_output=True, text=True, timeout=60)
             found = diagnostics.parse(result.stdout + result.stderr, project=str(root))
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual((found[0].file, found[0].line), ('main_test.go', 8))
-        self.assertIn('Hi, Sumi', found[0].message)
-        self.assertIn('Hello, Sumi', found[0].message)
+        self.assertIn('Hi, Janna Pro', found[0].message)
+        self.assertIn('Hello, Janna Pro', found[0].message)
 
     def test_go_and_rust_compile_errors_keep_the_source_line(self):
         go = diagnostics.parse('./main.go:4:10: undefined: Missing')
@@ -161,14 +161,14 @@ class Diagnostics(unittest.TestCase):
     def test_a_rust_panic_keeps_the_assertion_and_the_line(self):
         log = ("thread 'tests::greets_by_name' panicked at src/main.rs:15:9:\n"
                "assertion `left == right` failed\n"
-               "  left: \"Hi, Sumi\"\n"
-               " right: \"Hello, Sumi\"\n"
+               "  left: \"Hi, Janna Pro\"\n"
+               " right: \"Hello, Janna Pro\"\n"
                "note: run with `RUST_BACKTRACE=1`\n"
                "error: test failed, to rerun pass `--bin sample`\n")
         found = diagnostics.parse(log)
         self.assertEqual((found[0].file, found[0].line), ('src/main.rs', 15))
-        self.assertIn('Hello, Sumi', found[0].message)
-        self.assertIn('Hi, Sumi', found[0].message)
+        self.assertIn('Hello, Janna Pro', found[0].message)
+        self.assertIn('Hi, Janna Pro', found[0].message)
         self.assertNotIn('to rerun', found[0].message)
         old = diagnostics.parse("thread 'tests::greets_by_name' panicked at 'assertion failed', src/lib.rs:4:5\n")
         self.assertEqual((old[0].file, old[0].line, old[0].message), ('src/lib.rs', 4, 'assertion failed'))
@@ -521,7 +521,7 @@ class RepoMapAndContext(Temp):
         self.write('check_test.go', 'package main\n\nimport "testing"\n\nfunc TestIt(t *testing.T) {\n\tt.Fatal(label())\n}\nfunc label() string { return "" }\n')
         for i in range(8):
             self.write(f'note{i}.go', f'package main\n\nfunc Note{i}() int {{ return {i} }}\n')
-        found = diagnostics.parse('check_test.go:5: Greeting("Sumi") = "Hi, Sumi", want "Hello, Sumi"\n', project=str(self.root))
+        found = diagnostics.parse('check_test.go:5: Greeting("Janna Pro") = "Hi, Janna Pro", want "Hello, Janna Pro"\n', project=str(self.root))
         messages, info = context.build_messages(self.root, 'fix the crash', platforms=['go'], diagnostics=found, touched=[], budget=context.REI_BUDGET)
         self.assertEqual(info['files'][:2], ['check_test.go', 'main.go'])
         self.assertIn('func Greeting', messages[1]['content'])
@@ -534,7 +534,7 @@ class RepoMapAndContext(Temp):
         head = '\n'.join(f'x{i} := {i}' for i in range(4000))
         self.write('main.go', head + '\nfunc Greeting(name string) string {\n\treturn "Hi, " + name\n}\n')
         self.write('check_test.go', 'package main\n\nimport "testing"\n\nfunc TestIt(t *testing.T) {\n\tt.Fatal(label())\n}\nfunc label() string { return "" }\n')
-        found = diagnostics.parse('check_test.go:5: Greeting("Sumi") = "Hi, Sumi", want "Hello, Sumi"\n', project=str(self.root))
+        found = diagnostics.parse('check_test.go:5: Greeting("Janna Pro") = "Hi, Janna Pro", want "Hello, Janna Pro"\n', project=str(self.root))
         messages, _info = context.build_messages(self.root, 'fix the crash', platforms=['go'], diagnostics=found, touched=[], budget=context.REI_BUDGET)
         shown = messages[1]['content'].split('--- main.go', 1)[1].split('Task:', 1)[0]
         self.assertIn('func Greeting(name string) string', shown)
@@ -551,7 +551,7 @@ class RepoMapAndContext(Temp):
         self.write('check_test.go', 'package main\n\nimport "testing"\n\nfunc TestIt(t *testing.T) {\n\tt.Fatal(label())\n}\nfunc label() string { return "" }\n')
         for i in range(8):
             self.write(f'note{i}.go', f'package main\n\nfunc Note{i}() int {{ return {i} }}\n')
-        found = diagnostics.parse('check_test.go:5: Greeting("Sumi") = "Hi, Sumi", want "Hello, Sumi"\n', project=str(self.root))
+        found = diagnostics.parse('check_test.go:5: Greeting("Janna Pro") = "Hi, Janna Pro", want "Hello, Janna Pro"\n', project=str(self.root))
         messages, info = context.build_messages(self.root, 'fix the crash', platforms=['go'], diagnostics=found, touched=[], budget=context.REI_BUDGET)
         self.assertIn('a.go', info['files'])
         self.assertIn('b.go', info['files'])
@@ -570,7 +570,7 @@ class RepoMapAndContext(Temp):
         middle = '\n'.join(f'\tnote := "brace }} {i}"\n\tstep{i} := {i}' for i in range(90))
         self.write('main.go', head + '\nfunc Greeting(name string) string {\n' + middle + '\n\treturn "Hi, " + name\n}\n')
         self.write('check_test.go', 'package main\n\nimport "testing"\n\nfunc TestIt(t *testing.T) {\n\tt.Fatal(label())\n}\nfunc label() string { return "" }\n')
-        found = diagnostics.parse('check_test.go:5: Greeting("Sumi") = "Hi, Sumi", want "Hello, Sumi"\n', project=str(self.root))
+        found = diagnostics.parse('check_test.go:5: Greeting("Janna Pro") = "Hi, Janna Pro", want "Hello, Janna Pro"\n', project=str(self.root))
         messages, _info = context.build_messages(self.root, 'fix the crash', platforms=['go'], diagnostics=found, touched=[], budget=context.REI_BUDGET)
         shown = messages[1]['content'].split('--- main.go', 1)[1].split('Task:', 1)[0]
         self.assertIn('func Greeting(name string) string', shown)
@@ -676,8 +676,8 @@ class RepoMapAndContext(Temp):
         self.assertLessEqual(info['estimated_prompt_tokens'], budget.prompt_tokens)
 
     def test_rei_keeps_its_own_smaller_budget(self):
-        self.assertEqual(context.budget_for('rei-1.0:latest').num_ctx, 8192)
-        self.assertEqual(context.budget_for('sumi-1.0:latest').num_ctx, 32768)
+        self.assertEqual(context.budget_for('janna-lite-1.0:latest').num_ctx, 8192)
+        self.assertEqual(context.budget_for('janna-pro-1.0:latest').num_ctx, 32768)
 
 
 class Detection(Temp):
@@ -860,7 +860,7 @@ class LongPath(unittest.TestCase):
 
 
 class Scripted:
-    model = 'sumi-1.0:latest'
+    model = 'janna-pro-1.0:latest'
 
     def __init__(self, *replies):
         self.replies, self.calls = list(replies), []
@@ -1259,11 +1259,11 @@ class Loop(Temp):
         self.assertNotIn('# same', self.source())
 
     def test_an_assertion_beside_the_function_cannot_be_rewritten(self):
-        self.write('src/main.rs', 'fn greeting(name: &str) -> String {\n    format!("Hi, {name}")\n}\n\n#[test]\nfn greets() {\n    assert_eq!(\n        greeting("Sumi"),\n        "Hello, Sumi",\n    );\n}\n')
+        self.write('src/main.rs', 'fn greeting(name: &str) -> String {\n    format!("Hi, {name}")\n}\n\n#[test]\nfn greets() {\n    assert_eq!(\n        greeting("Janna Pro"),\n        "Hello, Janna Pro",\n    );\n}\n')
         run = VibeRun(self.root, 'make greeting say Hello', Scripted('unused'),
                       plan={'platforms': ['rust'], 'steps': [], 'runnable': 0, 'has_tests': False, 'can_prove': False, 'blocked': []})
         run._original_tests = {}
-        weaken = edits.parse('src/main.rs\n<<<<<<< SEARCH\n        "Hello, Sumi",\n=======\n        "Hi, Sumi",\n>>>>>>> REPLACE')
+        weaken = edits.parse('src/main.rs\n<<<<<<< SEARCH\n        "Hello, Janna Pro",\n=======\n        "Hi, Janna Pro",\n>>>>>>> REPLACE')
         edits.apply(self.root, weaken, run.journal)
         self.assertIn('assertion', run._weakened_tests())
         run.journal.rollback()
@@ -1450,8 +1450,8 @@ class Manager(Temp):
         with self.assertRaisesRegex(ValueError, 'reserved'):
             manager.start(self.root, 'task')
 
-    def test_only_sumi_and_rei(self):
-        with self.assertRaisesRegex(ValueError, 'Sumi'):
+    def test_only_janna_pro_and_rei(self):
+        with self.assertRaisesRegex(ValueError, 'Janna Pro'):
             self.make(Scripted('x')).start(self.root, 'task', model='llama3:latest')
 
     def test_named_events_are_delivered_and_a_file_change_drops_memory(self):
@@ -1609,7 +1609,7 @@ class Scaffold(Temp):
         self.assertEqual(failed['state'], 'failed')
         self.assertTrue(failed['built'])
         self.assertFalse(failed['tested'])
-        self.assertTrue(any(item.file == 'greeting_test.go' and 'Hi, Sumi' in item.message and 'Hello, Sumi' in item.message for item in failed['diagnostics']))
+        self.assertTrue(any(item.file == 'greeting_test.go' and 'Hi, Janna Pro' in item.message and 'Hello, Janna Pro' in item.message for item in failed['diagnostics']))
 
     @unittest.skipUnless(shutil.which('go'), 'go')
     def test_a_failing_go_test_is_repaired_through_the_loop(self):
@@ -1621,7 +1621,7 @@ class Scaffold(Temp):
             'package main\n\nimport "fmt"\n\nfunc Greeting(name string) string {\n' + steps + '\n\tif total < 0 {\n\t\treturn name\n\t}\n\treturn "Hi, " + name\n}\n\nfunc main() {\n\tfmt.Println(Greeting("world"))\n}\n',
             encoding='utf-8')
         (folder / 'greeting_test.go').write_text(
-            'package main\n\nimport "testing"\n\nfunc TestGreeting(t *testing.T) {\n\tgot := Greeting("Sumi")\n\tif got != "Hello, Sumi" {\n\t\tt.Fatalf("Greeting(%q) = %q, want %q", "Sumi", got, "Hello, Sumi")\n\t}\n}\n',
+            'package main\n\nimport "testing"\n\nfunc TestGreeting(t *testing.T) {\n\tgot := Greeting("Janna Pro")\n\tif got != "Hello, Janna Pro" {\n\t\tt.Fatalf("Greeting(%q) = %q, want %q", "Janna Pro", got, "Hello, Janna Pro")\n\t}\n}\n',
             encoding='utf-8')
         reply = ('main.go\n<<<<<<< SEARCH\nfunc Greeting(name string) string {\n\ttotal := 0\n... omitted middle ...\n\treturn "Hi, " + name\n}\n'
                  '=======\nfunc Greeting(name string) string {\n\ttotal := 0\n... omitted middle ...\n\treturn "Hello, " + name\n}\n>>>>>>> REPLACE')
@@ -1634,7 +1634,7 @@ class Scaffold(Temp):
         text = (folder / 'main.go').read_text(encoding='utf-8')
         self.assertIn('\treturn "Hello, " + name\n', text)
         self.assertIn('\ttotal += 20\n', text)
-        self.assertIn('Hello, Sumi', scripted.calls[0][-1]['content'])
+        self.assertIn('Hello, Janna Pro', scripted.calls[0][-1]['content'])
         names = [event.get('name') for event in run.events]
         for name in ('task_started', 'project_inspection', 'plan_updated', 'context_retrieval', 'diagnostic_found', 'file_changed', 'build_started', 'build_completed', 'test_started', 'test_completed', 'checkpoint_saved', 'task_completed'):
             self.assertIn(name, names)
@@ -1656,7 +1656,7 @@ class Scaffold(Temp):
         self.assertEqual(failed['state'], 'failed')
         self.assertTrue(failed['built'])
         self.assertFalse(failed['tested'])
-        self.assertTrue(any(item.file == 'src/main.rs' and 'Hello, Sumi' in item.message and 'Hi, Sumi' in item.message for item in failed['diagnostics']))
+        self.assertTrue(any(item.file == 'src/main.rs' and 'Hello, Janna Pro' in item.message and 'Hi, Janna Pro' in item.message for item in failed['diagnostics']))
 
     @unittest.skipUnless(shutil.which('cargo'), 'cargo')
     def test_a_rust_assertion_in_main_cannot_be_deleted_to_pass(self):
@@ -1664,14 +1664,14 @@ class Scaffold(Temp):
         scaffold.create('rust', folder, 'Sample')
         program = folder / 'src' / 'main.rs'
         program.write_text(program.read_text(encoding='utf-8').replace('format!("Hello, {name}")', 'format!("Hi, {name}")', 1), encoding='utf-8')
-        weaken = ('src/main.rs\n<<<<<<< SEARCH\n        assert_eq!(greeting("Sumi"), "Hello, Sumi");\n=======\n'
-                  '        let _ = greeting("Sumi");\n>>>>>>> REPLACE')
+        weaken = ('src/main.rs\n<<<<<<< SEARCH\n        assert_eq!(greeting("Janna Pro"), "Hello, Janna Pro");\n=======\n'
+                  '        let _ = greeting("Janna Pro");\n>>>>>>> REPLACE')
         fix = ('src/main.rs\n<<<<<<< SEARCH\n    format!("Hi, {name}")\n=======\n    format!("Hello, {name}")\n>>>>>>> REPLACE')
         scripted = Scripted(weaken, fix)
         report = VibeRun(folder, 'make greeting say Hello', scripted, options=Options(baseline=True)).run()
         self.assertEqual(report['state'], 'verified', report)
         text = program.read_text(encoding='utf-8')
-        self.assertIn('assert_eq!(greeting("Sumi"), "Hello, Sumi");', text)
+        self.assertIn('assert_eq!(greeting("Janna Pro"), "Hello, Janna Pro");', text)
         self.assertIn('format!("Hello, {name}")', text)
         self.assertIn('assertion', scripted.calls[1][-1]['content'])
         self.assertEqual(report['verification']['build_passed'], True)
@@ -1692,7 +1692,7 @@ class Scaffold(Temp):
         self.assertEqual(report['state'], 'verified', report)
         text = program.read_text(encoding='utf-8')
         self.assertIn('#[test]', text)
-        self.assertIn('assert_eq!(greeting("Sumi"), "Hello, Sumi");', text)
+        self.assertIn('assert_eq!(greeting("Janna Pro"), "Hello, Janna Pro");', text)
         self.assertIn('format!("Hello, {name}")', text)
         self.assertIn('without running a test', scripted.calls[1][-1]['content'])
 
@@ -1702,8 +1702,8 @@ class Scaffold(Temp):
         scaffold.create('go', folder, 'Sample')
         program = folder / 'main.go'
         program.write_text(program.read_text(encoding='utf-8').replace('return "Hello, " + name', 'return "Hi, " + name', 1), encoding='utf-8')
-        weaken = ('greeting_test.go\n<<<<<<< SEARCH\nfunc TestGreeting(t *testing.T) {\n\tgot := Greeting("Sumi")\n=======\n'
-                  'func TestGreeting(t *testing.T) {\n\tt.Skip("later")\n\tgot := Greeting("Sumi")\n>>>>>>> REPLACE')
+        weaken = ('greeting_test.go\n<<<<<<< SEARCH\nfunc TestGreeting(t *testing.T) {\n\tgot := Greeting("Janna Pro")\n=======\n'
+                  'func TestGreeting(t *testing.T) {\n\tt.Skip("later")\n\tgot := Greeting("Janna Pro")\n>>>>>>> REPLACE')
         fix = ('greeting_test.go\n<<<<<<< SEARCH\n\tt.Skip("later")\n=======\n>>>>>>> REPLACE\n'
                'main.go\n<<<<<<< SEARCH\n\treturn "Hi, " + name\n=======\n\treturn "Hello, " + name\n>>>>>>> REPLACE')
         scripted = Scripted(weaken, fix)
@@ -1746,7 +1746,7 @@ class Scaffold(Temp):
         self.assertEqual(report['state'], 'verified', report)
         text = program.read_text(encoding='utf-8')
         self.assertNotIn('#[ignore]', text)
-        self.assertIn('assert_eq!(greeting("Sumi"), "Hello, Sumi");', text)
+        self.assertIn('assert_eq!(greeting("Janna Pro"), "Hello, Janna Pro");', text)
         self.assertIn('format!("Hello, {name}")', text)
         self.assertIn('without running a test', scripted.calls[1][-1]['content'])
 
@@ -1793,11 +1793,11 @@ class Forge(Temp):
 
     def test_agent_gets_forge_tools_only_when_owner_opts_in(self):
         with mock.patch.dict(os.environ, {'JANNA_FORGE_HOME': str(self.configure())}):
-            self.assertNotIn('forge', self.agent()._config('sumi-1.0').get('mcp', {}))
-            config = self.agent()._config('sumi-1.0', forge_enabled=True)
+            self.assertNotIn('forge', self.agent()._config('janna-pro-1.0').get('mcp', {}))
+            config = self.agent()._config('janna-pro-1.0', forge_enabled=True)
         self.assertEqual(config['mcp']['forge']['command'], ['py', 'forge.py', 'mcp'])
         self.assertEqual(config['permission']['external_directory'], 'deny')
 
     def test_opting_in_without_forge_changes_nothing(self):
         with mock.patch.dict(os.environ, {'JANNA_FORGE_HOME': str(self.root / 'absent')}):
-            self.assertEqual(self.agent()._config('sumi-1.0', forge_enabled=True), self.agent()._config('sumi-1.0'))
+            self.assertEqual(self.agent()._config('janna-pro-1.0', forge_enabled=True), self.agent()._config('janna-pro-1.0'))

@@ -15,7 +15,7 @@ class OtaSafetyTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.name = 'Janna-v1.4.2-Sumi-1.0-Rei-1.0-Windows-Setup.zip'
+        self.name = 'Janna-v1.4.2-Janna Pro-1.0-Janna Lite-1.0-Windows-Setup.zip'
         archive = io.BytesIO()
         with ZipFile(archive, 'w') as z:
             z.writestr('Janna/scripts/Build-Windows-EXE.ps1', "Write-Output 'approved'\n")

@@ -3,7 +3,7 @@
    A living little star cat: she idles, watches Janna think, celebrates
    finished answers, naps when ignored, and loves being petted.
    Activates only on the web edition (window.__JANNA_WEB__); the desktop
-   app keeps its original companion console in kage.js. */
+   app keeps its original companion console in luna.js. */
 (function () {
   if (!window.__JANNA_WEB__) return;
 
@@ -44,7 +44,7 @@
     bubble.innerHTML = '';
     var span = document.createElement('span'); span.textContent = text; bubble.appendChild(span);
     var chat = document.createElement('button'); chat.type = 'button'; chat.className = 'luna-bubble-btn'; chat.textContent = 'Chat';
-    chat.onclick = function (e) { e.stopPropagation(); hideBubble(); document.getElementById('navKage')?.click(); };
+    chat.onclick = function (e) { e.stopPropagation(); hideBubble(); document.getElementById('navLuna')?.click(); };
     var panel = document.createElement('button'); panel.type = 'button'; panel.className = 'luna-bubble-btn'; panel.textContent = 'Luna';
     panel.onclick = function (e) { e.stopPropagation(); hideBubble(); openDrawer('companion'); };
     bubble.append(chat, panel);
@@ -83,9 +83,9 @@
     idleTimer = setTimeout(function () { setMood('sleep'); say(pick(LINES.sleep), 5000); }, 75000);
   }
 
-  /* --- mood bridge: app.js already reports run states via kageSetState --- */
+  /* --- mood bridge: app.js already reports run states via lunaSetState --- */
   var STATES = ['idle', 'thinking', 'researching', 'coding', 'checking', 'writing', 'done'];
-  window.kageSetState = function (next) {
+  window.lunaSetState = function (next) {
     if (!STATES.includes(next)) return;
     if (next === 'done') {
       setMood('done'); burst();
@@ -98,24 +98,24 @@
     }
     armIdle();
   };
-  window.refreshKage = async function () {
+  window.refreshLuna = async function () {
     var f = fab();
     if (f) {
       var img = f.querySelector('img');
       if (img && !img.src.includes('/luna/')) { img.src = '/luna/luna-384.png'; img.alt = 'Luna, your pet companion'; }
-      var badge = f.querySelector('.kage-unread'); if (badge) badge.hidden = true;
+      var badge = f.querySelector('.luna-unread'); if (badge) badge.hidden = true;
     }
     return { members: [{ id: 'luna', name: 'Luna', role: 'Pet companion', avatar: '/luna/luna-384.png', description: 'Your little star cat.' }], selected: 'luna', monitoring: false, unread: [] };
   };
 
   /* --- Luna panel (replaces the engineering console on web) --- */
-  window.drawKage = async function () {
+  window.drawLuna = async function () {
     var root = document.getElementById('drawerBody'); if (!root) return;
     root.replaceChildren();
     var hero = document.createElement('div'); hero.className = 'luna-stage';
     var img = document.createElement('img'); img.src = '/luna/luna.png'; img.alt = 'Luna, the star cat'; img.className = 'luna-stage-img';
     hero.appendChild(img); root.appendChild(hero);
-    var eyebrow = document.createElement('p'); eyebrow.className = 'kage-section-label'; eyebrow.textContent = 'JANNA · LUNA';
+    var eyebrow = document.createElement('p'); eyebrow.className = 'luna-section-label'; eyebrow.textContent = 'JANNA · LUNA';
     var heading = document.createElement('h3'); heading.className = 'luna-name'; heading.textContent = 'Luna';
     var desc = document.createElement('p'); desc.className = 'muted';
     desc.textContent = 'Your little star cat. She lives in Janna, watches over your chats, celebrates finished answers, and naps when things get quiet. Pet her — she loves it.';
@@ -123,8 +123,8 @@
     stats.textContent = 'Mood: ' + mood + ' · Pets today: ' + data.pets;
     var petBtn = document.createElement('button'); petBtn.type = 'button'; petBtn.className = 'action-btn luna-pet-btn'; petBtn.textContent = 'Pet Luna';
     petBtn.onclick = function () { img.classList.remove('luna-stage-happy'); void img.offsetWidth; img.classList.add('luna-stage-happy'); pet(); stats.textContent = 'Mood: happy · Pets today: ' + data.pets; };
-    var chatBtn = document.createElement('button'); chatBtn.type = 'button'; chatBtn.className = 'kage-ask'; chatBtn.textContent = 'Chat with Luna';
-    chatBtn.onclick = async function () { closeDrawer(); document.getElementById('navKage')?.click(); document.getElementById('prompt')?.focus(); };
+    var chatBtn = document.createElement('button'); chatBtn.type = 'button'; chatBtn.className = 'luna-ask'; chatBtn.textContent = 'Chat with Luna';
+    chatBtn.onclick = async function () { closeDrawer(); document.getElementById('navLuna')?.click(); document.getElementById('prompt')?.focus(); };
     root.append(eyebrow, heading, desc, stats, petBtn, chatBtn);
   };
 

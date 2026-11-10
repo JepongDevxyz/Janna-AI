@@ -1,4 +1,4 @@
-"""Curated coding tasks for Sumi: original fixtures, MIT, no copied source.
+"""Curated coding tasks for Janna Pro: original fixtures, MIT, no copied source.
 
 Each task is a tiny real project with visible tests the model can see and hidden
 tests it never does. Families do not overlap across splits, so a held-out score

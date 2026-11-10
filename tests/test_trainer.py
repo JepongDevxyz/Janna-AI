@@ -24,7 +24,7 @@ class TrainerTests(unittest.TestCase):
 
     def test_config_rejects_another_model(self):
         model = self.base / 'other.gguf'; model.touch()
-        with self.assertRaisesRegex(ValueError, 'exact Sumi'):
+        with self.assertRaisesRegex(ValueError, 'exact Janna Pro'):
             self.trainer.configure(dict(python=str(model), gguf=str(model), gguf_python=str(self.base), tokenizer=str(self.base)))
 
     def test_hash_mismatch_fails_before_launch_and_releases_gpu(self):

@@ -66,11 +66,11 @@
     const body={...options,request_id:options.request_id||crypto.randomUUID()};
     let failures=0;
     while(!cursor.terminal){
-      let reader, timer, resuming=false;
+      let reader, timer, reconnecting=false;
       const controller=new AbortController();
       const arm=()=>{clearTimeout(timer);timer=setTimeout(()=>controller.abort(),20000)};
       // iOS can silently kill a socket in the background, so returning always resyncs. That is routine, not an outage.
-      const wake=()=>{if(!globalThis.document||document.visibilityState==='visible'){resuming=true;controller.abort()}};
+      const wake=()=>{if(!globalThis.document||document.visibilityState==='visible'){reconnecting=true;controller.abort()}};
       globalThis.addEventListener?.('online',wake);
       globalThis.document?.addEventListener('visibilitychange',wake);
       try{
@@ -95,7 +95,7 @@
         }
       }catch(error){
         if(error.permanent){error.outcomeUnknown=!!cursor.runId;throw error}
-        if(resuming)continue;
+        if(reconnecting)continue;
         failures=Math.min(failures+1,8);
         // One dropped request is retried at once. Only a second failure is worth telling anyone about.
         if(failures>=2)onConnection('reconnecting',cursor.runId,error.message);

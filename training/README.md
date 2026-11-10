@@ -1,8 +1,8 @@
-# Exact Sumi training investigation
+# Exact Janna Pro training investigation
 
 ## Latest measured result (2026-11-02)
 
-Historical blocked/zero-step reports below are superseded. Exact Sumi 27B LoRA
+Historical blocked/zero-step reports below are superseded. Exact Janna Pro 27B LoRA
 training now executes on this PC with other apps open. Layers 62/63, rank 4:
 180,224 trainable parameters. The 64-step diagnostic-v2 fit reduced losses from
 4.597659/4.812826 to 0.004205/0.005114 with unchanged frozen hashes and exact
@@ -24,15 +24,15 @@ No model profile has been changed, no paid compute used, and no weights uploaded
 ## Verified on 2026-11-02
 
 - Repository baseline `46dec8b0c0c1121779d5260aaebcee25cdbfec74`, clean before
-  creating `training/sumi-exact-base-audit`. Remote main remains `8fef1c3`.
+  creating `training/janna-pro-exact-base-audit`. Remote main remains `8fef1c3`.
 - RTX 4060 Ti 16,380 MiB, driver 610.88; Windows Python 3.12.10, Ollama 0.40.13.
   Installed Ubuntu WSL2 has Python 3.14.4 and access to the same GPU.
-- Sumi and `bonsai-2:27b` have identical language/projector blob hashes.
+- Janna Pro and `bonsai-2:27b` have identical language/projector blob hashes.
   Language SHA-256: `4f99aed01b8a877e153f9aa6569a4440fe17c59701cc0953e36d7f460549e70e`.
   It matches `Ternary-Bonsai-2-27B-Q2_0.gguf` in upstream revision
   `94dd51cdbbec5309ed8b76a12f3268bc4fdceb93` (7,626,008,928 bytes).
   This pins a revision containing the identical artifact, not its original creation revision.
-- Rei and `bonsai-2:9b` likewise share language/projector blobs. No substitution.
+- Janna Lite and `bonsai-2:9b` likewise share language/projector blobs. No substitution.
 - The language file contains 26,895,998,464 parameters in 851 tensors:
   402 Q2_0, 353 F32, 96 BF16. Architecture `qwen35`: 64 hybrid-attention blocks,
   full attention every fourth block. Actual Q2_0 tensors use GGML type 42.
@@ -115,7 +115,7 @@ The inventory requires a new output directory, reads loopback Ollama metadata,
 fetches the pinned public model metadata, and hashes installed weight blobs.
 
 ```powershell
-py -3.12 scripts/audit_sumi_training.py --out "$Artifacts/inventory"
+py -3.12 scripts/audit_pro_training.py --out "$Artifacts/inventory"
 py -3.12 -m venv "$Artifacts/audit-env"
 & "$Artifacts/audit-env/Scripts/python.exe" -m pip install -r training/requirements-audit-windows.lock.txt
 & "$Artifacts/audit-env/Scripts/python.exe" scripts/probe_bonsai_transformers.py --gguf $BaseBlob --out "$Artifacts/transformers-probe.json"

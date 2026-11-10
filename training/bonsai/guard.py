@@ -1,4 +1,4 @@
-"""Decisions the training guard can make without loading Sumi."""
+"""Decisions the training guard can make without loading Janna Pro."""
 from pathlib import Path
 import json
 
