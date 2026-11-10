@@ -60,12 +60,9 @@ const DEFAULT_SETTINGS = {
 };
 
 const KAGE_MEMBERS = [
-  { id: 'ren', name: 'Ren', role: 'Product lead', description: 'Priorities, technical decisions, release risk and daily progress', avatar: '/kage/ren-256.webp' },
-  { id: 'kiri', name: 'Kiri', role: 'Research scout', description: 'Current technical references, GitHub implementations and source evidence', avatar: '/kage/kiri-256.webp' },
-  { id: 'hana', name: 'Hana', role: 'Graphics specialist', description: 'Rendering, synchronization, GPU captures and shader correctness', avatar: '/kage/hana-256.webp' },
-  { id: 'tetsu', name: 'Tetsu', role: 'Validation engineer', description: 'Reproduction, diagnostics, build and regression checks', avatar: '/kage/tetsu-256.webp' },
-  { id: 'akane', name: 'Akane', role: 'Implementation engineer', description: 'Focused fixes, careful refactors and regression checks', avatar: '/kage/akane.png' },
+  { id: 'luna', name: 'Luna', role: 'Pet companion', description: 'Your little star cat — she keeps you company, celebrates finished work, and loves pets.', avatar: '/luna/luna-384.png' },
 ];
+const LUNA_PROMPT = 'You are Luna, a sweet and playful pet companion inside the Janna AI app: a little indigo star cat with a golden crescent moon on her forehead. Chat warmly in the user\'s language, with gentle pet-like charm — an occasional soft "mrrp" or purr, never excessive and never in the way of the answer. You are also a capable assistant: answer questions and help with tasks clearly and accurately. Keep replies friendly and reasonably concise unless detail is needed.';
 
 // ---------- provider calls ----------
 // OpenAI-compatible streaming chat. Walks the shuffled key pool on key-level
@@ -208,7 +205,7 @@ async function handleRun(req, res) {
     if (!prompt) throw new Error('Message is empty.');
 
     const history = Array.isArray(body.messages) ? body.messages : [];
-    const messages = [{ role: 'system', content: SYSTEM_PROMPT }];
+    const messages = [{ role: 'system', content: body.companion === 'luna' ? LUNA_PROMPT : SYSTEM_PROMPT }];
     for (const m of history.slice(-20)) {
       if (m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string' && m.content)
         messages.push({ role: m.role, content: m.content.slice(0, 24000) });
@@ -271,7 +268,7 @@ export default async function handler(req, res) {
     if (method === 'GET' && path.startsWith('/api/reasoning/'))
       return json(res, 200, { verified: false, vision: false, levels: ['default'] });
     if (method === 'GET' && path === '/api/kage')
-      return json(res, 200, { name: 'Kage', model: 'Janna Cloud', members: KAGE_MEMBERS, selected: 'ren', unread: [], busy_sessions: [], notifications: [], goals: [], tasks: [] });
+      return json(res, 200, { name: 'Luna', model: 'Janna Cloud', members: KAGE_MEMBERS, selected: 'luna', unread: [], busy_sessions: [], notifications: [], goals: [], tasks: [] });
     if (method === 'GET' && path.startsWith('/api/kage/avatar/')) {
       const id = path.split('/').pop();
       const member = KAGE_MEMBERS.find((m) => m.id === id) || KAGE_MEMBERS[0];

@@ -126,7 +126,7 @@
     }
     if (path === '/api/kage/chat' && method === 'POST') {
       var kn = Math.floor(Date.now() / 1000);
-      var ks = { id: 'web-kage-' + Math.random().toString(36).slice(2, 10), title: 'Kage chat', purpose: 'kage', project_id: null, created: kn, updated: kn, messages: [], events: [] };
+      var ks = { id: 'web-luna-' + Math.random().toString(36).slice(2, 10), title: 'Luna chat', purpose: 'luna', project_id: null, created: kn, updated: kn, messages: [], events: [] };
       var kl = loadSessions(); kl.unshift(ks); saveSessions(kl);
       return Promise.resolve(jsonResponse(ks));
     }
@@ -175,6 +175,7 @@
       var sess = runBody.session_id ? findSession(runBody.session_id) : null;
       if (sess && Array.isArray(sess.messages))
         runBody.messages = sess.messages.filter(function (m) { return m && (m.role === 'user' || m.role === 'assistant'); }).map(function (m) { return { role: m.role, content: m.content }; });
+        if (sess.purpose === 'luna') runBody.companion = 'luna';
       var newInit = Object.assign({}, init, { body: JSON.stringify(runBody) });
       return nativeFetch(input, newInit).then(function (response) {
         return tapRunStream(response, runBody.session_id, runBody.prompt);

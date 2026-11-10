@@ -2,7 +2,7 @@
 
 Read `README.md`, `CONTRIBUTING.md` and `docs/RELEASE-STATUS.md` before making changes. Follow any more specific instructions in the affected directory.
 
-- Preserve Janna, Sumi 1.0, Rei 1.0 and Kage branding, working features and user data.
+- Preserve Janna, Sumi 1.0, Rei 1.0 branding, working features and user data. The web edition's companion is Luna, the pet companion (owner's direction, 2026-11-10); the desktop companion console remains as built.
 - Establish the checkout, running backend and model identity before diagnosing behavior. A built executable can still point to an older backend.
 - Keep changes focused and reviewable. Respect uncommitted work and concurrent users.
 - Maintain authentication, project scope, Stop, persistence and recovery. Task authorization does not authorize unrelated external writes or public releases.

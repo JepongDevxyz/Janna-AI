@@ -338,3 +338,30 @@ body[data-theme='moon']{--paper:#fff8fb;--sidebar:#fde6ef;--hover:#f9d6e5;--line
 .section-title{font-weight:700}
 .code-open{border:1px solid var(--line);background:var(--panel);color:var(--accent-ink);border-radius:999px;padding:3px 10px;font-size:11px;font-weight:600;cursor:pointer}
 .research-integrity-note{font-size:12px;color:var(--muted);line-height:1.55}
+
+/* Luna pet — living companion animations (transform-only, theme-safe) */
+.companion-fab{overflow:visible}
+.companion-fab img{animation:lunaBob 3.2s ease-in-out infinite;transform-origin:50% 85%}
+.companion-fab[data-mood="thinking"] img{animation:lunaThink 1.1s ease-in-out infinite}
+.companion-fab[data-mood="busy"] img{animation:lunaBusy .8s ease-in-out infinite}
+.companion-fab[data-mood="happy"] img{animation:lunaHappy .55s ease-in-out 2}
+.companion-fab[data-mood="done"] img{animation:lunaHappy .55s ease-in-out 3}
+.companion-fab[data-mood="sleep"] img{animation:lunaSleep 5s ease-in-out infinite;opacity:.75}
+@keyframes lunaBob{0%,100%{transform:translateY(0) rotate(0deg) scale(1)}50%{transform:translateY(-3px) rotate(-2deg) scale(1.02)}}
+@keyframes lunaThink{0%,100%{transform:rotate(-3deg)}50%{transform:rotate(3deg) translateY(-2px)}}
+@keyframes lunaBusy{0%,100%{transform:translateY(0) scale(1)}50%{transform:translateY(-4px) scale(1.04)}}
+@keyframes lunaHappy{0%,100%{transform:translateY(0) scale(1)}30%{transform:translateY(-9px) scale(1.07) rotate(-3deg)}60%{transform:translateY(0) scale(.97)}}
+@keyframes lunaSleep{0%,100%{transform:rotate(0deg) scale(1)}50%{transform:rotate(2deg) scale(.98)}}
+.luna-bubble{position:fixed;right:86px;bottom:96px;z-index:70;max-width:230px;display:flex;align-items:center;gap:7px;background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:14px;padding:8px 10px;font-size:12.5px;line-height:1.35;box-shadow:0 10px 28px rgba(16,24,40,.18);opacity:0;transform:translateY(6px) scale(.96);pointer-events:none;transition:opacity .18s ease,transform .18s ease}
+.luna-bubble.show{opacity:1;transform:none;pointer-events:auto}
+.luna-bubble-btn{border:1px solid var(--line);background:var(--chip);color:var(--accent-ink);border-radius:999px;padding:3px 9px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap}
+.luna-spark{position:fixed;z-index:71;color:#e5a83c;font-size:15px;pointer-events:none;animation:lunaSpark 1s ease-out forwards}
+@keyframes lunaSpark{0%{opacity:0;transform:translateY(4px) scale(.6)}25%{opacity:1}100%{opacity:0;transform:translateY(-34px) scale(1.15)}}
+.luna-stage{display:flex;justify-content:center;padding:8px 0 2px}
+.luna-stage-img{width:190px;height:auto;animation:lunaBob 3.2s ease-in-out infinite;transform-origin:50% 85%}
+.luna-stage-img.luna-stage-happy{animation:lunaHappy .55s ease-in-out 3}
+.luna-name{font-family:var(--font-serif);font-size:26px;margin:2px 0 6px;color:var(--ink)}
+.luna-stats{font-size:13px;color:var(--muted);margin:10px 0}
+.luna-pet-btn{margin:0 10px 10px 0}
+/* Phone: pet + bubble sit above the composer dock */
+.phone-layout .luna-bubble{bottom:auto;top:calc(64px + env(safe-area-inset-top))}
