@@ -24,8 +24,8 @@ function voiceDictate(){
   const previous=$('prompt').value;let transcript='';
   recognition.onresult=e=>{transcript=Array.from(e.results).map(r=>r[0].transcript).join(' ');$('prompt').value=(previous+' '+transcript).trim()};
   recognition.onerror=e=>toast('Voice transcription: '+String(e.error||'unavailable')+'. Some browsers require network access.');
-  recognition.onend=()=>{state.voiceListening=false;$('voiceMic').classList.remove('listening');$('voiceMic').setAttribute('aria-pressed','false');$('prompt').focus()};
-  try{recognition.start();state.voiceListening=true;$('voiceMic').classList.add('listening');$('voiceMic').setAttribute('aria-pressed','true')}
+  recognition.onend=()=>{state.voiceListening=false;$('composer').classList.remove('is-dictating');syncSendState();$('voiceMic').classList.remove('listening');$('voiceMic').setAttribute('aria-pressed','false');$('prompt').focus()};
+  try{recognition.start();state.voiceListening=true;$('composer').classList.add('is-dictating');$('voiceMic').classList.add('listening');$('voiceMic').setAttribute('aria-pressed','true')}
   catch(e){toast('Microphone could not start: '+e.message)}
 }
 
@@ -420,7 +420,8 @@ function showRunRecovery(session){
   }
 }
 
-function updateBusy(){const busy=state.busy;$('send').hidden=false;$('send').title=busy?'Queue instructions for the next step':'Send';$('stop').hidden=!busy;$('stop').disabled=state.stopRequested;$('stop').title=state.stopRequested?'Stopping; waiting for confirmation':'Stop this run';$('prompt').disabled=false;$('prompt').placeholder=busy?'Queue instructions for the next step…':(state.mode==='agent'?'Describe what you want built or repaired…':'Ask Janna anything…');$('mode').disabled=busy;$('model').disabled=busy;if($('modelMenu'))$('modelMenu').disabled=busy;if(busy)closeModelMenu();statusBadge({ollama:!!state.model});$('sidebarState').textContent=busy?'Working locally':$('sidebarState').textContent}
+function syncSendState(){const c=$('composer');if(c)c.classList.toggle('is-empty',!$('prompt').value.trim())}
+function updateBusy(){const busy=state.busy;$('composer').classList.toggle('is-busy',busy);$('send').hidden=false;$('send').title=busy?'Queue instructions for the next step':'Send';$('stop').hidden=!busy;$('stop').disabled=state.stopRequested;$('stop').title=state.stopRequested?'Stopping; waiting for confirmation':'Stop this run';$('prompt').disabled=false;$('prompt').placeholder=busy?'Queue instructions for the next step…':(state.mode==='agent'?'Describe what you want built or repaired…':'Ask Janna anything…');$('mode').disabled=busy;$('model').disabled=busy;if($('modelMenu'))$('modelMenu').disabled=busy;if(busy)closeModelMenu();statusBadge({ollama:!!state.model});$('sidebarState').textContent=busy?'Working locally':$('sidebarState').textContent}
 function setMode(mode){state.mode=mode;$('mode').value=mode;if(mode==='agent'&&!state.project){toast('Choose a project for coding work.');openProjectDialog()}$('prompt').placeholder=mode==='agent'?'Describe what you want built or repaired…':'Ask Janna anything…';}
 function renderPending(){
   const tray=$('attachmentTray');if(!tray)return;
@@ -445,7 +446,7 @@ async function send(resumeRun=null){
     if(!state.session)return;
     try{
       const queued=await api('/api/run/update',{session_id:state.session,run_id:state.runId,prompt});
-      $('prompt').value='';
+      $('prompt').value='';syncSendState();
       $('messages').append(makeMessage({role:'user',content:prompt}));
       scrollThread();
       toast(`Queued for the next step · ${queued.queued} pending`);renderQueuedInputs((await api('/api/session/'+state.session)).inputs||[]);
@@ -462,7 +463,7 @@ async function send(resumeRun=null){
   if(!state.session){await newSession();if(!state.session)return}
   const sid=state.session;
   state.busy=true;state.runId=resumeRun?.id||null;state.stopRequested=false;state.stream='';state.events=[];state.tailFollow=true;
-  updateBusy();$('prompt').value='';if(!resumeRun){state.pending=[];renderPending()}
+  updateBusy();$('prompt').value='';syncSendState();if(!resumeRun){state.pending=[];renderPending()}
   $('welcome').hidden=true;$('messages').hidden=false;
   $('chatView').classList.add('has-messages');
   $('composerDock').appendChild($('composer'));$('composerDock').hidden=false;
@@ -759,7 +760,7 @@ async function renderKnowledgePanel(root){
 
 function focusPrompt(text=''){
   closeDrawer();showView('chats');
-  if(text)$('prompt').value=text;
+  if(text){$('prompt').value=text;syncSendState()}
   $('prompt').focus();
 }
 async function drawTools(){
@@ -860,7 +861,7 @@ async function useSelectedProject(project){
   const draft=state.projectDraft??$('prompt').value;
   state.project=project.id;$('projectDialog').close();
   await refreshBootstrap();await newSession(project.id);
-  $('prompt').value=draft;delete state.projectDraft;$('prompt').focus();
+  $('prompt').value=draft;syncSendState();delete state.projectDraft;$('prompt').focus();
 }
 async function reviewGitHubPush(){
   if(!state.project){openProjectDialog();return}

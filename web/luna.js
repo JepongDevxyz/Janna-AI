@@ -49,6 +49,12 @@
     panel.onclick = function (e) { e.stopPropagation(); hideBubble(); openDrawer('companion'); };
     bubble.append(chat, panel);
     bubble.classList.add('show');
+    if (window.matchMedia('(max-width: 700px)').matches) {
+      var r = f.getBoundingClientRect();
+      bubble.style.bottom = Math.round(window.innerHeight - r.top + 10) + 'px';
+    } else {
+      bubble.style.bottom = '';
+    }
     clearTimeout(bubbleTimer);
     bubbleTimer = setTimeout(hideBubble, ms || 3400);
   }
