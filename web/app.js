@@ -210,7 +210,7 @@ function renderModelOptions(models){
     const heading=row.model_class==='Janna engineering profile'?'Janna profiles':(row.cloud?'Cloud models':'Other models on this PC');
     if(heading!==group){group=heading;list.append(el('div','model-menu-group',heading))}
     const item=el('button','model-menu-item');item.type='button';item.setAttribute('role','option');item.dataset.value=row.id;
-    item.append(el('strong','',row.label),el('small','',row.note||'Installed on this PC'));
+    item.append(el('strong','',row.label));const noteText=row.note||(row.cloud?'':'Installed on this PC');if(noteText)item.append(el('small','',noteText));
     item.onclick=()=>chooseModel(row.id);
     list.append(item);
   }

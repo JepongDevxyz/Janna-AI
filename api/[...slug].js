@@ -47,7 +47,7 @@ function shuffled(list) {
 // ---------- model catalog ----------
 function catalog() {
   const rows = [
-    { id: 'janna-cloud', label: 'Janna Cloud', note: 'Free cloud model · no setup, works anywhere', model_class: 'Janna Cloud', cloud: true, provider: 'pollinations', model: process.env.JANNA_FREE_MODEL || 'openai-fast' },
+    { id: 'janna-cloud', label: 'Janna Cloud', note: 'Cloud model · no setup, works anywhere', model_class: 'Janna Cloud', cloud: true, provider: 'pollinations', model: process.env.JANNA_FREE_MODEL || 'openai-fast' },
   ];
   if (keyPool('GROQ_API_KEYS').length)
     rows.push({ id: 'groq-llama-3.3-70b', label: 'Llama 3.3 70B · Groq', note: 'Fast cloud model via Groq', model_class: 'Janna Cloud', cloud: true, provider: 'groq', model: 'llama-3.3-70b-versatile' });
@@ -64,10 +64,10 @@ function catalog() {
     // echo, shared 15 requests/minute across the key. Claude Opus 4.6 is
     // listed free but actually subscription-gated (HTTP 402) and Jev 1.13 is
     // a decision-endpoint model (HTTP 400 on chat) — neither is wired.
-    rows.push({ id: 'apinex-gemini-3.8-flash', label: 'Gemini 3.8 Flash', note: 'Cloud model via APInex', model_class: 'Janna Cloud', cloud: true, provider: 'apinex', model: 'free/gemini-3.8-flash' });
-    rows.push({ id: 'apinex-gpt-6-luna', label: 'GPT-6 Luna', note: 'Cloud model via APInex', model_class: 'Janna Cloud', cloud: true, provider: 'apinex', model: 'free/gpt-6-luna' });
-    rows.push({ id: 'apinex-kimi-k3', label: 'Kimi K3', note: 'Cloud model via APInex', model_class: 'Janna Cloud', cloud: true, provider: 'apinex', model: 'free/kimi-k3' });
-    rows.push({ id: 'apinex-muse-spark-1.3', label: 'Muse Spark 1.3', note: 'Cloud model via APInex', model_class: 'Janna Cloud', cloud: true, provider: 'apinex', model: 'free/muse-spark-1.3' });
+    rows.push({ id: 'apinex-gemini-3.8-flash', label: 'Gemini 3.8 Flash', note: '', model_class: 'Janna Cloud', cloud: true, provider: 'apinex', model: 'free/gemini-3.8-flash' });
+    rows.push({ id: 'apinex-gpt-6-luna', label: 'GPT-6 Luna', note: '', model_class: 'Janna Cloud', cloud: true, provider: 'apinex', model: 'free/gpt-6-luna' });
+    rows.push({ id: 'apinex-kimi-k3', label: 'Kimi K3', note: '', model_class: 'Janna Cloud', cloud: true, provider: 'apinex', model: 'free/kimi-k3' });
+    rows.push({ id: 'apinex-muse-spark-1.3', label: 'Muse Spark 1.3', note: '', model_class: 'Janna Cloud', cloud: true, provider: 'apinex', model: 'free/muse-spark-1.3' });
   }
   return rows;
 }
@@ -143,7 +143,7 @@ async function* openAIStream({ baseUrl, keys, model, messages, extraHeaders = {}
 function buildAwareness(body, row) {
   const c = body.context;
   if (!c || typeof c !== 'object') return '';
-  const modelList = catalog().map((r) => r.label + ' (' + r.note + ')').join('; ');
+  const modelList = catalog().map((r) => (r.note ? r.label + ' (' + r.note + ')' : r.label)).join('; ');
   const lines = [];
   lines.push('WHAT YOU KNOW — facts about yourself, this app and this user. Use them to answer questions about Janna AI, the app, or the user accurately; do not recite them unprompted.');
   lines.push('You are Janna AI, the web edition at ai.janna-official.tech, made by Jepong Devxyz. There is no account or sign-in: chats, settings and your memory of the user are stored only in this user\'s browser on this device.');
