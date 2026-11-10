@@ -141,6 +141,36 @@ async function* openAIStream({ baseUrl, keys, model, messages, extraHeaders = {}
   throw lastError || new Error('All provider keys failed');
 }
 
+// Some upstreams (notably the free Pollinations backend) occasionally return
+// the assistant MESSAGE OBJECT serialized as the answer text — reasoning and
+// tool_calls included — instead of plain content. Never show that raw JSON to
+// the user: unwrap the real answer out of the envelope.
+function unwrapEnvelope(text) {
+  const t = String(text || '').trim();
+  if (!t.startsWith('{')) return text;
+  let obj;
+  try { obj = JSON.parse(t); } catch { return text; }
+  if (!obj || typeof obj !== 'object') return text;
+  const looksEnvelope = Array.isArray(obj.tool_calls) || (obj.role === 'assistant' && ('reasoning' in obj || 'content' in obj));
+  if (!looksEnvelope) return text;
+  if (typeof obj.content === 'string' && obj.content.trim()) return unwrapEnvelope(obj.content);
+  if (Array.isArray(obj.tool_calls)) {
+    for (const call of obj.tool_calls) {
+      const args = call && call.function && call.function.arguments;
+      if (typeof args === 'string' && args.trim()) {
+        try {
+          const inner = JSON.parse(args);
+          if (inner && typeof inner === 'object') {
+            for (const k of ['response', 'text', 'answer', 'content']) if (typeof inner[k] === 'string' && inner[k].trim()) return inner[k];
+          }
+        } catch { /* plain-text arguments ARE the answer */ }
+        return args;
+      }
+    }
+  }
+  return '';
+}
+
 function buildAwareness(body, row) {
   const c = body.context;
   if (!c || typeof c !== 'object') return '';
@@ -327,6 +357,7 @@ async function handleRun(req, res) {
       emit({ type: 'delta', text: chunk });
     }
     if (stopped) return; // finishStopped already closed the stream
+    full = unwrapEnvelope(full); fullText = full;
     if (!full.trim()) throw new Error('The model returned an empty answer. Try again.');
     const seconds = Math.max(0.001, (Date.now() - started) / 1000);
     emit({
