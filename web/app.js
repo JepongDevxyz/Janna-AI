@@ -1371,7 +1371,7 @@ function voiceListen() {
   if (!Rec) { voiceSetPhase('idle', 'Hindi suportado ng browser na ito ang pakikinig. Mag-type na lang o isara ito.'); return; }
   try { voiceTalk.recog?.stop(); } catch {}
   const recog = new Rec(); voiceTalk.recog = recog;
-  recog.lang = speechTag(); recog.interimResults = true; recog.continuous = false; recog.maxAlternatives = 1;
+  recog.lang = voiceTalk.langOverride || speechTag(); recog.interimResults = true; recog.continuous = false; recog.maxAlternatives = 1;
   voiceSetPhase('listening', 'Nakikinig ako… magsalita ka lang.');
   recog.onresult = e => {
     let interim = '', finalText = '';
@@ -1381,7 +1381,8 @@ function voiceListen() {
   };
   recog.onerror = e => {
     const err = String(e.error || '');
-    if (err === 'not-allowed' || err === 'service-not-allowed') { voiceSetPhase('idle', 'Hindi ako makarinig — i-allow ang microphone para kay Janna, tapos subukan ulit.'); voiceTalk.recog = null; voiceTalk.errStrikes = 0; }
+    if (err === 'language-not-supported' && !voiceTalk.langRetried) { voiceTalk.langRetried = true; voiceTalk.langOverride = 'en-US'; voiceTalk.errStrikes = 0; }
+    else if (err === 'not-allowed' || err === 'service-not-allowed') { voiceSetPhase('idle', 'Hindi ako makarinig — i-allow ang microphone para kay Janna, tapos subukan ulit.'); voiceTalk.recog = null; voiceTalk.errStrikes = 0; }
     else if (err === 'no-speech') { voiceTalk.quiet++; }
     else if (err) { voiceTalk.errStrikes = (voiceTalk.errStrikes || 0) + 1; voiceTalk.errKind = err; }
   };
@@ -1414,7 +1415,23 @@ function voiceOpen() {
   try { const synth = window.speechSynthesis; if (synth) { synth.getVoices(); const prime = new SpeechSynthesisUtterance(' '); prime.volume = 0; synth.speak(prime); } } catch {}
   document.body.classList.add('voice-open');
   const btn = document.getElementById('voiceMuteBtn'); if (btn) btn.classList.remove('muted');
-  voiceListen();
+  voiceTalk.langOverride = ''; voiceTalk.langRetried = false;
+  // Ask for the microphone EXPLICITLY first: on Android Chrome the speech
+  // recognizer's own permission flow is unreliable — it can fail forever
+  // without ever showing the prompt. getUserMedia shows the real prompt and
+  // gives a definite answer we can act on.
+  if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+    voiceSetPhase('idle', 'Sandali — hinihingi ko ang permiso sa microphone…');
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+      stream.getTracks().forEach(t => { try { t.stop(); } catch {} });
+      if (voiceTalk.active && !voiceTalk.muted) voiceListen();
+    }).catch(err => {
+      if (!voiceTalk.active) return;
+      if (err && err.name === 'NotFoundError') { voiceListen(); return; }
+      voiceTalk.stopped = true;
+      voiceSetPhase('idle', 'Hindi pinayagan ang microphone. Para ayusin: i-tap ang lock icon sa address bar → Permissions → Microphone → Allow, tapos isara at buksan ulit ito.');
+    });
+  } else voiceListen();
 }
 function voiceClose() {
   voiceTalk.active = false;
