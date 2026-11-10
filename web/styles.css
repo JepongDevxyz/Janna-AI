@@ -550,7 +550,7 @@ body:has(#drawer:not([hidden])) .luna-bubble{opacity:0!important;pointer-events:
 .settings-tab[hidden]{display:none}
 .settings-panes{flex:1;min-width:0}
 .settings-pane[hidden]{display:none}
-@media(max-width:700px){.settings-main{flex-direction:column}.settings-rail{flex-direction:row;width:auto;overflow-x:auto;padding-bottom:6px;gap:6px}.settings-group{display:none}.settings-tab{white-space:nowrap;border:1px solid var(--line)}.settings-panes{width:100%}}
+@media(max-width:700px){.settings-main{flex-direction:column}.settings-rail{flex-direction:row;flex-wrap:wrap;width:auto;overflow-x:visible;padding-bottom:6px;gap:6px}.settings-group{display:none}.settings-tab{white-space:nowrap;border:1px solid var(--line)}.settings-panes{width:100%}}
 
 .brand-name{white-space:nowrap}
 #profileName{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
