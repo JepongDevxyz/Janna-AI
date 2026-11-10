@@ -320,7 +320,7 @@ body[data-theme='moon']{--paper:#fff8fb;--sidebar:#fde6ef;--hover:#f9d6e5;--line
    4. The desktop "Ctrl K" hint is hidden on phones. */
 .phone-layout .toast{top:calc(64px + env(safe-area-inset-top));bottom:auto;animation:phone-toast-in 180ms cubic-bezier(.2,.8,.2,1)}
 @keyframes phone-toast-in{from{opacity:0;transform:translate(-50%,-6px)}to{opacity:1;transform:translate(-50%,0)}}
-.phone-layout .app-shell:has(.content-view:not([hidden])) .companion-fab{display:none}
+.app-shell:has(.content-view:not([hidden])) .companion-fab{display:none}
 .phone-layout .content-inner{padding-bottom:180px}
 .phone-layout .thread{scroll-padding-bottom:130px}
 .phone-layout .messages{padding-bottom:110px}
