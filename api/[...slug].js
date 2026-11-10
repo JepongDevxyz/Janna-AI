@@ -251,8 +251,18 @@ async function handleRun(req, res) {
     }
     messages.push({ role: 'user', content: userContent });
 
-    emit({ type: 'progress', stage: 'analysis', message: 'Analyzing your question' });
-    thinkTimer = setTimeout(() => { if (!resEnded && !stopped) emit({ type: 'progress', stage: 'thinking', message: 'Thinking through the problem' }); }, 2500);
+    const chainT = ' ' + String(body.prompt || '').toLowerCase() + ' ';
+    const chain = /```/.test(String(body.prompt || '')) || /\b(code|function|bug|error|debug|script|python|javascript|typescript|html|css|compile|syntax)\b/.test(chainT)
+      ? ['Reading your code', 'Working on the solution', 'Writing the answer']
+      : /\d/.test(chainT) && /(\+|-|\*|\/|%|percent|plus|minus|times|divided|solve|calculate|compute|area|perimeter|how much|how many|total|sum|average)/.test(chainT)
+      ? ['Analyzing the problem', 'Working through the steps', 'Writing the answer']
+      : /\bvs\b|versus|compare|comparison|difference between|which is better|alin ang mas/.test(chainT)
+      ? ['Comparing the options', 'Weighing the trade-offs', 'Writing the answer']
+      : /\b(plan|plano|itinerary|schedule|routine|essay|story|poem|write a)\b/.test(chainT)
+      ? ['Planning the outline', 'Organizing the details', 'Writing the answer']
+      : ['Analyzing your question', 'Thinking through the problem', 'Writing the answer'];
+    emit({ type: 'progress', stage: 'analysis', message: chain[0] });
+    thinkTimer = setTimeout(() => { if (!resEnded && !stopped) emit({ type: 'progress', stage: 'thinking', message: chain[1] }); }, 2500);
     let full = '';
     let firstAt = 0;
     const started = Date.now();
@@ -261,7 +271,7 @@ async function handleRun(req, res) {
       const step = await Promise.race([streamIt.next(), stopWait.then(() => ({ stopped: true }))]);
       if (stopped || step.stopped || step.done) { try { await streamIt.return(); } catch { /* already closed */ } break; }
       const chunk = step.value;
-      if (!firstAt) { firstAt = Date.now(); if (thinkTimer) { clearTimeout(thinkTimer); thinkTimer = null; } emit({ type: 'first_token', milliseconds: firstAt - started }); emit({ type: 'progress', stage: 'writing', message: 'Writing the answer' }); }
+      if (!firstAt) { firstAt = Date.now(); if (thinkTimer) { clearTimeout(thinkTimer); thinkTimer = null; } emit({ type: 'first_token', milliseconds: firstAt - started }); emit({ type: 'progress', stage: 'writing', message: chain[2] }); }
       full += chunk;
       fullText = full;
       emit({ type: 'delta', text: chunk });

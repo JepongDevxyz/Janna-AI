@@ -483,15 +483,26 @@ body:has(#drawer:not([hidden])) .luna-bubble{opacity:0!important;pointer-events:
 
 /* Thinking activity chain (ChatGPT-style status chain) */
 .activity-chain{margin:0 0 8px;font-size:13px;color:var(--muted)}
-.activity-chain summary{cursor:pointer;font-weight:600;color:var(--muted);list-style:none}
+.activity-chain summary{cursor:pointer;font-weight:400;color:var(--muted);list-style:none}
 .activity-chain summary::-webkit-details-marker{display:none}
 .activity-chain summary::after{content:' ›';font-weight:400}
 .activity-chain[open ] summary::after{content:' ⌄'}
 .activity-steps{margin:6px 0 2px;padding:0 0 0 2px;list-style:none}
-.activity-steps li{padding:2px 0 2px 16px;position:relative}
-.activity-steps li::before{content:'';position:absolute;left:2px;top:9px;width:6px;height:6px;border-radius:50%;background:var(--accent)}
+.activity-steps li{padding:2px 0}
+.activity-steps li::before{content:none}
 
 /* Settings: ChatGPT-style danger actions (two-tap confirm, no native dialogs) */
 .danger-btn{color:#e5484d}
 .danger-btn.armed{background:#e5484d;color:#fff;border-radius:8px;padding:2px 10px}
 .recent-delete.armed{background:#e5484d;color:#fff;border-radius:50%}
+
+/* ChatGPT-style plain activity chain (chat runs): no card, muted finished steps, current step lives in the heading */
+.work-stream.chat-stream{border:0;background:transparent;border-radius:0;margin:8px 0 2px;overflow:visible;font-size:13.5px}
+.work-stream.chat-stream .work-stream-heading{padding:2px 0;cursor:default}
+.work-stream.chat-stream .work-stream-title{font-size:15px}
+.work-stream.chat-stream .work-stream-clock,.work-stream.chat-stream .work-stream-indicator,.work-stream.chat-stream .work-stream-chevron,.work-stream.chat-stream .work-stream-note{display:none}
+.work-stream.chat-stream .work-stream-body{padding:0}
+.work-stream.chat-stream .work-stream-list{gap:7px;margin-top:2px}
+.work-stream.chat-stream .work-step-mark{display:none}
+.work-stream.chat-stream .work-stream-step strong{font-weight:400;color:var(--muted)}
+.work-stream.chat-stream .work-stream-step:last-child{display:none}
