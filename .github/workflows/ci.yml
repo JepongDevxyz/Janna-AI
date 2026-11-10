@@ -27,7 +27,7 @@ jobs:
       - name: Frontend checks
         run: |
           node --check web/app.js
-          node --check web/kage.js
+          node --check web/luna-console.js && node --check web/luna.js
           node scripts/test-markdown.cjs
           node tests/test_run_stream.cjs
           node tests/test_reconnect.cjs
