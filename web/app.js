@@ -349,7 +349,7 @@ function evidencePanel(report){
   filter.onchange=draw;panel.append(summary,el('p','muted',report.scope),filter,list);if(report.truncated)panel.append(el('p','muted','Showing the first 100 statements.'));draw();return panel;
 }
 function makeMessage(m){const wrapper=document.createElement('article');wrapper.className='message '+(m.role==='user'?'user':'assistant');if(m.role==='user'){const bubble=document.createElement('div');bubble.className='user-bubble';bubble.textContent=m.content||'';wrapper.appendChild(bubble);if(Array.isArray(m.attached)&&m.attached.length)wrapper.append(el('div','attachment-note',m.attached.map(item=>item.name+' · '+(item.kind==='image'?'image':'log')).join(' · ')));const uact=el('div','message-actions user-actions');const ucopy=el('button','message-action');ucopy.title='Copy';ucopy.setAttribute('aria-label','Copy');ucopy.innerHTML='<svg><use href="#i-copy"/></svg>';ucopy.onclick=async()=>{toast(await copyCodeText(m.content||'')?'Copied':'Copy failed')};uact.append(ucopy);wrapper.appendChild(uact);return wrapper}const header=document.createElement('div');header.className='assistant-head';const img=document.createElement('img');img.className='small-mark';img.src='/mark-clean.png';img.alt='';header.append(img,document.createTextNode('Janna'));wrapper.appendChild(header);const content=document.createElement('div');content.className='message-body';content._codeValidation=m.code_validation||null;renderMarkdown(content,m.content||'');wrapper.appendChild(content);
-  const actions=el('div','message-actions');const copyBtn=el('button','message-action');copyBtn.title='Copy response';copyBtn.setAttribute('aria-label','Copy response');copyBtn.innerHTML='<svg><use href="#i-copy"/></svg>';copyBtn.onclick=async()=>{toast(await copyCodeText(m.content||'')?'Copied':'Copy failed')};const shareBtn=el('button','message-action');shareBtn.title='Share';shareBtn.setAttribute('aria-label','Share');shareBtn.innerHTML='<svg><use href="#i-share"/></svg>';shareBtn.onclick=async()=>{const text=m.content||'';if(navigator.share){try{await navigator.share({text})}catch{}}else toast(await copyCodeText(text)?'Copied to share':'Copy failed')};actions.append(copyBtn,shareBtn);wrapper.appendChild(actions);
+  const actions=el('div','message-actions');const copyBtn=el('button','message-action');copyBtn.title='Copy response';copyBtn.setAttribute('aria-label','Copy response');copyBtn.innerHTML='<svg><use href="#i-copy"/></svg>';copyBtn.onclick=async()=>{toast(await copyCodeText(m.content||'')?'Copied':'Copy failed')};const shareBtn=el('button','message-action');shareBtn.title='Share';shareBtn.setAttribute('aria-label','Share');shareBtn.innerHTML='<svg><use href="#i-share"/></svg>';shareBtn.onclick=async()=>{const text=m.content||'';if(navigator.share){try{await navigator.share({text})}catch{}}else toast(await copyCodeText(text)?'Copied to share':'Copy failed')};const listenBtn=el('button','message-action');listenBtn.title='Listen';listenBtn.setAttribute('aria-label','Listen to this response');listenBtn.innerHTML='<svg><use href="#i-play"/></svg>';listenBtn.onclick=()=>msgSpeakToggle(m.content||'',listenBtn);actions.append(copyBtn,listenBtn,shareBtn);wrapper.appendChild(actions);
   if(m.activity&&Array.isArray(m.activity.steps)&&m.activity.steps.length){const chain=document.createElement('details');chain.className='activity-chain';const sum=document.createElement('summary');sum.textContent='Thought for '+fmtDur(m.activity.seconds||1);const ol=document.createElement('ol');ol.className='activity-steps';for(const label of m.activity.steps){const li=document.createElement('li');li.textContent=finishedStep(label);ol.append(li)}chain.append(sum,ol);wrapper.insertBefore(chain,content);}
   if(m.evidence?.claims?.length)wrapper.append(evidencePanel(m.evidence));
   if(m.completion_verification)wrapper.append(completionPanel(m.completion_verification));
@@ -1309,6 +1309,46 @@ function voiceSetPhase(phase, caption) {
 function voiceClean(text) {
   return String(text || '').replace(/```[\s\S]*?```/g, ' [code block omitted] ').replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/[<>{}*_#~`>]/g, '').replace(/\s+/g, ' ').trim().slice(0, 1700);
 }
+// --- Listen button on chat responses: read one message aloud. Separate
+// from voice conversation mode; tapping again (or another message's
+// button) stops it. Sentence chunks + a watchdog, same lesson as voice
+// mode: one long utterance can silently hang in Chrome/Android TTS. ---
+const msgSpeech = { btn: null, timer: null, queue: [] };
+function msgSpeakClean(text) {
+  return String(text || '').replace(/```[\s\S]*?```/g, ' [code block omitted] ').replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/[<>{}*_#~`>]/g, '').replace(/\s+/g, ' ').trim();
+}
+function msgSpeakStop() {
+  clearTimeout(msgSpeech.timer);
+  try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch {}
+  if (msgSpeech.btn) { msgSpeech.btn.innerHTML = '<svg><use href="#i-play"/></svg>'; msgSpeech.btn.title = 'Listen'; msgSpeech.btn = null; }
+  msgSpeech.queue = [];
+}
+function msgSpeakToggle(text, btn) {
+  if (msgSpeech.btn === btn) { msgSpeakStop(); return; }
+  msgSpeakStop();
+  const synth = window.speechSynthesis;
+  if (!synth) { toast('Voice is not available in this browser'); return; }
+  const clean = msgSpeakClean(text);
+  if (!clean) { toast('Nothing to read here'); return; }
+  const raw = clean.match(/[^.!?…]+[.!?…]*\s*/g) || [clean];
+  const chunks = [];
+  for (const piece0 of raw) { let piece = piece0.trim(); while (piece.length > 180) { chunks.push(piece.slice(0, 180)); piece = piece.slice(180); } if (piece) chunks.push(piece); }
+  msgSpeech.btn = btn; msgSpeech.queue = chunks;
+  btn.innerHTML = '<svg><use href="#i-stop"/></svg>'; btn.title = 'Stop';
+  const step = () => {
+    if (msgSpeech.btn !== btn) return;
+    const part = msgSpeech.queue.shift();
+    if (part == null) { msgSpeakStop(); return; }
+    const u = new SpeechSynthesisUtterance(part);
+    try { u.lang = speechTag(); } catch {}
+    let advanced = false;
+    const advance = () => { if (advanced) return; advanced = true; clearTimeout(msgSpeech.timer); step(); };
+    u.onend = advance; u.onerror = advance;
+    msgSpeech.timer = setTimeout(advance, Math.max(5000, part.length * 110 + 3000));
+    try { synth.speak(u); } catch { advance(); }
+  };
+  step();
+}
 function voiceTalkSpeak(text) {
   const clean = voiceClean(text);
   if (!clean || !('speechSynthesis' in window)) { voiceSetPhase('idle', 'My answer is in the chat — voice isn’t available here.'); return; }
@@ -1408,6 +1448,7 @@ function voiceToggleMute() {
   else { voiceTalk.stopped = false; voiceListen(); }
 }
 function voiceOpen() {
+  msgSpeakStop();
   voiceOverlay();
   voiceTalk.active = true; voiceTalk.muted = false; voiceTalk.quiet = 0; voiceTalk.errStrikes = 0; voiceTalk.stopped = false;
   // Prime text-to-speech inside this tap: Android Chrome can silently drop
