@@ -32,7 +32,7 @@
   function jsonResponse(obj, status) {
     return new Response(JSON.stringify(obj), { status: status || 200, headers: { 'Content-Type': 'application/json; charset=utf-8' } });
   }
-  function summary(s) { return { id: s.id, title: s.title, project_id: s.project_id || null, updated: s.updated || 0 }; }
+  function summary(s) { return { id: s.id, title: s.title, project_id: s.project_id || null, updated: s.updated || 0, pinned: !!s.pinned, archived: !!s.archived }; }
 
   var nativeFetch = window.fetch.bind(window);
 
@@ -182,6 +182,30 @@
       var session = { id: 'web-' + Math.random().toString(36).slice(2, 10) + now.toString(36), title: 'New chat', project_id: body.project_id || null, created: now, updated: now, messages: [], events: [] };
       var list = loadSessions(); list.unshift(session); saveSessions(list);
       return Promise.resolve(jsonResponse(session));
+    }
+    if (path === '/api/sessions/update' && method === 'POST') {
+      var upd = {};
+      try { upd = JSON.parse((init && init.body) || '{}'); } catch { /* empty */ }
+      var ulist = loadSessions(); var us = ulist.find(function (x) { return x.id === upd.session_id; });
+      if (!us) return Promise.resolve(jsonResponse({ error: 'session not found' }, 404));
+      if (typeof upd.title === 'string' && upd.title.trim()) us.title = upd.title.trim().slice(0, 120);
+      if (typeof upd.pinned === 'boolean') us.pinned = upd.pinned;
+      if (typeof upd.archived === 'boolean') us.archived = upd.archived;
+      saveSessions(ulist);
+      return Promise.resolve(jsonResponse(summary(us)));
+    }
+    if (path === '/api/sessions/search' && method === 'GET') {
+      var q = '';
+      try { q = (new URL(url, location.origin).searchParams.get('q') || '').toLowerCase(); } catch { /* none */ }
+      if (!q) return Promise.resolve(jsonResponse({ results: [] }));
+      var hits = [];
+      loadSessions().forEach(function (ss) {
+        if (hits.length >= 25) return;
+        var inTitle = (ss.title || '').toLowerCase().includes(q);
+        var inBody = (ss.messages || []).some(function (m) { return (m.content || '').toLowerCase().includes(q); });
+        if (inTitle || inBody) hits.push(summary(ss));
+      });
+      return Promise.resolve(jsonResponse({ results: hits }));
     }
     if (path === '/api/sessions/delete' && method === 'POST') {
       var del = {};

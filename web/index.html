@@ -19,6 +19,8 @@
     <symbol id="i-plug" viewBox="0 0 24 24"><path d="M8 3v6m8-6v6M5 9h14v3a7 7 0 0 1-7 7v3m0-3a7 7 0 0 1-7-7V9Z"/></symbol>
     <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
     <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20.5 20.5L16.7 16.7"/></symbol>
+    <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 21s-6-5.2-6-10a6 6 0 1 1 12 0c0 4.8-6 10-6 10z"/><circle cx="12" cy="11" r="2.4"/></symbol>
     <symbol id="i-share" viewBox="0 0 24 24"><path d="M12 15V4m0 0L8.5 7.5M12 4l3.5 3.5"/><path d="M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"/></symbol>
     <symbol id="i-chat" viewBox="0 0 24 24"><path d="M20 12a7.5 7.5 0 0 1-7.5 7.5H7L3.5 21l1-4.5A7.5 7.5 0 1 1 20 12Z"/></symbol>
     <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 6a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v11H3z"/></symbol>
@@ -46,7 +48,7 @@
   </svg>
   <div id="app" class="app-shell">
     <aside class="sidebar" id="sidebar" aria-label="Sidebar">
-      <div class="brand"><img class="brand-icon" src="/mark-clean.png" alt="Janna logo"><span class="brand-name">Janna AI</span><button class="icon-button brand-collapse" id="sidebarCollapse" title="Collapse sidebar"><svg><use href="#i-chevron"/></svg></button></div>
+      <div class="brand"><img class="brand-icon" src="/mark-clean.png" alt="Janna logo"><span class="brand-name">Janna AI</span><button class="icon-button brand-search" id="sidebarSearch" title="Search chats"><svg><use href="#i-search"/></svg></button><button class="icon-button brand-collapse" id="sidebarCollapse" title="Collapse sidebar"><svg><use href="#i-chevron"/></svg></button></div>
       <button id="newChat" class="new-chat"><svg><use href="#i-plus"/></svg><span>New chat</span></button>
       <nav class="primary-nav" aria-label="Main navigation">
         <button data-view="chats" id="navChats" class="nav-item active"><svg><use href="#i-chat"/></svg>Conversations</button>
@@ -61,7 +63,8 @@
       <div class="sidebar-spacer"></div>
       <div class="local-state"><span class="status-dot" id="sidebarDot"></span><span id="sidebarState">Checking local model</span><span class="gpu-word" id="gpuState">GPU</span></div>
       <div class="side-rule lower-rule"></div>
-      <div class="profile-row"><button id="profileOpen" class="profile-open" title="Choose or import a profile"><span class="avatar">T</span><span id="profileName">Guest workspace</span></button><button id="sidebarSettings" class="icon-button" title="Settings"><svg><use href="#i-settings"/></svg></button></div>
+      <div class="profile-row"><button id="profileOpen" class="profile-open" title="Your profile"><span class="avatar">T</span><span class="profile-texts"><span id="profileName">Guest workspace</span><span class="profile-sub" id="profilePlan"></span></span></button><button id="sidebarSettings" class="icon-button" title="Settings"><svg><use href="#i-settings"/></svg></button></div>
+<div id="profileMenu" class="profile-menu" hidden><div class="profile-menu-head"><strong id="pmName">Guest workspace</strong><span id="pmPlan">Free plan</span></div><button type="button" class="chat-menu-item" id="pmPersonalization">Personalization</button><button type="button" class="chat-menu-item" id="pmProfile">Profile</button><button type="button" class="chat-menu-item" id="pmSettings">Settings</button></div>
     </aside>
     <div class="mobile-scrim" id="mobileScrim" hidden></div>
     <main class="main-pane" id="mainPane">
@@ -129,6 +132,7 @@
     <div id="toast" class="toast" role="status" hidden></div>
     <dialog id="projectDialog" class="janna-dialog"><form id="projectForm"><h2>Choose a project</h2><p>Give Janna a specific development folder. Work is restricted to this checkout.</p><label for="projectPath">Folder location</label><input id="projectPath" placeholder="C:\\Users\\You\\source\\MyProject" autocomplete="off"><div class="dialog-actions"><button type="button" id="cancelProject" class="text-btn">Cancel</button><button type="button" id="nativePick" class="text-btn">Browse…</button><button class="action-btn" type="submit">Use project</button></div></form></dialog>
     <dialog id="pairDialog" class="janna-dialog"><form id="pairForm"><img src="/mark-clean.png" alt="" class="pair-icon"><h2>Connect to your Janna</h2><p>On your Windows PC, open Settings → iPhone access and generate a private pairing code.</p><label for="pairCode">Pairing code</label><input id="pairCode" inputmode="numeric" autocomplete="one-time-code" placeholder="0000 0000" maxlength="9" required><button class="action-btn full" type="submit">Connect this device</button><p class="pair-error" id="pairError"></p></form></dialog>
+    <dialog id="searchDialog" class="janna-dialog search-dialog"><form id="searchForm"><h2>Search chats</h2><input id="searchInput" placeholder="Search..." autocomplete="off" aria-label="Search chats"><div id="searchResults" class="search-results"></div><div class="dialog-actions"><button type="button" id="searchClose" class="text-btn">Close</button></div></form></dialog>
   </div>
   <script src="/web-adapter.js" defer></script>
   <script src="/run-stream.js" defer></script>
