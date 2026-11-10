@@ -1313,12 +1313,31 @@ function voiceTalkSpeak(text) {
   const clean = voiceClean(text);
   if (!clean || !('speechSynthesis' in window)) { voiceSetPhase('idle', 'Nasa chat ang sagot ko — hindi available ang boses dito.'); return; }
   try { window.speechSynthesis.cancel(); } catch {}
-  const utter = new SpeechSynthesisUtterance(clean);
-  utter.lang = speechTag(clean); utter.rate = 1.05;
-  utter.onend = () => { if (voiceTalk.active && !voiceTalk.muted) voiceListen(); };
-  utter.onerror = () => { if (voiceTalk.active && !voiceTalk.muted) voiceListen(); };
+  // Speak in sentence-sized chunks: one long utterance can silently never
+  // start (or never end) in Chrome/Android TTS, which used to hang the whole
+  // conversation in the 'speaking' phase. Each chunk has a watchdog that
+  // force-advances if neither onend nor onerror ever fires.
+  const chunks = [];
+  for (const part of clean.match(/[^.!?…]+[.!?…]*\s*/g) || [clean]) { const t = part.trim(); if (t) chunks.push(t); }
+  const queue = [];
+  for (const c of chunks) { if (c.length <= 180) queue.push(c); else for (let i = 0; i < c.length; i += 180) queue.push(c.slice(i, i + 180)); }
+  if (!queue.length) queue.push(clean);
   voiceSetPhase('speaking', clean.length > 220 ? clean.slice(0, 220) + '…' : clean);
-  try { window.speechSynthesis.speak(utter); } catch { voiceSetPhase('idle', 'Nabigo ang boses — nasa chat ang sagot ko.'); }
+  let idx = 0;
+  const step = () => {
+    clearTimeout(voiceTalk.chunkTimer);
+    if (!voiceTalk.active || voiceTalk.muted) return;
+    if (idx >= queue.length) { voiceListen(); return; }
+    const piece = queue[idx++];
+    const utter = new SpeechSynthesisUtterance(piece);
+    utter.lang = speechTag(piece); utter.rate = 1.05;
+    let advanced = false;
+    const advance = () => { if (advanced) return; advanced = true; step(); };
+    utter.onend = advance; utter.onerror = advance;
+    voiceTalk.chunkTimer = setTimeout(advance, Math.max(5000, piece.length * 110 + 3000));
+    try { window.speechSynthesis.speak(utter); } catch { advance(); }
+  };
+  step();
 }
 function voiceExtract(el) {
   const clone = el.cloneNode(true);
@@ -1358,35 +1377,41 @@ function voiceListen() {
     let interim = '', finalText = '';
     for (const r of e.results) { if (r.isFinal) finalText += r[0].transcript; else interim += r[0].transcript; }
     if (interim) voiceSetPhase('listening', interim);
-    if (finalText.trim()) { voiceTalk.quiet = 0; try { recog.stop(); } catch {} voiceSubmit(finalText.trim()); }
+    if (finalText.trim()) { voiceTalk.quiet = 0; voiceTalk.errStrikes = 0; try { recog.stop(); } catch {} voiceSubmit(finalText.trim()); }
   };
   recog.onerror = e => {
     const err = String(e.error || '');
-    if (err === 'not-allowed' || err === 'service-not-allowed') { voiceSetPhase('idle', 'Hindi ako makarinig — i-allow ang microphone para kay Janna, tapos subukan ulit.'); voiceTalk.recog = null; }
+    if (err === 'not-allowed' || err === 'service-not-allowed') { voiceSetPhase('idle', 'Hindi ako makarinig — i-allow ang microphone para kay Janna, tapos subukan ulit.'); voiceTalk.recog = null; voiceTalk.errStrikes = 0; }
     else if (err === 'no-speech') { voiceTalk.quiet++; }
+    else if (err) { voiceTalk.errStrikes = (voiceTalk.errStrikes || 0) + 1; voiceTalk.errKind = err; }
   };
   recog.onend = () => {
+    if (voiceTalk.recog !== recog) return;
     if (!voiceTalk.active || voiceTalk.muted || voiceTalk.phase !== 'listening') return;
-    if (voiceTalk.quiet >= 3) { voiceSetPhase('idle', 'Wala akong marinig — i-tap ang bilog para subukan ulit.'); return; }
     clearTimeout(voiceTalk.restart);
-    voiceTalk.restart = setTimeout(() => voiceListen(), 350);
+    if ((voiceTalk.errStrikes || 0) >= 2) { const k = voiceTalk.errKind || ''; voiceTalk.errStrikes = 0; voiceTalk.stopped = true; voiceSetPhase('idle', k === 'network' ? 'Hindi maabot ng pandinig ko ang speech service — mahina o walang internet na abot nito. I-tap ang bilog para subukan ulit, o mag-type na lang.' : 'May problema sa pakikinig ko (' + k + ') — i-tap ang bilog para subukan ulit.'); return; }
+    if (voiceTalk.quiet >= 3) { voiceTalk.stopped = true; voiceSetPhase('idle', 'Wala akong marinig — i-tap ang bilog para subukan ulit.'); return; }
+    voiceTalk.restart = setTimeout(() => { if (!voiceTalk.stopped) voiceListen(); }, 350);
   };
   try { recog.start(); } catch {}
 }
 function voiceOrbTap() {
-  if (voiceTalk.phase === 'speaking') { try { window.speechSynthesis.cancel(); } catch {} voiceListen(); }
+  if (voiceTalk.phase === 'speaking') { clearTimeout(voiceTalk.chunkTimer); try { window.speechSynthesis.cancel(); } catch {} voiceListen(); }
   else if (voiceTalk.phase === 'listening') { try { voiceTalk.recog?.stop(); } catch {} voiceSetPhase('idle', 'Na-pause — i-tap ang bilog para magpatuloy.'); }
-  else if (voiceTalk.phase === 'idle' && !voiceTalk.muted) voiceListen();
+  else if (voiceTalk.phase === 'idle' && !voiceTalk.muted) { voiceTalk.stopped = false; voiceListen(); }
 }
 function voiceToggleMute() {
   voiceTalk.muted = !voiceTalk.muted;
   const btn = document.getElementById('voiceMuteBtn'); if (btn) btn.classList.toggle('muted', voiceTalk.muted);
-  if (voiceTalk.muted) { try { voiceTalk.recog?.stop(); } catch {} try { window.speechSynthesis.cancel(); } catch {} voiceSetPhase('idle', 'Naka-mute ang mic — i-tap ang mic para magsalita ulit.'); }
-  else voiceListen();
+  if (voiceTalk.muted) { clearTimeout(voiceTalk.chunkTimer); try { voiceTalk.recog?.stop(); } catch {} try { window.speechSynthesis.cancel(); } catch {} voiceSetPhase('idle', 'Naka-mute ang mic — i-tap ang mic para magsalita ulit.'); }
+  else { voiceTalk.stopped = false; voiceListen(); }
 }
 function voiceOpen() {
   voiceOverlay();
-  voiceTalk.active = true; voiceTalk.muted = false; voiceTalk.quiet = 0;
+  voiceTalk.active = true; voiceTalk.muted = false; voiceTalk.quiet = 0; voiceTalk.errStrikes = 0; voiceTalk.stopped = false;
+  // Prime text-to-speech inside this tap: Android Chrome can silently drop
+  // speak() calls that were never unlocked by a user gesture.
+  try { const synth = window.speechSynthesis; if (synth) { synth.getVoices(); const prime = new SpeechSynthesisUtterance(' '); prime.volume = 0; synth.speak(prime); } } catch {}
   document.body.classList.add('voice-open');
   const btn = document.getElementById('voiceMuteBtn'); if (btn) btn.classList.remove('muted');
   voiceListen();
