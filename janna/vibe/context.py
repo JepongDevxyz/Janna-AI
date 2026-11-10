@@ -16,10 +16,10 @@ from . import repomap
 from .diagnostics import Diagnostic, errors_first
 from .repomap import CHARS_PER_TOKEN
 
-# The training dataset renders tasks through this same prompt, so what Sumi is
+# The training dataset renders tasks through this same prompt, so what Janna Pro is
 # trained on is what it sees when serving. Changing the rendered prompt invalidates
 # vibe-coding datasets, whose validator hash covers it.
-SYSTEM = """You are Sumi, a careful software engineer working in a real project.
+SYSTEM = """You are Janna Pro, a careful software engineer working in a real project.
 Change only what the task needs. Follow the style of the surrounding code.
 Reply with edits only, each in exactly this form:
 
@@ -64,7 +64,7 @@ REI_BUDGET = Budget(num_ctx=8192, num_predict=1200, map_tokens=600, file_tokens=
 
 
 def budget_for(model: str) -> Budget:
-    return REI_BUDGET if 'rei' in (model or '').lower() or ':9b' in (model or '').lower() else Budget()
+    return REI_BUDGET if 'lite' in (model or '').lower() or ':9b' in (model or '').lower() else Budget()
 
 
 def estimate_tokens(text: str) -> int:

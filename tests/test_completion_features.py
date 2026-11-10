@@ -111,7 +111,7 @@ class UpdateTests(unittest.TestCase):
         return buf.getvalue()
 
     def manager(self,tmp, data, *, digest=None):
-        name='Janna-v1.4.0-Sumi-1.0-Rei-1.0-Windows-Setup.zip'
+        name='Janna-v1.4.0-Janna Pro-1.0-Janna Lite-1.0-Windows-Setup.zip'
         asset={'name':name,'size':len(data),'digest':'sha256:'+(digest or hashlib.sha256(data).hexdigest()),
                'browser_download_url':'https://github.com/JepongDevxyz/Janna-AI/releases/download/v1.4.0/'+name}
         release={'tag_name':'v1.4.0','assets':[asset],'body':'Changes'}
@@ -144,7 +144,7 @@ class UpdateTests(unittest.TestCase):
             self.assertFalse((Path(t)/'escaped.txt').exists())
 
     def test_release_missing_digest_or_unsupported_host_refused(self):
-        asset={'name':'Janna-v1.4.0-Sumi-Rei-Windows-Setup.zip','size':2200,
+        asset={'name':'Janna-v1.4.0-Janna Pro-Janna Lite-Windows-Setup.zip','size':2200,
                'digest':'','browser_download_url':'https://github.com/JepongDevxyz/Janna-AI/releases/test'}
         with self.assertRaisesRegex(ValueError,'SHA-256'):_asset({'tag_name':'v1.4.0','assets':[asset]},'1.3.5')
         self.assertFalse(_url_allowed('https://127.0.0.1/download.zip'))
@@ -153,18 +153,18 @@ class UpdateTests(unittest.TestCase):
 
 
 class ExpandedHardwareTests(unittest.TestCase):
-    def test_default_4060_ti_and_rei_are_conservative(self):
-        self.assertEqual(profile_for('standard','maximum','sumi-1.0',vram_mb=16384).context,32768)
-        self.assertEqual(profile_for('standard','balanced','rei-1.0',vram_mb=8192).context,8192)
-        self.assertEqual(profile_for('standard','maximum','rei-1.0',vram_mb=32768).context,16384)
-        self.assertLessEqual(profile_for('standard','maximum','sumi-1.0',vram_mb=8192).context,8192)
+    def test_default_4060_ti_and_lite_are_conservative(self):
+        self.assertEqual(profile_for('standard','maximum','janna-pro-1.0',vram_mb=16384).context,32768)
+        self.assertEqual(profile_for('standard','balanced','janna-lite-1.0',vram_mb=8192).context,8192)
+        self.assertEqual(profile_for('standard','maximum','janna-lite-1.0',vram_mb=32768).context,16384)
+        self.assertLessEqual(profile_for('standard','maximum','janna-pro-1.0',vram_mb=8192).context,8192)
 
     def test_high_vram_enables_more_context_without_unbounded_allocation(self):
-        self.assertEqual(profile_for('standard','high','sumi-1.0',vram_mb=24576).context,32768)
-        self.assertEqual(profile_for('standard','maximum','sumi-1.0',vram_mb=32768).context,49152)
-        self.assertEqual(profile_for('standard','maximum','sumi-1.0',vram_mb=49152).context,65536)
-        self.assertEqual(profile_for('boost','balanced','sumi-1.0',vram_mb=49152).context,8192)
-        self.assertEqual(profile_for('standard','balanced','sumi-1.0',vram_mb=None).context,16384)
+        self.assertEqual(profile_for('standard','high','janna-pro-1.0',vram_mb=24576).context,32768)
+        self.assertEqual(profile_for('standard','maximum','janna-pro-1.0',vram_mb=32768).context,49152)
+        self.assertEqual(profile_for('standard','maximum','janna-pro-1.0',vram_mb=49152).context,65536)
+        self.assertEqual(profile_for('boost','balanced','janna-pro-1.0',vram_mb=49152).context,8192)
+        self.assertEqual(profile_for('standard','balanced','janna-pro-1.0',vram_mb=None).context,16384)
 
 
 class BoundedAnalyzerTests(unittest.TestCase):

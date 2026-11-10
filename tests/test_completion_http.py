@@ -35,7 +35,7 @@ class CompletionHTTPTests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.http.shutdown(); cls.http.server_close()
-        cls.runtime.kage.stop(); cls.runtime.companion.stop(); cls.runtime.bots.close(stop_bots=False)
+        cls.runtime.luna.stop(); cls.runtime.companion.stop(); cls.runtime.bots.close(stop_bots=False)
         cls.temp.cleanup()
 
     def fetch(self, path, payload=None, auth=True):

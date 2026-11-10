@@ -59,7 +59,7 @@ class Trainer:
                 if not os.path.lexists(value):
                     raise ValueError('Missing training path: ' + key)
             if Path(clean['gguf']).name != 'sha256-' + BASE_SHA:
-                raise ValueError('Choose the verified exact Sumi 27B blob')
+                raise ValueError('Choose the verified exact Janna Pro 27B blob')
             (self.base / 'training-config.json').write_text(json.dumps(clean, indent=2))
             return self.status()
 
@@ -98,7 +98,7 @@ class Trainer:
                 except (OSError, ValueError):
                     continue
             return {'configured': bool(self.configuration()), 'config': self.configuration(), 'job': job, 'checkpoints': checkpoints,
-                    'experimental': True, 'base': 'Exact Sumi Bonsai 2 27B',
+                    'experimental': True, 'base': 'Exact Janna Pro Bonsai 2 27B',
                     'qualification': 'Experimental diagnostic training. Engineering improvement and deployment remain unqualified.'}
 
     def start(self, mode, steps=2, checkpoint_id=None):

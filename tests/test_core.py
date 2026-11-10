@@ -86,7 +86,7 @@ class ModelTests(unittest.TestCase):
             cfg = agent._config('local', context_tokens=context)
             limit = cfg['provider']['ollama']['models']['local']['limit']
             # This is the installed engine's overflow rule, not output length
-            # invented by a mock model. 8K Rei previously had zero usable input.
+            # invented by a mock model. 8K Janna Lite previously had zero usable input.
             usable = limit['context'] - limit['output']
             self.assertGreaterEqual(usable, context * .75)
             self.assertGreaterEqual(limit['output'], 2048)

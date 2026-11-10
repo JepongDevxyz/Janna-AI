@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class FakeChild:
-    def __init__(self, output='[JANNA] Downloading\nSumi setup complete.\n', code=0):
+    def __init__(self, output='[JANNA] Downloading\nJanna Pro setup complete.\n', code=0):
         self.stdout = io.StringIO(output)
         self.code = code
 
@@ -49,7 +49,7 @@ class ProvisioningTests(unittest.TestCase):
             self.assertEqual(p.status()['state'], 'ready')
             args = launch.call_args.args[0]
             self.assertEqual(args[:4], ['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass'])
-            self.assertEqual(Path(args[5]).name, 'Ensure-Sumi-1.0.ps1')
+            self.assertEqual(Path(args[5]).name, 'Ensure-Janna-Pro-1.0.ps1')
             self.assertNotIn('bash', args)
             self.assertEqual(launch.call_args.kwargs['stdin'], __import__('subprocess').DEVNULL)
             self.assertFalse(launch.call_args.kwargs.get('shell', False))
@@ -77,28 +77,28 @@ class ProvisioningTests(unittest.TestCase):
                 time.sleep(.005)
             self.assertNotIn('abcdefghi', repr(p.status()))
 
-    def test_model_catalog_uses_rei_identity_with_legacy_compatibility(self):
-        values = ['rei-1.0:latest', 'sumi-1.0-lite:latest', 'bonsai-2:9b']
-        self.assertEqual(models.default_model(values), 'rei-1.0:latest')
-        self.assertEqual(models.display_name('rei-1.0:latest'), 'Rei 1.1')
-        self.assertEqual(models.display_name('sumi-1.0-lite:latest'), 'Rei 1.1 (legacy)')
+    def test_model_catalog_uses_lite_identity_with_legacy_compatibility(self):
+        values = ['janna-lite-1.0:latest', 'janna-pro-1.0-lite:latest', 'bonsai-2:9b']
+        self.assertEqual(models.default_model(values), 'janna-lite-1.0:latest')
+        self.assertEqual(models.display_name('janna-lite-1.0:latest'), 'Janna Lite 1.1')
+        self.assertEqual(models.display_name('janna-pro-1.0-lite:latest'), 'Janna Lite 1.1 (legacy)')
         status = models.state(values)
         self.assertFalse(status['installed'])
-        self.assertTrue(status['installed_rei'])
+        self.assertTrue(status['installed_lite'])
         self.assertTrue(status['installed_lite'])
 
     def test_installer_auto_provisions_and_does_not_bundle_engines(self):
         install = (ROOT / 'scripts' / 'Install-Janna.ps1').read_text()
-        ensure = (ROOT / 'scripts' / 'Ensure-Sumi-1.0.ps1').read_text()
+        ensure = (ROOT / 'scripts' / 'Ensure-Janna-Pro-1.0.ps1').read_text()
         builder = (ROOT / 'scripts' / 'Build-Windows-EXE.ps1').read_text()
-        self.assertIn('Ensure-Sumi-1.0.ps1', install)
+        self.assertIn('Ensure-Janna-Pro-1.0.ps1', install)
         self.assertIn("if ($LASTEXITCODE -ne 0)", install)
-        self.assertIn("'SETUP-SUMI.cmd'", builder)
+        self.assertIn("'SETUP-JANNA-PRO.cmd'", builder)
         self.assertIn("winget.exe", ensure.lower())
         self.assertIn('Get-AuthenticodeSignature', ensure)
         self.assertIn("pull $base", ensure)
-        self.assertIn("create 'sumi-1.0'", ensure)
-        self.assertIn("create 'rei-1.0'", ensure)
+        self.assertIn("create 'janna-pro-1.0'", ensure)
+        self.assertIn("create 'janna-lite-1.0'", ensure)
         self.assertIn('Get-FileHash', ensure)
         self.assertIn('/api/chat', ensure)
         self.assertIn('The selected Janna model registration was not visible', ensure)
@@ -121,19 +121,19 @@ class ProvisioningTests(unittest.TestCase):
 
     def test_repair_and_model_setup_scripts_are_reusable_and_visible(self):
         repair = (ROOT / 'REPAIR-Janna.cmd').read_text()
-        setup = (ROOT / 'SETUP-SUMI.cmd').read_text()
+        setup = (ROOT / 'SETUP-JANNA-PRO.cmd').read_text()
         self.assertIn('Install-Janna.ps1', repair)
-        self.assertIn('Ensure-Sumi-1.0.ps1', setup)
+        self.assertIn('Ensure-Janna-Pro-1.0.ps1', setup)
         self.assertIn('pause', setup.lower())
         self.assertIn('pause', repair.lower())
 
 
     def test_qwen_install_pulls_only_the_allowlisted_tag(self):
         from janna.model_library import library_catalog
-        rows = {row['id']: row for row in library_catalog(['qwen3:8b', 'sumi-1.0:latest'])}
+        rows = {row['id']: row for row in library_catalog(['qwen3:8b', 'janna-pro-1.0:latest'])}
         self.assertTrue(rows['qwen3:8b']['installed'])
         self.assertFalse(rows['qwen3:4b']['installed'])
-        self.assertNotIn('Sumi', rows['qwen3:8b']['label'])
+        self.assertNotIn('Janna Pro', rows['qwen3:8b']['label'])
         p = Provisioner(ROOT, platform='nt', executable='powershell.exe')
         with mock.patch('janna.provisioning.subprocess.Popen') as launch:
             with self.assertRaisesRegex(ValueError, 'install list'):
@@ -148,7 +148,7 @@ class ProvisioningTests(unittest.TestCase):
             self.assertEqual(p.status()['state'], 'ready')
             self.assertEqual(launch.call_args.args[0], ['ollama', 'pull', 'qwen3:8b'])
             self.assertFalse(launch.call_args.kwargs.get('shell', False))
-            self.assertIn('does not change Sumi', p.status()['messages'][0])
+            self.assertIn('does not change Janna Pro', p.status()['messages'][0])
 
     def test_cline_install_is_the_npm_package_and_does_not_run_without_npm(self):
         p = Provisioner(ROOT, platform='nt', executable='powershell.exe')

@@ -96,18 +96,18 @@ class EngineRequestIntegrationTests(unittest.TestCase):
             yield {'type': 'delta', 'text': 'Investigation plan: trace, instrument, test.'}
             yield {'type': 'metrics', 'tokens_per_second': 27.0}
 
-        with mock.patch('janna.server.installed_models', return_value=['sumi-1.0:latest']), \
+        with mock.patch('janna.server.installed_models', return_value=['janna-pro-1.0:latest']), \
              mock.patch('janna.server.ui_event_stream', side_effect=stream), \
              mock.patch('janna.server.guard_new_run'):
             for task in TASKS:
                 with self.subTest(topic=task):
                     sid = json.loads(self.request('/api/sessions', {}))['id']
                     events = self.sse_events({'session_id': sid, 'prompt': task,
-                                              'mode': 'chat', 'model': 'sumi-1.0:latest'})
+                                              'mode': 'chat', 'model': 'janna-pro-1.0:latest'})
                     self.assertEqual(next(e for e in events if e['type'] == 'done')['text'],
                                      'Investigation plan: trace, instrument, test.')
                     self.assertEqual(dispatched[-1]['messages'][-1], {'role': 'user', 'content': task})
-                    self.assertEqual(dispatched[-1]['model'], 'sumi-1.0:latest')
+                    self.assertEqual(dispatched[-1]['model'], 'janna-pro-1.0:latest')
                     stored = self.runtime.store.get_session(sid)
                     self.assertEqual(stored['messages'][0]['content'], task)
                     self.assertIsNone(stored['messages'][1].get('refusal_origin'))
@@ -124,7 +124,7 @@ class EngineRequestIntegrationTests(unittest.TestCase):
                 with self.subTest(topic=task):
                     sid = json.loads(self.request('/api/sessions', {'project_id': project['id']}))['id']
                     events = self.sse_events({'session_id': sid, 'prompt': task,
-                                              'mode': 'agent', 'model': 'sumi-1.0:latest',
+                                              'mode': 'agent', 'model': 'janna-pro-1.0:latest',
                                               'autocontinue': False, 'passes': 1})
                     done = next(e for e in events if e['type'] == 'done')
                     self.assertEqual(done['text'], 'Examined current source; no tests were executed.')
@@ -146,7 +146,7 @@ class EngineRequestIntegrationTests(unittest.TestCase):
              mock.patch('janna.server.guard_new_run'), \
              mock.patch('janna.server.polish_explanation') as polish:
             events = self.sse_events({'session_id': sid, 'prompt': TASKS[4], 'mode': 'agent',
-                                      'model': 'sumi-1.0:latest', 'autocontinue': False,
+                                      'model': 'janna-pro-1.0:latest', 'autocontinue': False,
                                       'polish': True, 'passes': 1})
             polish.assert_not_called()
         done = next(e for e in events if e['type'] == 'done')
@@ -162,11 +162,11 @@ class EngineRequestIntegrationTests(unittest.TestCase):
         def refusal(*args, **kwargs):
             yield {'type': 'delta', 'text': "I can't help with that emulator."}
         sid = json.loads(self.request('/api/sessions', {}))['id']
-        with mock.patch('janna.server.installed_models', return_value=['sumi-1.0:latest']), \
+        with mock.patch('janna.server.installed_models', return_value=['janna-pro-1.0:latest']), \
              mock.patch('janna.server.ui_event_stream', side_effect=refusal), \
              mock.patch('janna.server.guard_new_run'):
             events = self.sse_events({'session_id': sid, 'prompt': TASKS[0], 'mode': 'chat',
-                                      'model': 'sumi-1.0:latest'})
+                                      'model': 'janna-pro-1.0:latest'})
         done = next(e for e in events if e['type'] == 'done')
         self.assertEqual(done['text'], "I can't help with that emulator.")
         self.assertEqual(done['refusal_origin'], 'model')
@@ -177,7 +177,7 @@ class EngineRequestIntegrationTests(unittest.TestCase):
         with mock.patch('janna.server.open_code_path', return_value='/fake/opencode'):
             with self.assertRaises(urllib.error.HTTPError) as outcome:
                 self.request('/api/run', {'session_id': sid, 'prompt': TASKS[1],
-                                          'mode': 'agent', 'model': 'sumi-1.0:latest'})
+                                          'mode': 'agent', 'model': 'janna-pro-1.0:latest'})
         err = outcome.exception
         self.assertEqual(err.code, 400)
         msg = json.loads(err.read().decode('utf-8'))
@@ -203,7 +203,7 @@ class ModelTransportTests(unittest.TestCase):
                      mock.patch('janna.core.reasoning_profile', return_value={'levels': ['default'],
                                       'default': 'default', 'verified': False}):
                     events = list(core.ui_event_stream('http://127.0.0.1:11434',
-                                  [{'role': 'user', 'content': task}], 'sumi-1.0:latest',
+                                  [{'role': 'user', 'content': task}], 'janna-pro-1.0:latest',
                                   'default', threading.Event()))
                 self.assertEqual([e['text'] for e in events if e['type'] == 'delta'], ['A test plan.'])
                 payload = records[0]
@@ -220,7 +220,7 @@ class ModelTransportTests(unittest.TestCase):
                      'I am not allowed to provide that analysis.'):
             with self.subTest(text=text), mock.patch('janna.core.json_request') as remote:
                 self.assertTrue(core.explicit_model_refusal(text))
-                self.assertEqual(core.polish_explanation(text, 'sumi-1.0:latest'), (text, False))
+                self.assertEqual(core.polish_explanation(text, 'janna-pro-1.0:latest'), (text, False))
                 remote.assert_not_called()
 
     def test_honest_unverified_limitation_is_not_classified_as_refusal(self):

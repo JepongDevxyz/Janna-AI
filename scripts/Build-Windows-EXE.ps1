@@ -35,7 +35,7 @@ try {
         if (-not (Test-Path -LiteralPath $path)) { throw "Application source folder missing: $folder" }
         Copy-Item -LiteralPath $path -Destination (Join-Path $staging $folder) -Recurse -Force
     }
-    foreach ($name in @('README.md','THIRD_PARTY.md','LICENSE','BRANDING.md','CHANGELOG.md','SETUP-SUMI.cmd','SETUP-REI.cmd')) {
+    foreach ($name in @('README.md','THIRD_PARTY.md','LICENSE','BRANDING.md','CHANGELOG.md','SETUP-JANNA-PRO.cmd','SETUP-JANNA-LITE.cmd')) {
         Copy-Item -LiteralPath (Join-Path $root $name) -Destination (Join-Path $staging $name) -Force
     }
     Get-ChildItem -LiteralPath $staging -Recurse -Directory -Filter '__pycache__' -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force

@@ -74,8 +74,8 @@ class DurableHttpTests(unittest.TestCase):
         self.url = f'http://127.0.0.1:{self.http.server_port}'
         self.sid = self.rt.store.new_session()['id']
         self.payload = dict(session_id=self.sid, request_id='retry-safe', prompt='Hello',
-                            model='rei-1.0:latest', mode='chat', speed='boost')
-        self.patches = [patch('janna.server.installed_models', return_value=['rei-1.0:latest']),
+                            model='janna-lite-1.0:latest', mode='chat', speed='boost')
+        self.patches = [patch('janna.server.installed_models', return_value=['janna-lite-1.0:latest']),
                         patch('janna.server.should_research', return_value=False),
                         patch('janna.server.safe_temperature', return_value={'available': False})]
         for p in self.patches:
@@ -85,7 +85,7 @@ class DurableHttpTests(unittest.TestCase):
         self.http.shutdown()
         self.http.server_close()
         self.rt.companion.stop()
-        self.rt.kage.stop()
+        self.rt.luna.stop()
         self.rt.bots.close(stop_bots=True)
         for p in self.patches:
             p.stop()
@@ -146,18 +146,18 @@ class DurableHttpTests(unittest.TestCase):
         self.assertEqual(message['status'], 'BLOCKED')
         self.assertEqual(self.rt.runs.for_session(self.sid)[0]['state'], 'failed')
 
-    def test_kage_chat_is_dedicated_persistent_and_project_scoped(self):
-        with self.request('/api/kage/chat', {}) as response:
+    def test_luna_chat_is_dedicated_persistent_and_project_scoped(self):
+        with self.request('/api/luna/chat', {}) as response:
             first = json.load(response)
-        with self.request('/api/kage/chat', {}) as response:
+        with self.request('/api/luna/chat', {}) as response:
             again = json.load(response)
         self.assertEqual(first['id'], again['id'])
         self.assertNotEqual(first['id'], self.sid)
-        self.assertEqual(first['purpose'], 'kage')
+        self.assertEqual(first['purpose'], 'luna')
         project = Path(self.temp.name) / 'project'
         project.mkdir()
         registered = self.rt.store.register_project(str(project))
-        with self.request('/api/kage/chat', {'project_id': registered['id']}) as response:
+        with self.request('/api/luna/chat', {'project_id': registered['id']}) as response:
             scoped = json.load(response)
         self.assertNotEqual(scoped['id'], first['id'])
         self.assertEqual(scoped['project_id'], registered['id'])

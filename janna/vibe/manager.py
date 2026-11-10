@@ -13,7 +13,7 @@ from .context import REI_BUDGET, budget_for
 from .loop import Options, VibeRun
 from .memory import EngineeringMemory
 
-ALLOWED_MODELS = {'sumi-1.0:latest': 'Sumi 1.1', 'rei-1.0:latest': 'Rei 1.1'}
+ALLOWED_MODELS = {'janna-pro-1.0:latest': 'Janna Pro 1.1', 'janna-lite-1.0:latest': 'Janna Lite 1.1'}
 EVENT_LIMIT = 400
 MAX_TASK = 12000
 
@@ -48,7 +48,7 @@ class VibeManager:
         if len(task) > MAX_TASK:
             raise ValueError('That task is too long; put the details in a project file')
         if model not in ALLOWED_MODELS:
-            raise ValueError('Choose Sumi 1.1 or Rei 1.1')
+            raise ValueError('Choose Janna Pro 1.1 or Janna Lite 1.1')
         if type(max_attempts) is not int or not 1 <= max_attempts <= 8:
             raise ValueError('Choose 1 to 8 attempts')
         with self.lock:
@@ -97,8 +97,8 @@ class VibeManager:
                              source_index=self.source_index,
                              options=Options(max_attempts=max_attempts, allow_config=allow_config, budget=budget,
                                              recall=recalled['summary'] if recalled.get('fresh') else '',
-                                             # Measured on Sumi only. Edge-case step: edge-holdout3.json.
-                                             # Reasoning in that step: reasoning-holdout4-b-edge.json. Rei was not measured.
+                                             # Measured on Janna Pro only. Edge-case step: edge-holdout3.json.
+                                             # Reasoning in that step: reasoning-holdout4-b-edge.json. Janna Lite was not measured.
                                              edge_tests=budget != REI_BUDGET,
                                              edge_think=budget != REI_BUDGET)).run()
             try:

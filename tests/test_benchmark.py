@@ -21,11 +21,11 @@ class BenchmarkTests(unittest.TestCase):
                              b'{"done":true,"eval_count":10,"eval_duration":1000000000,"prompt_eval_count":12}'])
         def opener(req,timeout):
             body=json.loads(req.data)
-            self.assertEqual(body['model'],'sumi-1.0:latest')
+            self.assertEqual(body['model'],'janna-pro-1.0:latest')
             self.assertTrue(body['stream'])
             self.assertEqual(req.full_url,'http://127.0.0.1:11434/api/chat')
             return Feed()
-        got=run_one('sumi-1.0:latest','GPU DMA',post=opener,clock=lambda:next(ticks))
+        got=run_one('janna-pro-1.0:latest','GPU DMA',post=opener,clock=lambda:next(ticks))
         self.assertEqual(got['time_to_first_token_ms'],400)
         self.assertEqual(got['wall_ms'],1000)
         self.assertEqual(got['tokens_per_second'],10.)
@@ -37,7 +37,7 @@ class BenchmarkTests(unittest.TestCase):
                     'tokens_per_second':25.2,'finished':True}
         with tempfile.TemporaryDirectory() as d:
             dest=Path(d)/'report.json'
-            r=evaluate(['sumi-1.0:latest'],1,dest,runner=runner)
+            r=evaluate(['janna-pro-1.0:latest'],1,dest,runner=runner)
             self.assertTrue(dest.exists())
             self.assertIn('not correctness',r['disclaimer'])
             self.assertEqual(r['summaries'][0]['completed'],1)

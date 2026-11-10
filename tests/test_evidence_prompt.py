@@ -100,7 +100,7 @@ class EvidencePromptTests(unittest.TestCase):
         with mock.patch('janna.core.open_stream', side_effect=open_stub), \
                 mock.patch('janna.core.reasoning_profile', return_value={'verified': False, 'levels': ['default'], 'vision': False}):
             events = list(ui_event_stream('http://127.0.0.1:11434', [{'role': 'user', 'content': 'Count'}],
-                                           'sumi-1.0:latest', 'default', threading.Event()))
+                                           'janna-pro-1.0:latest', 'default', threading.Event()))
         self.assertEqual([item['text'] for item in events if item['type'] == 'reasoning'], ['Check the bound. '])
         self.assertEqual([item['text'] for item in events if item['type'] == 'delta'], ['The count is 2.'])
         self.assertTrue(all(isinstance(item['elapsed_ms'], int) for item in events if item['type'] == 'reasoning'))
@@ -122,7 +122,7 @@ class EvidencePromptTests(unittest.TestCase):
                 ])
 
         with mock.patch('janna.vibe.client.urllib.request.urlopen', return_value=Fake()):
-            reply = OllamaClient('sumi-1.0:latest').complete([{'role': 'user', 'content': 'fix'}])
+            reply = OllamaClient('janna-pro-1.0:latest').complete([{'role': 'user', 'content': 'fix'}])
         self.assertEqual(reply['text'], 'return n - 1')
         self.assertEqual(reply['thinking'], 'because the bound is exclusive')
         self.assertNotIn('because', reply['text'])

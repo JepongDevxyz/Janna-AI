@@ -59,7 +59,7 @@ def _go_calls(root: Path) -> dict:
     missing = go_interface_diagnostics(root)
     messages, _info = build_messages(root, 'fix the crash', platforms=['go'], diagnostics=missing, touched=[], budget=REI_BUDGET)
     shown = messages[1]['content'].split('--- box.go', 1)[1].split('---', 1)[0]
-    (root / 'use.go').write_text('package main\n\nfunc use() string {\n\tbox := Box{}\n\treturn box.Save("a") + Greeting("Sumi")\n}\n', encoding='utf-8')
+    (root / 'use.go').write_text('package main\n\nfunc use() string {\n\tbox := Box{}\n\treturn box.Save("a") + Greeting("Janna Pro")\n}\n', encoding='utf-8')
     clear = go_interface_diagnostics(root)
     (root / 'use.go').write_text('package main\n\nfunc use() string {\n\treturn Greeting()\n}\n', encoding='utf-8')
     arity = go_interface_diagnostics(root)
@@ -131,7 +131,7 @@ def _traceback_frames(root: Path) -> dict:
                    'E   ZeroDivisionError: division by zero\n')
     pytest_found = parse(pytest_log, project=str(root))
     rust_log = ("thread 'tests::greets_by_name' panicked at src/main.rs:15:9:\n"
-                "assertion `left == right` failed\n  left: \"Hi, Sumi\"\n right: \"Hello, Sumi\"\n"
+                "assertion `left == right` failed\n  left: \"Hi, Janna Pro\"\n right: \"Hello, Janna Pro\"\n"
                 "note: run with `RUST_BACKTRACE=1`\nerror: test failed, to rerun pass `--bin sample`\n")
     rust_found = parse(rust_log)
     return {'frames': [(item.file, item.line) for item in found],
@@ -151,14 +151,14 @@ def _node_assertion(root: Path) -> dict:
         return {'ran': False}
     (root / 'logic.test.js').write_text(
         "const assert = require('node:assert');\nconst test = require('node:test');\n"
-        "test('greeting', () => {\n  assert.strictEqual('Hello, world', 'Hello, Sumi');\n});\n", encoding='utf-8')
+        "test('greeting', () => {\n  assert.strictEqual('Hello, world', 'Hello, Janna Pro');\n});\n", encoding='utf-8')
     result = subprocess.run([node, '--test', 'logic.test.js'], cwd=root, capture_output=True, text=True, timeout=30)
     from janna.vibe.diagnostics import parse
     found = parse(result.stdout + result.stderr, project=str(root))
     first = found[0] if found else None
     return {'ran': True, 'exit': result.returncode, 'file': first.file if first else '',
             'line': first.line if first else 0,
-            'names_expected': bool(first and 'Hello, Sumi' in first.message)}
+            'names_expected': bool(first and 'Hello, Janna Pro' in first.message)}
 
 
 def _shared_name(root: Path) -> dict:
@@ -202,7 +202,7 @@ def _failure_name(root: Path) -> dict:
     for i in range(8):
         (root / f'note{i}.go').write_text(f'package main\n\nfunc Note{i}() int {{ return {i} }}\n', encoding='utf-8')
     from janna.vibe.diagnostics import parse
-    found = parse('check_test.go:5: Greeting("Sumi") = "Hi, Sumi", want "Hello, Sumi"\n', project=str(root))
+    found = parse('check_test.go:5: Greeting("Janna Pro") = "Hi, Janna Pro", want "Hello, Janna Pro"\n', project=str(root))
     _messages, info = build_messages(root, 'fix the crash', platforms=['go'], diagnostics=found, touched=[], budget=REI_BUDGET)
     plain = repomap.build(root, task='fix the crash')
     named = repomap.build(root, task='fix the crash', mention=found[0].message)
@@ -324,7 +324,7 @@ def measure() -> dict:
               and node_assertion['names_expected']
               and traceback_frames['rust_panic'].get('file') == 'src/main.rs'
               and traceback_frames['rust_panic'].get('line') == 15
-              and 'Hello, Sumi' in traceback_frames['rust_panic'].get('message', '')
+              and 'Hello, Janna Pro' in traceback_frames['rust_panic'].get('message', '')
               and 'to rerun' not in traceback_frames['rust_panic'].get('message', '')
               and incremental['first_parsed'] == 12 and incremental['first_reused'] == 0
               and incremental['second_parsed'] == 1 and incremental['second_reused'] == 11

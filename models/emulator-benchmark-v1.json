@@ -1,5 +1,5 @@
 {
-  "name": "Sumi emulator-engineering diagnostic suite",
+  "name": "Janna Pro emulator-engineering diagnostic suite",
   "version": 1,
   "warning": "Rubric coverage is a keyword heuristic, NOT proof of correctness, gameplay compatibility, or human-level performance. Validate source and behavior independently.",
   "cases": [

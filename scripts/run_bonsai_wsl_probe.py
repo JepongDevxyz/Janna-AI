@@ -8,7 +8,7 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from audit_sumi_training import memory
+from audit_pro_training import memory
 from training.bonsai.guard import gpu_streak, request_yield
 
 

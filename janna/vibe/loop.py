@@ -345,7 +345,7 @@ class VibeRun:
 
     def _finish(self, checks: dict, last_reply: str, started: float, baseline: dict | None) -> dict:
         """The project's checks passed. With edge tests on, that earns `verified`
-        only once Sumi's own attempt to break the change has also passed."""
+        only once Janna Pro's own attempt to break the change has also passed."""
         if not self.options.edge_tests:
             return self._report('verified', self._success_detail(checks), checks, started, baseline)
         if not checks.get('tested'):

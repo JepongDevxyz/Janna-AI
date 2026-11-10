@@ -30,7 +30,7 @@ try {
     }
     # Validate all PowerShell setup scripts before editing or launching anything.
     foreach ($file in @($PSCommandPath, $installer, (Join-Path $root 'scripts\Build-Windows-EXE.ps1'),
-                          (Join-Path $root 'scripts\Ensure-Sumi-1.0.ps1'))) {
+                          (Join-Path $root 'scripts\Ensure-Janna-Pro-1.0.ps1'))) {
         $tokens = $null
         $errors = $null
         [void][System.Management.Automation.Language.Parser]::ParseFile($file,[ref]$tokens,[ref]$errors)

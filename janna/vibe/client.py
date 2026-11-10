@@ -9,7 +9,7 @@ import urllib.request
 from .context import Budget
 
 BASE_URL = 'http://127.0.0.1:11434'
-DEFAULT_MODEL = 'sumi-1.0:latest'
+DEFAULT_MODEL = 'janna-pro-1.0:latest'
 
 
 MIN_BATCH_RAM_GIB = 6.0
@@ -35,7 +35,7 @@ def available_ram_gib() -> float | None:
 
 
 def require_batch_memory(minimum: float = MIN_BATCH_RAM_GIB) -> None:
-    """Long batch jobs load Sumi repeatedly. Refuse rather than push the owner's
+    """Long batch jobs load Janna Pro repeatedly. Refuse rather than push the owner's
     open applications and a running Janna into paging."""
     available = available_ram_gib()
     if available is not None and available < minimum:

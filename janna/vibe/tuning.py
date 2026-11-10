@@ -1,9 +1,9 @@
-"""Measure what Sumi actually does at each context size on this GPU.
+"""Measure what Janna Pro actually does at each context size on this GPU.
 
     py -3 -m janna.vibe.tuning --out evidence.json
 
 Only request options change; no profile or weights are modified. Each size loads
-the model again, so run this while nothing else is using Sumi.
+the model again, so run this while nothing else is using Janna Pro.
 """
 from __future__ import annotations
 

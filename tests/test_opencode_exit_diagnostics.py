@@ -7,7 +7,7 @@ class OpenCodeFailureDiagnosticsTests(unittest.TestCase):
     def test_common_model_provider_failure_is_distinguished_from_windows_shell(self):
         cases = [
             (['Error: connect ECONNREFUSED 127.0.0.1:11434'], 'local model service'),
-            (['Error: model ollama/sumi-1.0 not found'], 'selected Sumi/Rei model'),
+            (['Error: model ollama/janna-pro-1.0 not found'], 'selected Janna Pro/Janna Lite model'),
             (['error: unknown option --foo'], 'rejected an argument'),
             (['Invalid configuration: provider'], 'generated configuration'),
             (['EACCES reading project file'], 'permission error'),

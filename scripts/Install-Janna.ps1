@@ -229,18 +229,18 @@ try {
     Write-Host "`nInstalled Janna.exe: $exe" -ForegroundColor Green
     Write-Host 'Use the Janna desktop shortcut next time. It opens a native window, not a browser tab.'
     if (-not $SkipModelSetup) {
-        Banner 'Provisioning Sumi 1.1 or Rei 1.1 and local coding dependencies'
-        Write-Host 'The setup selects Sumi 1.1 (~8.3 GB) or Rei 1.1 (~3.2 GB) based on detected hardware.'
+        Banner 'Provisioning Janna Pro 1.1 or Janna Lite 1.1 and local coding dependencies'
+        Write-Host 'The setup selects Janna Pro 1.1 (~8.3 GB) or Janna Lite 1.1 (~3.2 GB) based on detected hardware.'
         Write-Host 'The setup never uses a paid model API, and external dependencies are installed separately.'
-        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $dest 'scripts\Ensure-Sumi-1.0.ps1')
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $dest 'scripts\Ensure-Janna-Pro-1.0.ps1')
         if ($LASTEXITCODE -ne 0) {
-            throw ('Janna.exe was installed successfully, but Sumi 1.1 is NOT ready. ' +
-                   'The model setup error is in the log above. Rerun SETUP-SUMI.cmd from the installed Janna folder ' +
+            throw ('Janna.exe was installed successfully, but Janna Pro 1.1 is NOT ready. ' +
+                   'The model setup error is in the log above. Rerun SETUP-JANNA-PRO.cmd from the installed Janna folder ' +
                    'once the connection or dependency issue has been corrected.')
         }
         Write-Host 'Selected Janna model installed and inference verified. Open Models to see its name.' -ForegroundColor Green
     } else {
-        Write-Host 'Model provisioning explicitly skipped. Setup can be resumed using SETUP-SUMI.cmd.' -ForegroundColor Yellow
+        Write-Host 'Model provisioning explicitly skipped. Setup can be resumed using SETUP-JANNA-PRO.cmd.' -ForegroundColor Yellow
     }
     if (-not $NoLaunch) {
         $started = Start-Process -FilePath $exe -WorkingDirectory $dest -PassThru -ErrorAction Stop

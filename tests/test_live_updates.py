@@ -26,7 +26,7 @@ class LiveUpdateTests(unittest.TestCase):
 
     def tearDown(self):
         self.http.shutdown(); self.http.server_close()
-        self.rt.companion.stop(); self.rt.kage.stop(); self.rt.bots.close(stop_bots=True)
+        self.rt.companion.stop(); self.rt.luna.stop(); self.rt.bots.close(stop_bots=True)
         self.temp.cleanup()
 
     def request(self, path, body=None):
@@ -51,10 +51,10 @@ class LiveUpdateTests(unittest.TestCase):
         def worker():
             output['body']=self.request('/api/run',{
                 'session_id':s['id'],'prompt':'Analyze the renderer',
-                'mode':'chat','model':'rei-1.0:latest','reasoning':'default',
+                'mode':'chat','model':'janna-lite-1.0:latest','reasoning':'default',
                 'speed':'boost','effort':'balanced'})
         try:
-            with mock.patch('janna.server.installed_models', return_value=['rei-1.0:latest']),\
+            with mock.patch('janna.server.installed_models', return_value=['janna-lite-1.0:latest']),\
                  mock.patch('janna.server.ui_event_stream',side_effect=fake_stream),\
                  mock.patch('janna.server.should_research',return_value=False):
                 thread=threading.Thread(target=worker,daemon=True)
@@ -95,11 +95,11 @@ class LiveUpdateTests(unittest.TestCase):
         def worker():
             output['body']=self.request('/api/run',{
                 'session_id':session['id'],'prompt':'Fix the renderer',
-                'mode':'agent','model':'rei-1.0:latest','reasoning':'default',
+                'mode':'agent','model':'janna-lite-1.0:latest','reasoning':'default',
                 'autocontinue':False,'passes':1,'speed':'standard'})
         try:
             with mock.patch('janna.server.open_code_path',return_value='/fake/agent'),\
-                 mock.patch('janna.server.installed_models',return_value=['rei-1.0:latest']),\
+                 mock.patch('janna.server.installed_models',return_value=['janna-lite-1.0:latest']),\
                  mock.patch('janna.server.should_research',return_value=False):
                 thread=threading.Thread(target=worker,daemon=True);thread.start()
                 self.assertTrue(entered.wait(5),'agent never started')
@@ -113,7 +113,7 @@ class LiveUpdateTests(unittest.TestCase):
         self.assertIsNone(calls[0]['session'])
         self.assertEqual(calls[1]['session'],'ses_kept')
         self.assertIn('deterministic fence test',calls[1]['prompt'])
-        self.assertIn('Rei 1.1',calls[0]['prompt'])
+        self.assertIn('Janna Lite 1.1',calls[0]['prompt'])
         events=[json.loads(line[6:]) for line in output['body'].splitlines() if line.startswith('data: ')]
         self.assertEqual([e['index'] for e in events if e['type']=='cycle'],[1,2])
 

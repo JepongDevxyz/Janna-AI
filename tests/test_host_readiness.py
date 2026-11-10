@@ -59,7 +59,7 @@ class HostReadinessHttpTests(unittest.TestCase):
         self.http.shutdown()
         self.http.server_close()
         self.rt.companion.stop()
-        self.rt.kage.stop()
+        self.rt.luna.stop()
         self.rt.bots.close(stop_bots=True)
         self.temp.cleanup()
 
