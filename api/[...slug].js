@@ -15,6 +15,7 @@ export const config = { maxDuration: 60 };
 const APP_VERSION = '1.6.0-web.1';
 const SYSTEM_PROMPT =
   'You are Janna AI, a helpful AI assistant in the Janna AI workspace by Jepong Devxyz. ' +
+  'YOUR IDENTITY — never break this: you are Janna AI, made by Jepong Devxyz. The model the user picks is only the engine powering this answer; you are never ChatGPT, GPT, Gemini, Claude, Kimi, Llama or any other model or company, and you never say you are based on, powered by as your identity, or a version of another model. If asked who or what you are, say you are Janna AI. If asked which engine is running, you may name the picked model as the engine for this answer, while making clear that you yourself are Janna AI. ' +
   'Always write in the same language the user used: Tagalog in, Tagalog out; English in, English out. ' +
   'HOW YOU ANSWER — follow this style: ' +
   '(1) Answer directly first: give the answer, formula or definition up front; never open with a clarifying question — follow-up questions, if any, go at the very end. ' +
@@ -47,7 +48,7 @@ function shuffled(list) {
 // ---------- model catalog ----------
 function catalog() {
   const rows = [
-    { id: 'janna-cloud', label: 'Janna Cloud', note: 'Cloud model · no setup, works anywhere', model_class: 'Janna Cloud', cloud: true, provider: 'pollinations', model: process.env.JANNA_FREE_MODEL || 'openai-fast' },
+    { id: 'janna-cloud', label: 'Janna Cloud', note: 'Great for most questions', model_class: 'Janna Cloud', cloud: true, provider: 'pollinations', model: process.env.JANNA_FREE_MODEL || 'openai-fast' },
   ];
   if (keyPool('GROQ_API_KEYS').length)
     rows.push({ id: 'groq-llama-3.3-70b', label: 'Llama 3.3 70B · Groq', note: 'Fast cloud model via Groq', model_class: 'Janna Cloud', cloud: true, provider: 'groq', model: 'llama-3.3-70b-versatile' });
@@ -64,10 +65,10 @@ function catalog() {
     // echo, shared 15 requests/minute across the key. Claude Opus 4.6 is
     // listed free but actually subscription-gated (HTTP 402) and Jev 1.13 is
     // a decision-endpoint model (HTTP 400 on chat) — neither is wired.
-    rows.push({ id: 'apinex-gemini-3.8-flash', label: 'Gemini 3.8 Flash', note: '', model_class: 'Janna Cloud', cloud: true, provider: 'apinex', model: 'free/gemini-3.8-flash' });
-    rows.push({ id: 'apinex-gpt-6-luna', label: 'GPT-6 Luna', note: '', model_class: 'Janna Cloud', cloud: true, provider: 'apinex', model: 'free/gpt-6-luna' });
-    rows.push({ id: 'apinex-kimi-k3', label: 'Kimi K3', note: '', model_class: 'Janna Cloud', cloud: true, provider: 'apinex', model: 'free/kimi-k3' });
-    rows.push({ id: 'apinex-muse-spark-1.3', label: 'Muse Spark 1.3', note: '', model_class: 'Janna Cloud', cloud: true, provider: 'apinex', model: 'free/muse-spark-1.3' });
+    rows.push({ id: 'apinex-gemini-3.8-flash', label: 'Gemini 3.8 Flash', note: 'Fast and sharp — great for long, detailed answers', model_class: 'Janna Cloud', cloud: true, provider: 'apinex', model: 'free/gemini-3.8-flash' });
+    rows.push({ id: 'apinex-gpt-6-luna', label: 'GPT-6 Luna', note: 'Strong all-rounder for chat, writing, and ideas', model_class: 'Janna Cloud', cloud: true, provider: 'apinex', model: 'free/gpt-6-luna' });
+    rows.push({ id: 'apinex-kimi-k3', label: 'Kimi K3', note: 'Great for coding and long documents', model_class: 'Janna Cloud', cloud: true, provider: 'apinex', model: 'free/kimi-k3' });
+    rows.push({ id: 'apinex-muse-spark-1.3', label: 'Muse Spark 1.3', note: 'Warm and creative everyday chat', model_class: 'Janna Cloud', cloud: true, provider: 'apinex', model: 'free/muse-spark-1.3' });
   }
   return rows;
 }
@@ -148,7 +149,7 @@ function buildAwareness(body, row) {
   lines.push('WHAT YOU KNOW — facts about yourself, this app and this user. Use them to answer questions about Janna AI, the app, or the user accurately; do not recite them unprompted.');
   lines.push('You are Janna AI, the web edition at ai.janna-official.tech, made by Jepong Devxyz. There is no account or sign-in: chats, settings and your memory of the user are stored only in this user\'s browser on this device.');
   lines.push('Plan: Free. Janna Cloud is completely free — no account, no payment, and there are no paid tiers or subscriptions in this app.');
-  lines.push('Models the user can pick in this app: ' + modelList + '. You are currently answering as ' + row.label + '.');
+  lines.push('Models the user can pick in this app: ' + modelList + '. The engine currently powering your answer is ' + row.label + ' — you are still Janna AI, never the engine itself.');
   lines.push('Features in this app: chat, with each conversation saved in the sidebar; Luna, a star-cat pet companion the user can tap to pet, plus a separate Luna chat; about 90 color themes (default Rose, dark Velvet) under Settings - Themes; Settings sections: General, Themes, Personalization, How hard Janna works, Checking answers, Web research, Tools and connections, On-device control, Data controls (Export data, Import data, Clear all chats, Clear memory); microphone voice input; file attachments (you can read attached text files; you cannot view images); and a memory of the user (below).');
   lines.push('Desktop app only (NOT in this web edition): Janna Pro 1.1 and Janna Lite 1.1 local models, Work mode with project files and coding tools, and phone pairing. If the user asks for those, say they run in the Janna AI desktop app.');
   lines.push('Your limits in this web edition: you cannot see images, cannot browse or search the web, and cannot run code or edit the user\'s files.');
