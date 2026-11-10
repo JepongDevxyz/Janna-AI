@@ -428,3 +428,48 @@ body[data-theme='moon']{--paper:#fff8fb;--sidebar:#fde6ef;--hover:#f9d6e5;--line
 /* Content pages: flatter cards, ChatGPT list feel */
 .card{box-shadow:none;border-radius:18px}
 .pill{border-radius:999px}
+/* ===== Rebuild to the studied chatgpt.com spec (2026-11-10) ===== */
+/* Empty state vertically centred, like ChatGPT */
+.chat-view:not(.has-messages) .thread{display:flex;flex-direction:column}
+.chat-view:not(.has-messages) .welcome{margin:auto;top:0;width:100%}
+/* Slim single-capsule composer */
+.composer{padding:9px 10px;gap:2px}
+.composer textarea{height:30px;min-height:30px;padding:3px 8px;font-size:16px;line-height:1.4}
+.composer-toolbar{min-height:36px}
+.composer .icon-button{width:34px;height:34px}
+.composer.is-empty .send-button{background:color-mix(in srgb,var(--rose) 30%,var(--paper))}
+/* The + menu (ChatGPT pattern, opens upward) */
+.composer-menu{position:absolute;left:6px;bottom:calc(100% + 10px);width:min(320px,88vw);background:var(--panel);border:1px solid var(--line);border-radius:18px;box-shadow:0 18px 50px rgba(59,26,43,.18);padding:6px;z-index:46;display:flex;flex-direction:column;gap:1px}
+.composer-menu[hidden]{display:none}
+.menu-row{display:flex;align-items:center;gap:11px;width:100%;padding:10px;border:0;background:transparent;border-radius:12px;color:var(--ink);font-size:13.5px;text-align:left;cursor:pointer}
+.menu-row:hover{background:var(--hover)}
+.menu-row svg{width:18px;height:18px;color:var(--muted);flex:none}
+.menu-row select{margin-left:auto;border:0;background:transparent;color:var(--muted);font-size:13px;max-width:130px;cursor:pointer}
+.menu-state{margin-left:auto;color:var(--muted);font-size:12.5px}
+.menu-divider{height:1px;background:var(--line);margin:5px 8px}
+/* Response actions: exactly Copy + Share, ChatGPT-style */
+.message-actions{display:flex;gap:2px;margin-top:10px}
+.message-action{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border:0;border-radius:8px;background:transparent;color:var(--muted);cursor:pointer;padding:6px}
+.message-action svg{width:17px;height:17px}
+.message-action:hover{background:var(--hover);color:var(--ink)}
+.user-actions{justify-content:flex-end;margin-top:5px;opacity:.6}
+/* Code blocks: pale panel, lowercase language, round copy pill */
+.code-block{border-radius:16px;background:var(--bubble)}
+.code-block-header{background:transparent;border-bottom:0;height:38px;text-transform:lowercase}
+.code-action{border-radius:999px;background:var(--panel);border:1px solid var(--line);padding:4px 11px}
+.code-block pre{background:transparent;border:0;border-radius:0}
+/* Model picker as plain text + chevron, like ChatGPT's header */
+.model-menu-button{border:0;background:transparent;font-size:13.5px;padding:6px 6px;border-radius:8px}
+.model-menu-button[aria-expanded=true]{border-color:transparent;background:var(--hover)}
+/* One centred suggestion pill */
+.suggest-row{justify-content:center}
+.suggest-single{padding:10px 20px;font-size:13.5px;color:var(--ink)}
+/* Settings as one stacked page */
+.settings-content>h3{font-size:16px;font-weight:650;text-transform:none;letter-spacing:0;color:var(--ink);margin:26px 0 4px}
+.settings-content .theme-grid{margin-top:10px}
+
+.composer{position:relative}
+.message.user{flex-direction:column;align-items:flex-end}
+.message-action{border:0!important;background:transparent!important;box-shadow:none!important}
+
+body:has(#drawer:not([hidden])) .luna-bubble{opacity:0!important;pointer-events:none!important}

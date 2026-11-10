@@ -18,6 +18,8 @@
     <symbol id="i-cloud" viewBox="0 0 24 24"><path d="M7 18h11a4 4 0 1 0-.8-7.9A6 6 0 0 0 5.7 12a3 3 0 0 0 1.3 6Z"/></symbol>
     <symbol id="i-plug" viewBox="0 0 24 24"><path d="M8 3v6m8-6v6M5 9h14v3a7 7 0 0 1-7 7v3m0-3a7 7 0 0 1-7-7V9Z"/></symbol>
     <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></symbol>
+    <symbol id="i-share" viewBox="0 0 24 24"><path d="M12 15V4m0 0L8.5 7.5M12 4l3.5 3.5"/><path d="M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"/></symbol>
     <symbol id="i-chat" viewBox="0 0 24 24"><path d="M20 12a7.5 7.5 0 0 1-7.5 7.5H7L3.5 21l1-4.5A7.5 7.5 0 1 1 20 12Z"/></symbol>
     <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 6a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v11H3z"/></symbol>
     <symbol id="i-cube" viewBox="0 0 24 24"><path d="m12 2 9 5v10l-9 5-9-5V7zM3 7l9 5 9-5M12 12v10"/></symbol>
@@ -72,7 +74,7 @@
           <div id="welcome" class="welcome">
             <div class="welcome-title"><h1>Where should we begin?</h1></div>
             <div id="welcomeComposerSlot" class="welcome-composer-slot"></div>
-            <div class="suggest-row"><button class="suggest-chip" data-prompt="Help me plan my day — ask what I need to do, then make me a gentle schedule."><span>✿</span>Plan my day</button><button class="suggest-chip" data-prompt="Write me a short, pretty poem about morning light."><span>♡</span>Write a poem</button><button class="suggest-chip" data-prompt="Be my study buddy — quiz me on a topic I choose, one question at a time."><span>✎</span>Study buddy</button><button class="suggest-chip" data-prompt="Give me a simple, affordable self-care and glow-up routine."><span>★</span>Glow-up tips</button></div>
+            <div class="suggest-row"><button class="suggest-chip suggest-single" data-prompt="What can you do?">What can you do?</button></div>
             <div class="welcome-hint"><span><span class="status-dot"></span>Local session · Files stay on your machine</span><span>Shift + Enter for a new line ↵</span></div>
           </div>
           <div id="messages" class="messages" hidden></div>
@@ -81,8 +83,17 @@
         <div class="composer" id="composer">
           <div id="attachmentTray" class="attachment-tray" hidden></div>
           <textarea id="prompt" rows="2" placeholder="Ask Janna anything…" aria-label="Message Janna"></textarea>
-          <div class="composer-toolbar"><div class="composer-left"><button class="icon-button attachment-btn" id="attachmentButton" title="Attach a log, screenshot, or image"><svg><use href="#i-plus"/></svg></button><button class="icon-button" id="voiceMic" type="button" title="Dictate a message" aria-label="Dictate a message" aria-pressed="false"><svg><use href="#i-mic"/></svg></button><button class="icon-button" id="connectionButton" title="Project tools and connections"><svg><use href="#i-plug"/></svg></button><button class="research-toggle" id="researchToggle" title="Allow web research for current answers" type="button">Web · Auto</button><div class="mode-control"><select id="mode" aria-label="Mode"><option value="auto">Auto</option><option value="chat">Ask</option><option value="agent">Work</option></select></div></div>
-            <div class="composer-right"><label class="subtle-select speed-choice" title="Speed profile"><svg><use href="#i-bolt"/></svg><select id="speed"><option value="standard">1×</option><option value="boost">1.5× Boost</option></select></label><label class="subtle-select effort-choice" title="Work depth"><svg><use href="#i-brain"/></svg><select id="effort"><option value="quick">Quick</option><option value="balanced">Balanced</option><option value="high">High reasoning</option><option value="maximum">Maximum</option></select></label><button id="stop" class="send-button stop-button" title="Stop" hidden><svg><use href="#i-stop"/></svg></button><button id="send" class="send-button" title="Send"><svg><use href="#i-send"/></svg></button></div>
+          <div class="composer-toolbar"><div class="composer-left"><button class="icon-button attachment-btn" id="attachmentButton" title="Add photos, files and more" aria-haspopup="true" aria-expanded="false"><svg><use href="#i-plus"/></svg></button></div>
+            <div class="composer-right"><button class="icon-button" id="voiceMic" type="button" title="Dictate a message" aria-label="Dictate a message" aria-pressed="false"><svg><use href="#i-mic"/></svg></button><button id="stop" class="send-button stop-button" title="Stop" hidden><svg><use href="#i-stop"/></svg></button><button id="send" class="send-button" title="Send"><svg><use href="#i-send"/></svg></button></div>
+          </div>
+          <div id="composerMenu" class="composer-menu" hidden>
+            <button class="menu-row" id="menuAttach" type="button"><svg><use href="#i-plus"/></svg><span>Add photos &amp; files</span></button>
+            <div class="menu-divider"></div>
+            <button class="menu-row" id="connectionButton" type="button"><svg><use href="#i-plug"/></svg><span>Tools &amp; connections</span></button>
+            <button class="menu-row research-toggle" id="researchToggle" type="button"><svg><use href="#i-globe"/></svg><span>Web research</span><span class="menu-state" id="researchState">Auto</span></button>
+            <label class="menu-row"><svg><use href="#i-chat"/></svg><span>Mode</span><select id="mode" aria-label="Mode"><option value="auto">Auto</option><option value="chat">Ask</option><option value="agent">Work</option></select></label>
+            <label class="menu-row"><svg><use href="#i-bolt"/></svg><span>Speed</span><select id="speed"><option value="standard">1×</option><option value="boost">1.5× Boost</option></select></label>
+            <label class="menu-row"><svg><use href="#i-brain"/></svg><span>Effort</span><select id="effort"><option value="quick">Quick</option><option value="balanced">Balanced</option><option value="high">High reasoning</option><option value="maximum">Maximum</option></select></label>
           </div>
           <input type="file" id="attachment" accept=".txt,.md,.log,.json,.py,.cs,.js,.ts,.rs,.go,.xml,.yaml,.yml,.png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" multiple hidden>
         </div>
