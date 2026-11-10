@@ -1103,7 +1103,7 @@ function applyLocale(){
   document.documentElement.dir=chosen?.dir||'ltr';
   const nav=$('navChats');if(nav)nav.lastChild.textContent=it?'Conversazioni':'Conversations';
   const newLabel=$('newChat')?.querySelector('span');if(newLabel)newLabel.textContent=it?'Nuova chat':'New chat';
-  const welcome=$('welcome')?.querySelector('h1');if(welcome)welcome.textContent=it?'Come posso aiutarti oggi?':'How can I help you today?';
+  const welcome=$('welcome')?.querySelector('h1');if(welcome)welcome.textContent=it?'Da dove cominciamo?':'Where should we begin?';
   const hint=$('welcome')?.querySelector('.welcome-hint span > span')?.parentNode;
   if(hint)hint.lastChild.textContent=window.__JANNA_WEB__?'Cloud session · Chats stay in this browser':(it?'Sessione locale · File sul tuo computer':'Local session · Files stay on your machine');
   if(!state.busy){$('prompt').placeholder=it?'Chiedi qualcosa a Janna…':'Ask Janna anything…'}

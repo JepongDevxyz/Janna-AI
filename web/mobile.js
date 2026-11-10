@@ -14,11 +14,8 @@
       document.documentElement.style.setProperty('--phone-height', `${height}px`);
       document.documentElement.style.setProperty('--phone-top', `${viewport?.offsetTop || 0}px`);
       document.body.classList.toggle('keyboard-open', window.innerHeight - height > 120);
-      // The phone composer always stays outside the scrolling conversation.
-      const composer = document.getElementById('composer');
-      const dock = document.getElementById('composerDock');
-      if (composer && dock && composer.parentElement !== dock) dock.append(composer);
-      if (dock) dock.hidden = false;
+      // ChatGPT parity: the composer lives in the welcome slot on an empty
+      // chat and in the dock once messages exist — renderConversation owns it.
     });
   };
   window.addEventListener('resize', update, {passive: true});

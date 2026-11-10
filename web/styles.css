@@ -1,4 +1,4 @@
-:root{font-family:Arial,Helvetica,sans-serif;font-synthesis:none;-webkit-font-smoothing:antialiased;color:#334354;background:#fbfaf8;--paper:#fbfaf8;--sidebar:#f1f0ec;--hover:#e8e6e0;--line:#e4e1dc;--ink:#283a4a;--muted:#7d8989;--faded:#a6a7a3;--bubble:#f1f0ec;--panel:#fff;--rose:#b98183;--sage:#6b9981;--shadow:0 7px 25px rgba(37,40,39,.045),0 1px 2px rgba(40,40,40,.04);--font-serif:'Segoe UI',system-ui,-apple-system,'Helvetica Neue',Arial,sans-serif}
+:root{font-family:system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-synthesis:none;-webkit-font-smoothing:antialiased;color:#334354;background:#fbfaf8;--paper:#fbfaf8;--sidebar:#f1f0ec;--hover:#e8e6e0;--line:#e4e1dc;--ink:#283a4a;--muted:#7d8989;--faded:#a6a7a3;--bubble:#f1f0ec;--panel:#fff;--rose:#b98183;--sage:#6b9981;--shadow:0 7px 25px rgba(37,40,39,.045),0 1px 2px rgba(40,40,40,.04);--font-serif:'Segoe UI',system-ui,-apple-system,'Helvetica Neue',Arial,sans-serif}
 *{box-sizing:border-box}html,body{height:100%;margin:0}body{overflow:hidden;font-size:14px}button,input,select,textarea{font:inherit}button{cursor:pointer}button:disabled{cursor:not-allowed;opacity:.55}button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--rose);outline-offset:2px}.symbols{position:absolute;width:0;height:0;overflow:hidden}svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.65;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}[hidden]{display:none!important}
 body[data-theme='pro']{--paper:#1f2326;--sidebar:#181d21;--hover:#30383d;--line:#343b3f;--ink:#edf0ed;--muted:#a8b3b8;--faded:#829095;--bubble:#2b3135;--panel:#242b2e;--rose:#d2a1a3;--sage:#90b3a0;--shadow:0 12px 40px rgba(0,0,0,.16)}
 body[data-theme='rose']{--paper:#fff8fb;--sidebar:#fce9f2;--hover:#f8d9e7;--line:#f2d2e1;--ink:#4a2b3a;--muted:#9a7284;--faded:#c09bab;--bubble:#fceef5;--panel:#fffdfd;--rose:#d64f83;--sage:#7ba889;--shadow:0 7px 25px rgba(214,79,131,.07),0 1px 2px rgba(120,50,80,.05)}
@@ -269,7 +269,6 @@ html{overscroll-behavior:none}
 .phone-layout :is(.action-btn,.text-btn,.nav-item,.recent-item){min-height:44px}
 .phone-layout img{-webkit-user-drag:none}
 .phone-layout .welcome{top:0;margin:0 auto;padding:24px 20px;max-width:100%}
-.phone-layout .welcome-composer-slot{display:none}
 .phone-layout .welcome-title{margin:16px 0 24px}
 .phone-layout .drawer{top:0;bottom:auto;height:var(--phone-height,100dvh);padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom);max-width:100%}
 .phone-layout .drawer-title{flex-shrink:0}
@@ -366,7 +365,7 @@ body[data-theme='moon']{--paper:#fff8fb;--sidebar:#fde6ef;--hover:#f9d6e5;--line
 .luna-stats{font-size:13px;color:var(--muted);margin:10px 0}
 .luna-pet-btn{margin:0 10px 10px 0}
 /* Phone: pet + bubble sit above the composer dock */
-.phone-layout .luna-bubble{bottom:auto;top:calc(64px + env(safe-area-inset-top))}
+.phone-layout .luna-bubble{top:auto;bottom:188px;right:14px}
 ::selection{background:color-mix(in srgb,var(--rose) 30%,transparent)}
 .luna-bubble{border-color:color-mix(in srgb,var(--rose) 45%,var(--line))}
 .send-button{border-radius:12px}
@@ -387,3 +386,45 @@ body[data-theme='moon']{--paper:#fff8fb;--sidebar:#fde6ef;--hover:#f9d6e5;--line
 .suggest-chip span{color:var(--rose)}
 .suggest-chip:hover{border-color:color-mix(in srgb,var(--rose) 55%,var(--line));color:var(--ink)}
 .chat-view.has-messages .suggest-row{display:none}
+/* ===== ChatGPT parity pass (2026-11-10): every surface mirrors ChatGPT's layout language, in Rose. ===== */
+.welcome{top:clamp(52px,16vh,180px)}
+.welcome-title{margin-bottom:26px}
+.welcome h1{font-size:30px;font-weight:500;letter-spacing:-.4px}
+.welcome-hint{margin-top:14px}
+.ai-disclaimer{text-align:center;font-size:11px;color:var(--faded);padding:0 16px 10px;margin:0;background:var(--paper)}
+.phone-layout .ai-disclaimer{padding-bottom:max(8px,env(safe-area-inset-bottom))}
+.chat-view.has-messages + .ai-disclaimer{display:block}
+/* Composer: ChatGPT capsule */
+.composer{border-radius:32px;border-color:color-mix(in srgb,var(--line) 70%,var(--muted));box-shadow:0 10px 34px rgba(59,26,43,.10),0 1px 4px rgba(59,26,43,.06)}
+.composer textarea{font-size:15px}
+.send-button{width:36px;height:36px}
+/* Messages: ChatGPT shows no name plate over assistant replies */
+.assistant-head{display:none}
+.message-body{font-size:15px}
+/* Sidebar rows, ChatGPT spacing */
+.primary-nav{gap:2px}
+.nav-item{height:42px;border-radius:10px;font-size:14px}
+.recent-item{font-size:13.5px;border-radius:10px;padding:10px 12px}
+.new-chat{font-size:14px}
+/* Settings & drawers: ChatGPT settings language — flat rows, hairlines, switch toggles */
+.drawer{box-shadow:-12px 0 44px rgba(59,26,43,.10)}
+.drawer-body h3{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--faded);margin:26px 0 6px}
+.drawer-body .list-row{padding:13px 0}
+.drawer-body input[type='checkbox']{-webkit-appearance:none;appearance:none;width:46px;height:27px;border-radius:999px;background:color-mix(in srgb,var(--muted) 35%,var(--panel));position:relative;cursor:pointer;transition:background .18s;flex:none;vertical-align:middle}
+.drawer-body input[type='checkbox']::after{content:'';position:absolute;top:3px;left:3px;width:21px;height:21px;border-radius:50%;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.25);transition:left .18s}
+.drawer-body input[type='checkbox']:checked{background:var(--rose)}
+.drawer-body input[type='checkbox']:checked::after{left:22px}
+.toggle-setting{display:flex!important;align-items:center;justify-content:space-between;gap:14px;padding:11px 0;border-bottom:1px solid var(--line);font-size:13.5px!important;color:var(--ink)!important;margin:0!important}
+.toggle-setting span{line-height:1.45}
+.drawer-body .action-btn{border-radius:999px;padding:10px 18px}
+.drawer-body .text-btn{border-radius:999px;padding:9px 16px}
+.drawer-body .inline-input{border-radius:12px}
+.theme-option{border-radius:16px}
+.theme-option.selected{outline:2px solid var(--rose)}
+/* Menus, dialogs, toasts */
+.janna-dialog{border-radius:20px}
+.toast{border-radius:999px;padding:10px 18px}
+.model-menu{border-radius:18px!important;box-shadow:0 18px 50px rgba(59,26,43,.16)!important}
+/* Content pages: flatter cards, ChatGPT list feel */
+.card{box-shadow:none;border-radius:18px}
+.pill{border-radius:999px}
