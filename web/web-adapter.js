@@ -140,6 +140,26 @@
       return Promise.resolve(jsonResponse({ settings: merged }));
     }
 
+    // --- profile transfer: export/import work on the browser's own data ---
+    if (path === '/api/profile/select' && method === 'POST')
+      return Promise.resolve(jsonResponse({ ok: true }));
+    if (path === '/api/profile/export' && method === 'GET')
+      return Promise.resolve(jsonResponse({ format: 'janna-web-profile', version: 1, exported_at: new Date().toISOString(), sessions: loadSessions(), settings: loadSettings() }));
+    if (path === '/api/profile/import' && method === 'POST') {
+      var imp = {};
+      try { imp = JSON.parse((init && init.body) || '{}'); } catch { /* empty */ }
+      var incoming = Array.isArray(imp.sessions) ? imp.sessions : (Array.isArray(imp.conversations) ? imp.conversations : []);
+      var existing = loadSessions();
+      var seen = {};
+      existing.forEach(function (x) { seen[x.id] = true; });
+      var added = 0;
+      incoming.forEach(function (x) { if (x && x.id && !seen[x.id]) { existing.push(x); seen[x.id] = true; added++; } });
+      if (added) saveSessions(existing);
+      var notes = 0;
+      if (imp.settings && typeof imp.settings === 'object') { saveSettings(Object.assign({}, imp.settings, loadSettings())); notes = 1; }
+      return Promise.resolve(jsonResponse({ imported: { conversations: added, notes: notes } }));
+    }
+
     // --- project preflight: the web version has no PC folders ---
     if (path === '/api/project/preflight' && method === 'POST')
       return Promise.resolve(jsonResponse({ needs_project: false }));
@@ -163,4 +183,19 @@
 
     return nativeFetch(input, init);
   };
+
+  // --- service worker self-heal: when a new shell takes over, reload once
+  // so updates actually reach this device in a single visit ---
+  if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+    navigator.serviceWorker.addEventListener('controllerchange', function () {
+      try {
+        if (sessionStorage.getItem('janna-sw-reloaded')) return;
+        sessionStorage.setItem('janna-sw-reloaded', '1');
+      } catch { /* private mode */ }
+      location.reload();
+    });
+    if (navigator.serviceWorker.getRegistration) {
+      navigator.serviceWorker.getRegistration().then(function (r) { if (r) r.update().catch(function () {}); }).catch(function () {});
+    }
+  }
 })();

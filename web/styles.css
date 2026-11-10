@@ -325,3 +325,16 @@ body[data-theme='moon']{--paper:#fff8fb;--sidebar:#fde6ef;--hover:#f9d6e5;--line
 .phone-layout .thread{scroll-padding-bottom:130px}
 .phone-layout .messages{padding-bottom:110px}
 .phone-layout .new-chat kbd{display:none}
+
+/* Profile drawer + template classes that shipped without rules */
+.profile-hero{display:flex;align-items:center;gap:14px;margin:4px 0 14px;font-family:var(--font-serif);font-size:21px;color:var(--ink)}
+.profile-mark{width:44px;height:44px;object-fit:contain;flex:0 0 auto}
+.profile-current{font-size:13px;color:var(--muted);margin:0 0 4px}
+.profile-choice{display:flex;width:100%;align-items:center;justify-content:center;padding:12px 15px;margin:0 0 9px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--ink);font:inherit;font-size:13px;font-weight:600;cursor:pointer}
+.profile-choice:hover{background:var(--hover)}
+.discord-choice{background:#5865f2;border-color:#5865f2;color:#fff}
+.discord-choice:hover{background:#4752c4}
+.profile-upload{display:none}
+.section-title{font-weight:700}
+.code-open{border:1px solid var(--line);background:var(--panel);color:var(--accent-ink);border-radius:999px;padding:3px 10px;font-size:11px;font-weight:600;cursor:pointer}
+.research-integrity-note{font-size:12px;color:var(--muted);line-height:1.55}

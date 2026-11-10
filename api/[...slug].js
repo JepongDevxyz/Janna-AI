@@ -259,7 +259,7 @@ export default async function handler(req, res) {
         languages: [{ id: 'auto', name: 'Automatic', english: 'Automatic', speech: '', dir: 'ltr', chrome: 'english' },
                     { id: 'en', name: 'English', english: 'English', speech: 'en', dir: 'ltr', chrome: 'full' }],
         sumi: null, agentInstalled: false, busy: [], settings: { ...DEFAULT_SETTINGS },
-        remote: false, profile: { id: 'web-guest', label: 'Guest workspace' }, research_connectors: {},
+        remote: false, profile: { id: 'web-guest', label: 'Guest workspace', kind: 'guest' }, research_connectors: {},
       });
     }
     if (method === 'GET' && path === '/api/remote-info')
@@ -284,7 +284,7 @@ export default async function handler(req, res) {
     if (method === 'GET' && path === '/api/research/providers')
       return json(res, 200, {});
     if (method === 'GET' && path === '/api/profile')
-      return json(res, 200, { profile: { id: 'web-guest', label: 'Guest workspace' }, discord_available: false, redirect_uri: '' });
+      return json(res, 200, { profile: { id: 'web-guest', label: 'Guest workspace', kind: 'guest' }, discord_available: false, redirect_uri: '' });
     if (method === 'POST' && path === '/api/run') return await handleRun(req, res);
     if (method === 'POST' && path === '/api/kage/select') return json(res, 200, { ok: true });
 
