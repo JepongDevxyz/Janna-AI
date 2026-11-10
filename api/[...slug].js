@@ -53,7 +53,7 @@ function catalog() {
 
 const DEFAULT_SETTINGS = {
   figma_enabled: false, forge_enabled: false, browser_enabled: false, personality: 'precise',
-  theme: 'porcelain', speed: 'standard', effort: 'balanced', refine_reports: false,
+  theme: 'rose', speed: 'standard', effort: 'balanced', refine_reports: false,
   autonomy_passes: 8, research_mode: 'auto', github_research: true, model_failover: true,
   language: 'auto', show_progress: true, show_citations: true, verify_generated_code: true,
   repair_generated_html: true, repair_generated_code: true, send_on_enter: true, voice_output: false,

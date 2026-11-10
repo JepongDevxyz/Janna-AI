@@ -234,7 +234,7 @@ class Runtime:
         self.evidence_cache = EvidenceCache(self.store.base / "research-cache.json")
         self.settings_path = self.store.base / "settings.json"
         self.settings = {"figma_enabled": False, "forge_enabled": False, "browser_enabled": False, "personality": "precise",
-                         "theme": "porcelain", "speed": "standard", "effort": "balanced",
+                         "theme": "rose", "speed": "standard", "effort": "balanced",
                          "refine_reports": False, "autonomy_passes": 8,
                          "research_mode": "auto", "github_research": True,
                          "model_failover": True,
@@ -294,7 +294,7 @@ class Runtime:
         allowed = {"figma_enabled": [False, True], "forge_enabled": [False, True], "browser_enabled": [False, True], "refine_reports": [False, True],
                    "autonomy_passes": [4, 8, 12],
                    "personality": ["precise", "friendly", "technical", "concise", "craftsman"],
-                   "theme": ["porcelain", "pro", "sakura", "matcha", "indigo", "midnight",
+                   "theme": ["rose", "velvet", "porcelain", "pro", "sakura", "matcha", "indigo", "midnight",
                              "washi", "kintsugi", "ume", "yoru", "kyoto", "moss", "sora", "akane", "zen",
                              "beni", "shinku", "shu", "botan", "tsuki", "ruri", "sage", "asagi", "fuji", "momiji", "yuzu", "take", "mizu", "kinari", "kohaku", "murasaki", "toki", "moegi", "gin", "chawan", "yanagi", "wakatake", "usuzumi", "ao", "enji", "suzu", "kakishibu", "hanada", "kujaku", "komugi", "shirayuki", "nuri", "tetsu", "kurocha", "nezumi", "fukamidori", "konpeki", "budou", "akatsuki", "roiro", "kachi", "miru", "susutake", "namari", "enkai", "karasuba", "sumizome", "benibana", "yamabuki", "rikyunezu", "soba", "ember", "dusk", "slate", "crimson", "leaf", "lilac", "blaze", "harbor", "violet", "forest", "tide", "blossom", "azure", "moon"],
                    "speed": ["standard", "boost"],
