@@ -1,4 +1,4 @@
-:root{font-family:Arial,Helvetica,sans-serif;font-synthesis:none;-webkit-font-smoothing:antialiased;color:#334354;background:#fbfaf8;--paper:#fbfaf8;--sidebar:#f1f0ec;--hover:#e8e6e0;--line:#e4e1dc;--ink:#283a4a;--muted:#7d8989;--faded:#a6a7a3;--bubble:#f1f0ec;--panel:#fff;--rose:#b98183;--sage:#6b9981;--shadow:0 7px 25px rgba(37,40,39,.045),0 1px 2px rgba(40,40,40,.04);--font-serif:Georgia,'Times New Roman',serif}
+:root{font-family:Arial,Helvetica,sans-serif;font-synthesis:none;-webkit-font-smoothing:antialiased;color:#334354;background:#fbfaf8;--paper:#fbfaf8;--sidebar:#f1f0ec;--hover:#e8e6e0;--line:#e4e1dc;--ink:#283a4a;--muted:#7d8989;--faded:#a6a7a3;--bubble:#f1f0ec;--panel:#fff;--rose:#b98183;--sage:#6b9981;--shadow:0 7px 25px rgba(37,40,39,.045),0 1px 2px rgba(40,40,40,.04);--font-serif:'Segoe UI',system-ui,-apple-system,'Helvetica Neue',Arial,sans-serif}
 *{box-sizing:border-box}html,body{height:100%;margin:0}body{overflow:hidden;font-size:14px}button,input,select,textarea{font:inherit}button{cursor:pointer}button:disabled{cursor:not-allowed;opacity:.55}button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--rose);outline-offset:2px}.symbols{position:absolute;width:0;height:0;overflow:hidden}svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.65;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}[hidden]{display:none!important}
 body[data-theme='pro']{--paper:#1f2326;--sidebar:#181d21;--hover:#30383d;--line:#343b3f;--ink:#edf0ed;--muted:#a8b3b8;--faded:#829095;--bubble:#2b3135;--panel:#242b2e;--rose:#d2a1a3;--sage:#90b3a0;--shadow:0 12px 40px rgba(0,0,0,.16)}
 body[data-theme='rose']{--paper:#fff8fb;--sidebar:#fce9f2;--hover:#f8d9e7;--line:#f2d2e1;--ink:#4a2b3a;--muted:#9a7284;--faded:#c09bab;--bubble:#fceef5;--panel:#fffdfd;--rose:#d64f83;--sage:#7ba889;--shadow:0 7px 25px rgba(214,79,131,.07),0 1px 2px rgba(120,50,80,.05)}
@@ -370,3 +370,20 @@ body[data-theme='moon']{--paper:#fff8fb;--sidebar:#fde6ef;--hover:#f9d6e5;--line
 ::selection{background:color-mix(in srgb,var(--rose) 30%,transparent)}
 .luna-bubble{border-color:color-mix(in srgb,var(--rose) 45%,var(--line))}
 .send-button{border-radius:12px}
+/* ChatGPT-style feminine layout (2026-11-10) */
+.welcome{top:clamp(60px,19vh,210px)}
+.welcome-title{flex-direction:column;align-items:center;text-align:center;gap:16px;margin-bottom:30px}
+.welcome-icon{width:64px;height:64px}
+.welcome h1{font-size:31px;font-weight:600;letter-spacing:-.8px}
+.welcome-composer-slot{height:auto;min-height:120px}
+.welcome-hint{justify-content:center;gap:20px;flex-wrap:wrap}
+.composer{border-radius:28px;padding:15px 17px 11px;box-shadow:0 14px 44px color-mix(in srgb,var(--rose) 13%,transparent),0 2px 10px rgba(60,30,50,.05)}
+.composer textarea{height:52px}
+.send-button{border-radius:50%}
+.user-bubble{background:color-mix(in srgb,var(--rose) 12%,var(--panel));border-radius:20px}
+.new-chat{border-radius:999px}
+.suggest-row{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:18px}
+.suggest-chip{border:1px solid var(--line);background:var(--panel);color:var(--muted);border-radius:999px;padding:9px 15px;font-size:12.5px;display:inline-flex;gap:7px;align-items:center;cursor:pointer;box-shadow:0 1px 4px rgba(60,30,50,.04)}
+.suggest-chip span{color:var(--rose)}
+.suggest-chip:hover{border-color:color-mix(in srgb,var(--rose) 55%,var(--line));color:var(--ink)}
+.chat-view.has-messages .suggest-row{display:none}
