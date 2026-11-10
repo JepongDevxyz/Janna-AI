@@ -10,7 +10,7 @@
 (function () {
   'use strict';
   var host = location.hostname || '';
-  var hosted = /(^|\.)vercel\.app$/.test(host) || /(^|\.)jepong-devxyz\.com$/.test(host) || host === 'janna-ai.vercel.app';
+  var hosted = /(^|\.)vercel\.app$/.test(host) || /(^|\.)jepong-devxyz\.com$/.test(host) || /(^|\.)janna-official\.tech$/.test(host) || host === 'janna-ai.vercel.app';
   if (!hosted) return;
   window.__JANNA_WEB__ = true;
 
