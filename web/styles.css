@@ -555,3 +555,7 @@ body:has(#drawer:not([hidden])) .luna-bubble{opacity:0!important;pointer-events:
 .brand-name{white-space:nowrap}
 #profileName{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .profile-texts{overflow:hidden}
+
+@media(min-width:701px){.drawer[data-kind='settings']{width:min(700px,96vw)}body.sidebar-collapsed .menu-toggle{display:inline-flex!important}}
+.settings-pane .settings-row{flex-wrap:wrap}
+.settings-pane .settings-row-description{flex:1 1 210px}
