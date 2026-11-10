@@ -68,10 +68,10 @@ class SettingsTests(unittest.TestCase):
         self.body = self.app[self.app.index('function drawSettings(){'):self.app.index("function speechTag(sample='')")]
 
     def test_every_section_is_present_in_order_and_has_a_body(self):
-        # Settings is one stacked scrolling page (ChatGPT structure, 2026-11-10):
+        # Settings is a tabbed page with a grouped rail (logged-in ChatGPT structure, 2026-11-10):
         # every section heading appears in order and content follows each one.
         heads = [(m.start(), m.group(1)) for m in re.finditer(r"el\('h3','','([^']+)'\)", self.body)]
-        expected = ['General', 'Themes', 'Personalization', 'How hard Janna works',
+        expected = ['General', 'Appearance', 'Personalization', 'How hard Janna works',
                     'Checking answers', 'Web research', 'Tools and connections',
                     'On-device control', 'Data controls']
         positions = []

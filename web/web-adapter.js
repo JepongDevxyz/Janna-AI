@@ -32,7 +32,7 @@
   function jsonResponse(obj, status) {
     return new Response(JSON.stringify(obj), { status: status || 200, headers: { 'Content-Type': 'application/json; charset=utf-8' } });
   }
-  function summary(s) { return { id: s.id, title: s.title, project_id: s.project_id || null, updated: s.updated || 0, pinned: !!s.pinned, archived: !!s.archived }; }
+  function summary(s) { return { id: s.id, title: s.title, project_id: s.project_id || null, updated: s.updated || 0, pinned: !!s.pinned, archived: !!s.archived, msgs: (s.messages || []).length }; }
 
   var nativeFetch = window.fetch.bind(window);
 
@@ -60,7 +60,9 @@
   var MEMKEY = 'janna-web-memory-v1';
   function loadMemory() { try { return JSON.parse(localStorage.getItem(MEMKEY) || '[]'); } catch { return []; } }
   function saveMemory(list) { try { localStorage.setItem(MEMKEY, JSON.stringify((list || []).slice(-30))); } catch { /* ignore */ } }
+  function memoryOn() { return loadSettings().memory_enabled !== false; }
   function captureMemory(prompt) {
+    if (!memoryOn()) return;
     if (!prompt) return;
     var facts = loadMemory();
     var add = function (text) {
@@ -90,7 +92,7 @@
     var lunaPets = 0;
     try { var lj = JSON.parse(localStorage.getItem('janna-luna-v1') || '{}'); if (lj && typeof lj.pets === 'number') lunaPets = lj.pets; } catch (e) { /* ignore */ }
     var st = loadSettings();
-    return { facts: loadMemory().map(function (f) { return f.text; }), chats: sessions.length, messages: totalMsgs, others: others, currentTitle: current ? (current.title || 'New chat') : 'New chat', theme: st.theme || 'rose', lunaPets: lunaPets };
+    return { facts: memoryOn() ? loadMemory().map(function (f) { return f.text; }) : [], chats: sessions.length, messages: totalMsgs, others: others, currentTitle: current ? (current.title || 'New chat') : 'New chat', theme: st.theme || 'rose', lunaPets: lunaPets };
   }
 
   // --- queued follow-up messages (the app's "queue for the next step") ---

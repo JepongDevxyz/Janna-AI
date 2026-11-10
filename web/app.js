@@ -1089,43 +1089,67 @@ const JANNA_THEMES={sage:['#d8e2d3','#eef2e9'],rose:['#fce9f2','#fff8fb'],velvet
 const COLOR_THEMES={ember:'Ember',dusk:'Dusk',slate:'Slate',crimson:'Crimson',leaf:'Leaf',lilac:'Lilac',blaze:'Blaze',harbor:'Harbor',violet:'Violet',forest:'Forest',tide:'Tide',blossom:'Blossom',azure:'Azure',moon:'Moon'};
 const themeLabel=name=>COLOR_THEMES[name]||(name==='sage'?'Sage Green':name[0].toUpperCase()+name.slice(1));
 let activeSettingsTab='appearance';
+let settingsActiveTab='general';
 function drawSettings(){
   const root=$('drawerBody');root.replaceChildren();
-  const content=el('div','settings-content');
-  root.append(content);
+  const shell=el('div','settings-shell');
+  const searchInput=el('input','settings-search-input');searchInput.placeholder='Search settings';searchInput.setAttribute('aria-label','Search settings');
+  const searchWrap=el('div','settings-search');searchWrap.append(searchInput);
+  const rail=el('nav','settings-rail');rail.setAttribute('aria-label','Settings sections');
+  const panes=el('div','settings-panes');
+  const mainRow=el('div','settings-main');mainRow.append(rail,panes);
+  shell.append(searchWrap,mainRow);root.append(shell);
+  const TABLABELS={general:'General',appearance:'Appearance',personalization:'Personalization',usage:'Usage',data:'Data controls',effort:'How hard Janna works',checking:'Checking answers',research:'Web research',tools:'Tools and connections',device:'On-device control'};
+  const TABGROUPS=[['Personal',['general','appearance','personalization','usage','data']],['Janna',['effort','checking','research','tools','device']]];
+  const paneMap={},tabBtns={};
+  const activate=id=>{if(!paneMap[id])id='general';settingsActiveTab=id;for(const k in paneMap)paneMap[k].hidden=k!==id;for(const k in tabBtns)tabBtns[k].classList.toggle('active',k===id)};
+  for(const [group,ids] of TABGROUPS){rail.append(el('div','settings-group',group));for(const id of ids){const b=el('button','settings-tab',TABLABELS[id]);b.type='button';b.onclick=()=>activate(id);tabBtns[id]=b;rail.append(b)}}
+  searchInput.addEventListener('input',()=>{const q=searchInput.value.trim().toLowerCase();for(const id in tabBtns)tabBtns[id].hidden=!!q&&!TABLABELS[id].toLowerCase().includes(q);if(tabBtns[settingsActiveTab]&&tabBtns[settingsActiveTab].hidden){const fv=Object.keys(tabBtns).find(k=>!tabBtns[k].hidden);if(fv)activate(fv)}});
+  let content=null;
+  const paneFor=id=>{if(!paneMap[id]){const pane=el('div','settings-content settings-pane');pane.hidden=id!==settingsActiveTab;paneMap[id]=pane;panes.append(pane)}content=paneMap[id];return content};
   const row=(title,description,child)=>{const node=el('div','settings-row'),texts=el('div','settings-row-description');texts.append(el('strong','',title),el('p','',description));node.append(texts);if(child)node.append(child);content.append(node);return node};
   const toggle=(name,key,description)=>{const box=el('input');box.type='checkbox';box.setAttribute('aria-label',name);box.checked=state.settings[key]===true;box.onchange=()=>persistSettings({[key]:box.checked});row(name,description,box)};
   const select=(name,key,description,values,wide=false)=>{const s=el('select','inline-input'+(wide?' settings-wide':''));for(const [label,value] of values)s.add(new Option(label,value));s.value=String(state.settings[key]??values[0][1]);s.onchange=async()=>{await persistSettings({[key]:s.value});if(key==='speed'){$('speed').value=s.value;state.speed=s.value}if(key==='effort'){$('effort').value=s.value;state.effort=s.value}if(key==='language')applyLocale()};row(name,description,s)};
   const dangerBtn=(label,action)=>{const b=button(label,async()=>{if(b.dataset.armed){b.disabled=true;try{await action()}finally{b.disabled=false}}else{b.dataset.armed='1';b.textContent='Tap again to confirm';b.classList.add('armed');setTimeout(()=>{if(b.isConnected){delete b.dataset.armed;b.textContent=label;b.classList.remove('armed')}},3500)}},'text-btn danger-btn');return b};
   {
+    paneFor('general');
     content.append(el('h3','','General'));
-    const appearance=el('select','inline-input');
-    for(const [label,value] of [['System','system'],['Light','light'],['Dark','dark']])appearance.add(new Option(label,value));
-    appearance.value=state.settings.appearance_mode||((state.settings.theme||'rose')==='velvet'?'dark':'light');
-    appearance.onchange=async()=>{const mode=appearance.value;const dark=mode==='dark'||(mode==='system'&&window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches);await persistSettings({appearance_mode:mode,theme:dark?'velvet':'rose'});drawSettings()};
-    row('Appearance','System follows your device. Light is the Rose theme; Dark is Velvet. Every color theme is under Themes below.',appearance);
     const languageChoices=(state.languages&&state.languages.length?state.languages:[{id:'auto',name:'Automatic'},{id:'en',name:'English'},{id:'it',name:'Italiano'}]).map(item=>[item.name,item.id]);
     const chosen=(state.languages||[]).find(item=>item.id===(state.settings.language||'auto'));
     const note=chosen?.chrome==='full'?'Replies and menus are in English.':chosen?.chrome==='partial'?'Replies use this language. A few labels are translated; most menus stay in English.':'Replies use this language. Menus stay in English.';
     select('Language','language',(state.settings.language||'auto')==='auto'?'Auto-detect: replies follow the language of your latest message. Menus stay in English.':note+' Code, paths, and technical names are never changed.',languageChoices,true);
   }{
+    paneFor('appearance');
+    const appearance=el('select','inline-input');
+    for(const [label,value] of [['System','system'],['Light','light'],['Dark','dark']])appearance.add(new Option(label,value));
+    appearance.value=state.settings.appearance_mode||((state.settings.theme||'rose')==='velvet'?'dark':'light');
+    appearance.onchange=async()=>{const mode=appearance.value;const dark=mode==='dark'||(mode==='system'&&window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches);await persistSettings({appearance_mode:mode,theme:dark?'velvet':'rose'});drawSettings()};
+    row('Appearance','System follows your device. Light is the Rose theme; Dark is Velvet. The color themes are right below.',appearance);
     const current=state.settings.theme||'rose';
     const grid=names=>{const box=el('div','theme-grid');for(const name of names){const palette=JANNA_THEMES[name];const choice=button(themeLabel(name),async()=>{await persistSettings({theme:name});drawSettings()},'theme-option'+(current===name?' selected':''));choice.setAttribute('aria-pressed',String(current===name));const swatch=el('span','theme-swatch');swatch.style.setProperty('--sample-side',palette[0]);swatch.style.setProperty('--sample-main',palette[1]);choice.prepend(swatch);box.append(choice)}return box};
     const names=Object.keys(JANNA_THEMES);
-    content.append(el('h3','','Themes'));
+    content.append(el('h3','','Appearance'));
     content.append(el('h3','','Color themes'),grid(names.filter(name=>COLOR_THEMES[name])));
     content.append(el('h3','','Japanese-inspired themes'),grid(names.filter(name=>!COLOR_THEMES[name])));
     content.append(el('p','muted','The original Janna wave crest stays unchanged; dark themes place it on a clean ivory surface.'));
   }{
+    paneFor('personalization');
     content.append(el('h3','','Personalization'));
     select('Writing style','personality','Choose the tone of replies without changing evidence or technical rigor.',[['Precise','precise'],['Friendly','friendly'],['Technical','technical'],['Concise','concise'],['Craftsman','craftsman']]);
     toggle('Enter to send','send_on_enter','Use Enter to send; Shift+Enter inserts a line break.');
     toggle('Live work updates','show_progress','Show chronological source lookups, tool actions, and checks directly in chat.');
     toggle('Citations','show_citations','Display source links with answers when searches found supporting leads.');
     toggle('Read replies aloud','voice_output','Use available system voices after generation. Dictation is opt-in and may use a browser service.');
-    row('Chat history','Delete individual conversations from the sidebar using the × control.');
+    row('Chat history','Manage conversations from the sidebar: open a chat\u2019s \u22ef menu to rename, pin, share, archive, or delete it.');
     content.append(button('Manage memory',()=>{closeDrawer();showView('knowledge')},'text-btn'),button('Profile and import',()=>openDrawer('profile'),'text-btn'),button('Check for software updates',()=>{drawUpdates();$('drawerBody').prepend(button('← Back to settings',drawSettings,'text-btn'))},'text-btn'));
+    if(window.__JANNA_WEB__){
+      content.append(el('h3','','Memory'));
+      const memBox=el('input');memBox.type='checkbox';memBox.setAttribute('aria-label','Enable memory');memBox.checked=state.settings.memory_enabled!==false;memBox.onchange=()=>persistSettings({memory_enabled:memBox.checked});
+      row('Enable memory','Let Janna remember facts across chats in this browser. Say "tandaan mo..." in any chat to save one.',memBox);
+      row('Saved memories','Facts Janna has saved about you. Ask her what she remembers about you in any chat.',dangerBtn('Clear memory',async()=>{try{await api('/api/memory/clear',{});toast('Memory cleared')}catch(e){toast(e.message)}}));
+    }
   }{
+    paneFor('effort');
     content.append(el('h3','','How hard Janna works'));
     row('Model identity','Janna Pro 1.1 is the full profile; Janna Lite 1.1 is optimized for lower-memory computers. Provenance is documented in the release notes.');
     select('Reasoning effort','effort','Changes tool and verification budgets, not the underlying model intelligence.',[['Quick','quick'],['Balanced','balanced'],['High','high'],['Maximum','maximum']]);
@@ -1133,6 +1157,7 @@ function drawSettings(){
     native.value=String(state.reasoning);native.onchange=()=>state.reasoning=native.value;
     row('Native model thinking','Only levels advertised by the installed model are shown.',native);
     select('Speed profile','speed','Boost lowers generation and context budgets. It does not guarantee 1.5× tokens per second.',[['Standard','standard'],['1.5× Boost','boost']]);
+    paneFor('checking');
     content.append(el('h3','','Checking answers'));
     toggle('Check generated code','verify_generated_code','Check supported code blocks with the installed syntax tools.');
     toggle('Correct generated code','repair_generated_code','Try one checked correction for generated engineering code. The original draft is kept; Boost skips the extra model call.');
@@ -1140,6 +1165,7 @@ function drawSettings(){
     toggle('Refine technical reports','refine_reports','Optional extra local editing pass improves clarity but adds latency.');
     toggle('Automatic model recovery','model_failover','Retry temporary failures. If another local model is installed, Janna can switch to it and will label the change.');
   }{
+    paneFor('research');
     content.append(el('h3','','Web research'));
     select('Live research','research_mode','Automatic searches when current information is useful. Every question sends a scrubbed search query each time. Offline never searches. Local source files are never uploaded.',[['Automatic','auto'],['Every question','always'],['Offline','off']]);
     toggle('Find source implementations','github_research','Search GitHub implementation references when a coding question benefits from current code.');
@@ -1147,23 +1173,34 @@ function drawSettings(){
     content.append(button('Open Research',()=>{closeDrawer();showView('research')},'text-btn'),button('Connect free search providers',()=>openDrawer('tools'),'text-btn'));
     if(!window.__JANNA_WEB__)content.append(dangerBtn('Delete cached research',async()=>{try{await api('/api/research/cache/clear',{});toast('Research cache cleared')}catch(e){toast(e.message)}}));
   }{
+    paneFor('tools');
     content.append(el('h3','','Tools and connections'));
     row('Plugins','Figma, Forge, and browser tools are turned on and off here, and only reach the model when enabled.');
     content.append(button('Manage plugins',()=>{closeDrawer();showView('plugins')},'text-btn'),button('Project tools and connections',()=>openDrawer('tools'),'text-btn'),button('Test harness',()=>openDrawer('harness'),'text-btn'),button('Connect iPhone',()=>openDrawer('remote'),'text-btn'),button('Discord bot',()=>openDrawer('bots'),'text-btn'),button('Janna Pro trainer',()=>openDrawer('training'),'text-btn'));
   }{
+    paneFor('device');
     content.append(el('h3','','On-device control'));
     row('Local model','Your chat model runs on your PC. Opt-in research requests connect to public search providers, so set research to Offline for confidential questions.');
     row('Project access','Run development tools in the selected project. Publishing requires a one-time local approval.');
     content.append(button('Manage paired phones',()=>openDrawer('remote'),'text-btn'));
   }
+  {
+    paneFor('usage');
+    content.append(el('h3','','Usage'));
+    row('Plan',window.__JANNA_WEB__?'Free plan \u2014 no account and no paid tiers. Everything is stored in your browser.':'Local \u2014 Janna runs on your own hardware.');
+    row('Conversations','Chats not in the archive.',el('strong','',String(state.sessions.filter(x=>!x.archived).length)));
+    row('Messages','Across all your conversations.',el('strong','',window.__JANNA_WEB__?String(state.sessions.reduce((n,x)=>n+(x.msgs||0),0)):'\u2014'));
+  }
   if(window.__JANNA_WEB__){
+    paneFor('data');
     content.append(el('h3','','Data controls'));
     row('Your data in this browser','On the web edition, chats and settings are stored only in this browser. Janna does not train on your chats or upload them; only the message you send reaches the model.');
     row('Export data','Download your chats and preferences as one JSON file.',button('Export',async()=>{try{const data=await api('/api/profile/export');const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));const a=el('a');a.href=url;a.download='janna_profile.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),5000);toast('Profile exported')}catch(e){toast(e.message)}},'text-btn'));
     row('Import data','Bring chats and preferences from an exported Janna profile file.',button('Import',()=>openDrawer('profile'),'text-btn'));
-    row('Memory','Facts Janna remembers about you in this browser, across all your chats. Ask Janna what she remembers about you, or say "tandaan mo..." in any chat to save a fact.',dangerBtn('Clear memory',async()=>{try{await api('/api/memory/clear',{});toast('Memory cleared')}catch(e){toast(e.message)}}));
     row('Clear all chats','Delete every conversation stored in this browser. This cannot be undone.',dangerBtn('Clear all chats',async()=>{try{await api('/api/sessions/clear',{});state.sessions=[];closeDrawer();await newSession(state.project);await refreshBootstrap();toast('All chats cleared')}catch(e){toast(e.message)}}));
   }
+  if(!window.__JANNA_WEB__&&tabBtns.data)tabBtns.data.hidden=true;
+  activate(settingsActiveTab);
 }
 function speechTag(sample=''){
   const code=state.settings.language||'auto';
@@ -1191,11 +1228,11 @@ async function initializeWorkspace(){await refreshBootstrap();if(state.sessions.
 function bind(){bindCodeWorkspace();
  const jump=button('Jump to latest',()=>{state.tailFollow=true;scrollThread();jump.hidden=true},'jump-latest');jump.hidden=true;$('chatView').append(jump);
  $('thread').addEventListener('scroll',()=>{const t=$('thread');state.tailFollow=t.scrollHeight-t.scrollTop-t.clientHeight<70;jump.hidden=state.tailFollow},{passive:true});
-for(const nav of document.querySelectorAll('[data-view]'))nav.onclick=()=>nav.dataset.view==='luna'?openLunaChat():showView(nav.dataset.view);$('newChat').onclick=()=>newSession();$('sidebarSettings').onclick=()=>openDrawer('settings');$('navSettings').onclick=()=>openDrawer('settings');$('settingsButton').onclick=()=>openDrawer('settings');$('drawerClose').onclick=closeDrawer;$('companionButton').onclick=()=>openDrawer('companion');$('connectionButton').onclick=()=>openDrawer('tools');$('researchToggle').onclick=cycleResearchSwitch;$('profileOpen').onclick=e=>{e.stopPropagation();const m=$('profileMenu');m.hidden=!m.hidden;if(!m.hidden){$('pmName').textContent=$('profileName').textContent;$('pmPlan').textContent=$('profilePlan').textContent||'Free plan'}};
+for(const nav of document.querySelectorAll('[data-view]'))nav.onclick=()=>nav.dataset.view==='luna'?openLunaChat():showView(nav.dataset.view);$('newChat').onclick=()=>newSession();$('sidebarSettings').onclick=()=>{if(window.innerWidth<701)closeMobile();openDrawer('settings')};$('navSettings').onclick=()=>{if(window.innerWidth<701)closeMobile();openDrawer('settings')};$('settingsButton').onclick=()=>openDrawer('settings');$('drawerClose').onclick=closeDrawer;$('companionButton').onclick=()=>openDrawer('companion');$('connectionButton').onclick=()=>openDrawer('tools');$('researchToggle').onclick=cycleResearchSwitch;$('profileOpen').onclick=e=>{e.stopPropagation();const m=$('profileMenu');m.hidden=!m.hidden;if(!m.hidden){$('pmName').textContent=$('profileName').textContent;$('pmPlan').textContent=$('profilePlan').textContent||'Free plan'}};
 document.addEventListener('pointerdown',e=>{const m=$('profileMenu');if(m&&!m.hidden&&!e.target.closest('#profileMenu')&&!e.target.closest('#profileOpen'))m.hidden=true});
-$('pmPersonalization').onclick=()=>{$('profileMenu').hidden=true;openDrawer('settings')};
-$('pmProfile').onclick=()=>{$('profileMenu').hidden=true;openDrawer('profile')};
-$('pmSettings').onclick=()=>{$('profileMenu').hidden=true;openDrawer('settings')};
+$('pmPersonalization').onclick=()=>{$('profileMenu').hidden=true;if(window.innerWidth<701)closeMobile();settingsActiveTab='personalization';openDrawer('settings')};
+$('pmProfile').onclick=()=>{$('profileMenu').hidden=true;if(window.innerWidth<701)closeMobile();openDrawer('profile')};
+$('pmSettings').onclick=()=>{$('profileMenu').hidden=true;if(window.innerWidth<701)closeMobile();openDrawer('settings')};
 $('sidebarSearch').onclick=()=>openSearch();
 $('searchClose').onclick=()=>$('searchDialog').close();
 $('searchForm').addEventListener('submit',e=>e.preventDefault());
