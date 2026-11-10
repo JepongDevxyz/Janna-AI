@@ -59,6 +59,16 @@ function catalog() {
     rows.push({ id: 'mistral-small', label: 'Mistral Small · Mistral', note: 'Cloud model via Mistral', model_class: 'Janna Cloud', cloud: true, provider: 'mistral', model: 'mistral-small-latest' });
   if (keyPool('COHERE_API_KEYS').length)
     rows.push({ id: 'cohere-command-a', label: 'Command A · Cohere', note: 'Cloud model via Cohere', model_class: 'Janna Cloud', cloud: true, provider: 'cohere', model: 'command-a-03-2025' });
+  if (keyPool('APINEX_API_KEYS').length) {
+    // APInex free tier (live-probed 2026-11-10): real answers, exact model
+    // echo, shared 15 requests/minute across the key. Claude Opus 4.6 is
+    // listed free but actually subscription-gated (HTTP 402) and Jev 1.13 is
+    // a decision-endpoint model (HTTP 400 on chat) — neither is wired.
+    rows.push({ id: 'apinex-gemini-3.8-flash', label: 'Gemini 3.8 Flash', note: 'Cloud model via APInex', model_class: 'Janna Cloud', cloud: true, provider: 'apinex', model: 'free/gemini-3.8-flash' });
+    rows.push({ id: 'apinex-gpt-6-luna', label: 'GPT-6 Luna', note: 'Cloud model via APInex', model_class: 'Janna Cloud', cloud: true, provider: 'apinex', model: 'free/gpt-6-luna' });
+    rows.push({ id: 'apinex-kimi-k3', label: 'Kimi K3', note: 'Cloud model via APInex', model_class: 'Janna Cloud', cloud: true, provider: 'apinex', model: 'free/kimi-k3' });
+    rows.push({ id: 'apinex-muse-spark-1.3', label: 'Muse Spark 1.3', note: 'Cloud model via APInex', model_class: 'Janna Cloud', cloud: true, provider: 'apinex', model: 'free/muse-spark-1.3' });
+  }
   return rows;
 }
 
@@ -189,6 +199,9 @@ async function* providerStream(row, messages) {
       return;
     case 'cohere':
       yield* openAIStream({ baseUrl: 'https://api.cohere.ai/compatibility/v1', keys: keyPool('COHERE_API_KEYS'), model: row.model, messages });
+      return;
+    case 'apinex':
+      yield* openAIStream({ baseUrl: 'https://api.apinex.bond/v1', keys: keyPool('APINEX_API_KEYS'), model: row.model, messages });
       return;
     default:
       throw new Error('Unknown provider for model ' + row.id);
