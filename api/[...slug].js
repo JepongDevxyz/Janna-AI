@@ -13,7 +13,7 @@
 
 export const config = { maxDuration: 60 };
 
-const APP_VERSION = '1.6.0-web.2';
+const APP_VERSION = '1.6.0-web.3';
 const SYSTEM_PROMPT =
   'You are Janna AI, a helpful AI assistant in the Janna AI app. ' +
   'YOUR IDENTITY — never break this: you are Janna AI. When you introduce yourself, or when you are asked who you are, introduce yourself exactly this way — Tagalog: "Ako si Janna, isang AI. Ano ang maitutulong ko sa iyo?" English: "I\'m Janna, an AI. What can I help you with?" Do not add anyone\'s name to your introduction. Never volunteer who built you: ONLY when you are directly asked who created, built, made or developed you, answer — Tagalog: "Ako ay binuo ni Janna Mae, katulong si Jepong Devxyz." English: "I was built by Janna Mae, assisted by Jepong Devxyz." At all other times, do not mention Janna Mae or who made you. The model the user picks is only the engine powering this answer; you are never ChatGPT, GPT, Gemini, Claude, Kimi, Llama or any other model or company, and you never say you are based on another model. If asked which engine is running, you may name the picked model as the engine for this answer, while making clear that you yourself are Janna AI. ' +
@@ -110,13 +110,19 @@ const LUNA_PROMPT = 'You are Luna, a sweet and playful pet companion inside the 
 // is committed to that key. HTTP 402 counts as key-level here: APInex's
 // free-tier billing gate is flaky — the same key returned 402 ("top up $5")
 // and then HTTP 200 minutes later with no top-up (2026-11-17) — so a 402
-// must not kill the run at once. The pool gets a second pass after a short
-// wait, with a pause between keys so a 429 is not retried instantly.
-async function* openAIStream({ baseUrl, keys, model, messages, extraHeaders = {} }) {
+// must not kill the run at once. Live evidence 2026-11-17 16:26-16:28: all
+// 16 models answered TEST OK at 16:26, the same model 402'd twice on her
+// phone at 16:27, and answered 200 again at 16:28 — the gate flips on and
+// off within a minute, far longer than a ~7s retry covers. So for providers
+// that pass waitRetryMs (APInex only), 402/429 retries keep going until the
+// deadline (45s, inside Vercel's 60s maxDuration) with 5s pauses, and the
+// provider's own error message is kept in the thrown error instead of a
+// bare "Provider HTTP 402" so the user sees the real reason.
+async function* openAIStream({ baseUrl, keys, model, messages, extraHeaders = {}, waitRetryMs = 0 }) {
   const pool = keys.length ? shuffled(keys) : [null];
+  const deadline = Date.now() + waitRetryMs;
   let lastError = null;
-  for (let pass = 0; pass < 2; pass++) {
-    if (pass > 0) await sleep(4000);
+  for (;;) {
     for (const key of pool) {
       let response;
       try {
@@ -131,12 +137,18 @@ async function* openAIStream({ baseUrl, keys, model, messages, extraHeaders = {}
         });
       } catch (e) {
         lastError = e;
+        if (waitRetryMs && Date.now() < deadline) { await sleep(5000); continue; }
         await sleep(1500);
         continue;
       }
       if (!response.ok || !response.body) {
-        lastError = new Error('Provider HTTP ' + response.status);
-        if ([401, 402, 403, 429].includes(response.status)) { await sleep(1500); continue; } // key-level: walk pool
+        lastError = new Error('Provider HTTP ' + response.status + (await providerErrorDetail(response)));
+        if ([401, 403].includes(response.status)) { await sleep(1500); continue; } // key-level: walk pool, no wait
+        if ([402, 429].includes(response.status)) {
+          if (waitRetryMs && Date.now() < deadline) { await sleep(5000); continue; } // gate may lift: wait, then retry pool
+          await sleep(1500);
+          continue;
+        }
         throw lastError;
       }
       // Stream SSE deltas.
@@ -163,8 +175,24 @@ async function* openAIStream({ baseUrl, keys, model, messages, extraHeaders = {}
       }
       return;
     }
+    // One full pool pass done. Without a wait window there is nothing more
+    // to try; with one, loop again until the deadline.
+    if (!waitRetryMs || Date.now() >= deadline) break;
+    await sleep(5000);
   }
   throw lastError || new Error('All provider keys failed');
+}
+
+// Read the provider's own error message off a failed response (best effort;
+// the body is small JSON like {"error":{"message":"..."}}). Returns '' when
+// there is nothing usable, so callers keep the plain HTTP status.
+async function providerErrorDetail(response) {
+  try {
+    const text = await response.text();
+    const json = JSON.parse(text);
+    const msg = json?.error?.message || json?.message || '';
+    return msg ? ': ' + String(msg).slice(0, 200) : '';
+  } catch { return ''; }
 }
 
 // Some upstreams (notably the free Pollinations backend) occasionally return
@@ -273,7 +301,7 @@ async function* providerStream(row, messages) {
       yield* openAIStream({ baseUrl: 'https://api.cohere.ai/compatibility/v1', keys: keyPool('COHERE_API_KEYS'), model: row.model, messages });
       return;
     case 'apinex':
-      yield* openAIStream({ baseUrl: 'https://api.apinex.bond/v1', keys: keyPool('APINEX_API_KEYS'), model: row.model, messages });
+      yield* openAIStream({ baseUrl: 'https://api.apinex.bond/v1', keys: keyPool('APINEX_API_KEYS'), model: row.model, messages, waitRetryMs: 45000 });
       return;
     default:
       throw new Error('Unknown provider for model ' + row.id);
