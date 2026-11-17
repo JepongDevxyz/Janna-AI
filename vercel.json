@@ -4,6 +4,16 @@
   "framework": null,
   "installCommand": null,
   "outputDirectory": "web",
+  "rewrites": [
+    {
+      "source": "/api/runs/:runId/events",
+      "destination": "/api/[...slug]"
+    },
+    {
+      "source": "/api/runs/:runId/activity",
+      "destination": "/api/[...slug]"
+    }
+  ],
   "headers": [
     {
       "source": "/sw.js",
