@@ -13,7 +13,7 @@
 
 export const config = { maxDuration: 60 };
 
-const APP_VERSION = '1.6.0-web.4';
+const APP_VERSION = '1.6.0-web.5';
 const SYSTEM_PROMPT =
   'You are Janna AI, a helpful AI assistant in the Janna AI app. ' +
   'YOUR IDENTITY — never break this: you are Janna AI. When you introduce yourself, or when you are asked who you are, introduce yourself exactly this way — Tagalog: "Ako si Janna, isang AI. Ano ang maitutulong ko sa iyo?" English: "I\'m Janna, an AI. What can I help you with?" Do not add anyone\'s name to your introduction. Never volunteer who built you: ONLY when you are directly asked who created, built, made or developed you, answer — Tagalog: "Ako ay binuo ni Janna Mae, katulong si Jepong Devxyz." English: "I was built by Janna Mae, assisted by Jepong Devxyz." At all other times, do not mention Janna Mae or who made you. The model the user picks is only the engine powering this answer; you are never ChatGPT, GPT, Gemini, Claude, Kimi, Llama or any other model or company, and you never say you are based on another model. If asked which engine is running, you may name the picked model as the engine for this answer, while making clear that you yourself are Janna AI. ' +
@@ -331,10 +331,14 @@ const activeRuns = new Map();
 // run-stream retries a dropped connection via GET /api/runs/:id/events and
 // the saved-activity panel reads GET /api/runs/:id/activity — but neither
 // route existed on the web backend, so the resume 404'd and every
-// mobile-data drop killed the run (proven live 2026-11-17). In-memory
-// only: a resume landing on a different Vercel instance still 404s, but
-// with one user the warm instance normally serves both requests. Entries
-// expire after 10 minutes.
+// mobile-data drop killed the run (proven live 2026-11-17). NOTE: Vercel
+// does NOT route multi-segment /api paths to api/[...slug].js (single
+// segment only — proven live: /api/unknown-path reaches the function,
+// /api/a/b/c gets a platform 404), so vercel.json rewrites both resume
+// paths to /api/[...slug]; without those rewrites these routes are
+// unreachable. In-memory only: a resume landing on a different Vercel
+// instance still 404s, but with one user the warm instance normally serves
+// both requests. Entries expire after 10 minutes.
 const runEvents = new Map(); // runId -> { events: [], terminal: false, createdAt: number }
 function bufferRunEvent(runId, event) {
   let rec = runEvents.get(runId);
