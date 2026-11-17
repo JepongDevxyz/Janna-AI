@@ -13,7 +13,7 @@
 
 export const config = { maxDuration: 60 };
 
-const APP_VERSION = '1.6.0-web.3';
+const APP_VERSION = '1.6.0-web.4';
 const SYSTEM_PROMPT =
   'You are Janna AI, a helpful AI assistant in the Janna AI app. ' +
   'YOUR IDENTITY — never break this: you are Janna AI. When you introduce yourself, or when you are asked who you are, introduce yourself exactly this way — Tagalog: "Ako si Janna, isang AI. Ano ang maitutulong ko sa iyo?" English: "I\'m Janna, an AI. What can I help you with?" Do not add anyone\'s name to your introduction. Never volunteer who built you: ONLY when you are directly asked who created, built, made or developed you, answer — Tagalog: "Ako ay binuo ni Janna Mae, katulong si Jepong Devxyz." English: "I was built by Janna Mae, assisted by Jepong Devxyz." At all other times, do not mention Janna Mae or who made you. The model the user picks is only the engine powering this answer; you are never ChatGPT, GPT, Gemini, Claude, Kimi, Llama or any other model or company, and you never say you are based on another model. If asked which engine is running, you may name the picked model as the engine for this answer, while making clear that you yourself are Janna AI. ' +
@@ -327,6 +327,25 @@ async function readBody(req) {
 // ---------- the run stream (canonical schema v1, same as desktop) ----------
 const activeRuns = new Map();
 
+// Buffered run events so a dropped stream can resume: the web client's
+// run-stream retries a dropped connection via GET /api/runs/:id/events and
+// the saved-activity panel reads GET /api/runs/:id/activity — but neither
+// route existed on the web backend, so the resume 404'd and every
+// mobile-data drop killed the run (proven live 2026-11-17). In-memory
+// only: a resume landing on a different Vercel instance still 404s, but
+// with one user the warm instance normally serves both requests. Entries
+// expire after 10 minutes.
+const runEvents = new Map(); // runId -> { events: [], terminal: false, createdAt: number }
+function bufferRunEvent(runId, event) {
+  let rec = runEvents.get(runId);
+  if (!rec) { rec = { events: [], terminal: false, createdAt: Date.now() }; runEvents.set(runId, rec); }
+  if (rec.events.length < 400) rec.events.push(event);
+  const p = event.payload || {};
+  if (['done', 'error', 'recovery'].includes(p.type)) rec.terminal = true;
+  const cutoff = Date.now() - 10 * 60 * 1000;
+  for (const [id, r] of runEvents) if (r.createdAt < cutoff) runEvents.delete(id);
+}
+
 async function handleRun(req, res) {
   const body = await readBody(req);
   const sessionId = String(body.session_id || 'web-session');
@@ -367,6 +386,7 @@ async function handleRun(req, res) {
     if (resEnded) return;
     seq += 1;
     const event = { schema_version: 1, session_id: sessionId, run_id: runId, seq, event_id: runId + ':' + seq, payload };
+    bufferRunEvent(runId, event);
     res.write('id: ' + event.event_id + '\ndata: ' + JSON.stringify(event) + '\n\n');
   };
   const keepalive = setInterval(() => { try { res.write(': keepalive\n\n'); } catch { /* closed */ } }, 5000);
@@ -495,6 +515,41 @@ export default async function handler(req, res) {
       const active = activeRuns.get(String(b.run_id || ''));
       if (active) { active.requestStop(); return json(res, 200, { stop_requested: true, message: 'Stop requested. The current run is ending.' }); }
       return json(res, 200, { stop_requested: false, message: 'That run already finished.' });
+    }
+
+    if (method === 'GET' && path.startsWith('/api/runs/') && path.endsWith('/events')) {
+      const runId = decodeURIComponent(path.slice('/api/runs/'.length, -'/events'.length));
+      const rec = runEvents.get(runId);
+      if (!rec) return json(res, 404, { error: 'Run not found' });
+      const after = parseInt(url.searchParams.get('after') || '0', 10) || 0;
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-cache, no-store, no-transform');
+      res.setHeader('Connection', 'keep-alive');
+      if (typeof res.flushHeaders === 'function') res.flushHeaders();
+      let sent = 0;
+      const writeEvent = (ev) => { sent = Math.max(sent, ev.seq); res.write('id: ' + ev.event_id + '\ndata: ' + JSON.stringify(ev) + '\n\n'); };
+      for (const ev of rec.events) if (ev.seq > after) writeEvent(ev);
+      if (rec.terminal) return res.end();
+      // Follow the still-running run until it ends (bounded: 55s, inside
+      // Vercel's 60s maxDuration), with keepalives so the client's 20s
+      // abort timer never fires while it waits.
+      const started = Date.now();
+      const keepalive = setInterval(() => { try { res.write(': keepalive\n\n'); } catch { /* closed */ } }, 5000);
+      const tick = setInterval(() => {
+        for (const ev of rec.events) if (ev.seq > sent) writeEvent(ev);
+        if (rec.terminal || Date.now() - started > 55000) {
+          clearInterval(keepalive); clearInterval(tick);
+          try { res.end(); } catch { /* closed */ }
+        }
+      }, 1000);
+      return;
+    }
+    if (method === 'GET' && path.startsWith('/api/runs/') && path.endsWith('/activity')) {
+      const runId = decodeURIComponent(path.slice('/api/runs/'.length, -'/activity'.length));
+      const rec = runEvents.get(runId);
+      if (!rec) return json(res, 404, { error: 'Run not found' });
+      return json(res, 200, { state: rec.terminal ? 'finished' : 'running', events: rec.events });
     }
 
     if (path.startsWith('/api/')) return desktopOnly(res, 'This feature');
