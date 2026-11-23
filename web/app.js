@@ -1,1299 +1,274 @@
 'use strict';
-const $=id=>document.getElementById(id);
-const state={busySessions:[],lunaMember:'luna',token:'',remote:false,projects:[],sessions:[],session:null,project:null,models:[],modelCatalog:[],pro:null,model:'',mode:'auto',effort:'balanced',speed:'standard',reasoning:'default',nativeLevels:['default'],modelVision:false,pending:[],busy:false,events:[],stream:'',view:'chats',settings:{},gpu:null,stopRequested:false,runId:null,tailFollow:true,codeWorkspace:null, voiceRecognizer:null,voiceListening:false};
-const icon=(name,size=18)=>`<svg width="${size}" height="${size}"><use href="#i-${name}"></use></svg>`;
-const escapeHTML=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const toast=(message,delay=6000)=>{const t=$('toast');t.textContent=message;t.hidden=false;clearTimeout(toast.timer);toast.timer=setTimeout(()=>t.hidden=true,delay)};
-const friendly=s=>(s||'').replaceAll('\\','/').split('/').filter(Boolean).at(-1)||'Project';
+/* Janna AI — Grok-style shell (fresh reset, 2026-11-24).
+   Reuses the existing API contract exactly: /api/bootstrap, /api/models,
+   /api/run (SSE via JannaRuns), /api/sessions*, /api/settings, /api/stop,
+   /api/reasoning/:model, /api/profile/export, /api/memory.
+   The backend api/[...slug].js is unchanged.
+   No Luna anywhere in this file. No fake Grok data: every control below has
+   a real handler, and anything the web backend cannot do is omitted (see
+   BUILD-REPORT.md). */
+const $ = id => document.getElementById(id);
+const state = {
+  token: '', remote: false, projects: [], sessions: [], session: null,
+  models: [], modelCatalog: [], model: '', modelVision: false,
+  settings: {}, languages: [], busy: false, busySessions: [], runId: null,
+  stopRequested: false, stream: '', events: [],
+  pending: [], isPrivate: false, privateThread: [],
+  armedMode: null, armedBeforeResearch: 'auto', showAllChats: false,
+  projectFilter: null, localProjects: [], chatProjects: {}, library: [],
+  voiceRecognizer: null, voiceListening: false, paletteTab: 'All',
+  libraryTab: 'All', libraryQuery: '', librarySort: 'date', rightPaneCode: null, rightPaneName: '',
+};
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
+const button = (text, click, kind = 'text-btn') => { const b = el('button', kind, text); b.type = 'button'; b.onclick = click; return b; };
+const escapeHTML = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const toast = (message, delay = 6000) => { const t = $('toast'); if (!t) return; t.textContent = message; t.hidden = false; clearTimeout(toast.timer); toast.timer = setTimeout(() => t.hidden = true, delay); };
+const fmtDur = s => { s = Math.max(1, Math.round(Number(s) || 0)); return s >= 60 ? Math.floor(s / 60) + 'm ' + (s % 60) + 's' : s + 's'; };
+const timeAgo = ts => {
+  const s = Math.max(0, Math.floor(Date.now() / 1000) - (ts || 0));
+  if (s < 60) return 'just now';
+  if (s < 3600) return Math.floor(s / 60) + 'm ago';
+  if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+  if (s < 86400 * 7) return Math.floor(s / 86400) + 'd ago';
+  return new Date(ts * 1000).toLocaleDateString();
+};
+const uid = p => p + '-' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 
-// Voice is deliberately opt-in. Browser speech recognition can depend on OS or
-// external browser services; Janna never promises it is offline or always-on.
-function voiceSpeak(text){
-  if(state.settings.voice_output!==true||!('speechSynthesis' in window))return;
-  const cleaned=String(text||'').replace(/```[\s\S]*?```/g,' [code block omitted] ').replace(/[<>{}*_#]/g,'').slice(0,1700);
-  if(!cleaned.trim())return;
-  try{window.speechSynthesis.cancel();const utter=new SpeechSynthesisUtterance(cleaned);utter.lang=speechTag(cleaned);utter.rate=1.07;window.speechSynthesis.speak(utter)}catch{}
+/* ---------- local storage: projects, chat→project map, library, feedback ---------- */
+function loadJSON(key, fallback) { try { const v = JSON.parse(localStorage.getItem(key) || 'null'); return v ?? fallback; } catch { return fallback; } }
+function saveJSON(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* full/blocked: in-memory only */ } }
+state.localProjects = loadJSON('janna-web-projects-v1', []);
+state.chatProjects = loadJSON('janna-web-chat-projects-v1', {});
+state.library = loadJSON('janna-web-library-v1', []);
+const saveProjects = () => saveJSON('janna-web-projects-v1', state.localProjects);
+const saveChatProjects = () => saveJSON('janna-web-chat-projects-v1', state.chatProjects);
+const saveLibrary = () => saveJSON('janna-web-library-v1', state.library);
+
+/* ---------- local message feedback (real, local-only) ----------
+   The adapter exposes no feedback API, so thumbs up/down are stored in
+   this browser, keyed by session + a hash of the message text. */
+const feedbackStore = loadJSON('janna-web-msg-feedback-v1', {});
+function feedbackKey(sessionId, content) { let h = 0; const s = String(sessionId || '') + '|' + String(content || ''); for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0; return 'm' + (h >>> 0).toString(36); }
+function getFeedback(sessionId, content) { return feedbackStore[feedbackKey(sessionId, content)] || ''; }
+function saveFeedback(sessionId, content, value) { const k = feedbackKey(sessionId, content); if (feedbackStore[k] === value) delete feedbackStore[k]; else feedbackStore[k] = value; saveJSON('janna-web-msg-feedback-v1', feedbackStore); }
+
+/* ---------- API ---------- */
+async function api(path, data = null) {
+  const headers = { 'X-Janna-Token': state.token };
+  const opt = { headers };
+  if (data !== null) { opt.method = 'POST'; headers['Content-Type'] = 'application/json'; opt.body = JSON.stringify(data); }
+  if (data === null) opt.signal = AbortSignal.timeout(15000);
+  const r = await fetch(path, opt);
+  let result = {};
+  try { result = await r.json(); } catch { /* empty */ }
+  if (!r.ok) { const error = new Error(result.error || `Request failed (${r.status})`); error.status = r.status; throw error; }
+  return result;
 }
-function voiceDictate(){
-  const Rec=window.SpeechRecognition||window.webkitSpeechRecognition;
-  if(!Rec)return toast('Microphone dictation is not available in this Windows/WebView version. You can still type.');
-  if(state.voiceListening){try{state.voiceRecognizer?.stop()}catch{};return}
-  const recognition=new Rec();state.voiceRecognizer=recognition;
-  recognition.lang=speechTag();
-  recognition.interimResults=true;recognition.continuous=false;recognition.maxAlternatives=1;
-  const previous=$('prompt').value;let transcript='';
-  recognition.onresult=e=>{transcript=Array.from(e.results).map(r=>r[0].transcript).join(' ');$('prompt').value=(previous+' '+transcript).trim()};
-  recognition.onerror=e=>toast('Voice transcription: '+String(e.error||'unavailable')+'. Some browsers require network access.');
-  recognition.onend=()=>{state.voiceListening=false;$('composer').classList.remove('is-dictating');syncSendState();$('voiceMic').classList.remove('listening');$('voiceMic').setAttribute('aria-pressed','false');$('prompt').focus()};
-  try{recognition.start();state.voiceListening=true;$('composer').classList.add('is-dictating');$('voiceMic').classList.add('listening');$('voiceMic').setAttribute('aria-pressed','true')}
-  catch(e){toast('Microphone could not start: '+e.message)}
+function saveLocalToken() { if (state.remote && state.token) { try { localStorage.setItem('janna-pair-token', state.token); } catch { /* ignore */ } } }
+async function persistSettings(partial) {
+  try { const r = await api('/api/settings', partial); state.settings = r.settings; applyTheme(); return r.settings; }
+  catch (e) { toast(e.message); return state.settings; }
 }
 
-function selectedProject(){return state.projects.find(x=>x.id===state.project)||null}
-function saveLocalToken(){if(state.remote&&state.token)localStorage.setItem('janna-pair-token',state.token)}
-async function api(path,data=null){const headers={'X-Janna-Token':state.token};const opt={headers};if(data!==null){opt.method='POST';headers['Content-Type']='application/json';opt.body=JSON.stringify(data)}if(data===null)opt.signal=AbortSignal.timeout(path==='/api/host/readiness'?90000:15000);const r=await fetch(path,opt);let result={};try{result=await r.json()}catch{}if(!r.ok){const error=new Error(result.error||`Request failed (${r.status})`);error.status=r.status;throw error;}return result}
-// Markdown remains dependency-free and offline. Code fences are parsed from the
-// *raw* model text before escaping; this preserves quotes, indentation, and HTML.
-const codeByBody = new WeakMap();
-function formatMarkdown(value){
-  const source=String(value||'').replace(/\r\n/g,'\n');
-  const rows=source.split('\n'),blocks=[],lines=[];
-  const languageLabel=x=>({'js':'JavaScript','ts':'TypeScript','jsx':'React JSX','tsx':'React TSX','html':'HTML','css':'CSS','py':'Python','cs':'C#','cpp':'C++','c':'C','rs':'Rust','json':'JSON','sh':'Shell'}[x]||x.toUpperCase()||'Code');
-  for(let i=0;i<rows.length;i++){
-    const m=rows[i].match(/^ {0,3}(`{3,}|~{3,})\s*([^\n]*)$/);
-    if(!m){lines.push(escapeHTML(rows[i]));continue}
-    const delimiter=m[1],language=String(m[2]||'').trim().split(/\s+/)[0].replace(/[^a-z0-9#+._-]/gi,'').toLowerCase();
-    const body=[];let closed=false;
-    while(++i<rows.length){
-      const line=rows[i],end=line.match(/^ {0,3}(`{3,}|~{3,})\s*$/);
-      if(end&&end[1][0]===delimiter[0]&&end[1].length>=delimiter.length){closed=true;break}
-      body.push(line);
+/* ---------- generic dialog (never window.alert/confirm/prompt) ---------- */
+function showDialog({ title = '', text = '', fields = [], okText = 'OK', cancelText = 'Cancel', danger = false, showCancel = true }) {
+  return new Promise(resolve => {
+    const overlay = $('appDialog'), titleEl = $('appDialogTitle'), textEl = $('appDialogText'),
+      fieldsEl = $('appDialogFields'), okBtn = $('appDialogOk'), cancelBtn = $('appDialogCancel');
+    titleEl.textContent = title; textEl.textContent = text; textEl.hidden = !text;
+    fieldsEl.replaceChildren();
+    const inputs = {};
+    for (const f of fields) {
+      if (f.type === 'textarea') {
+        const ta = document.createElement('textarea'); ta.placeholder = f.placeholder || ''; ta.value = f.value || '';
+        ta.setAttribute('aria-label', f.label || f.name); fieldsEl.append(ta); inputs[f.name] = ta;
+      } else {
+        const input = document.createElement('input'); input.type = f.type || 'text'; input.placeholder = f.placeholder || '';
+        input.value = f.value || ''; input.setAttribute('aria-label', f.label || f.name); fieldsEl.append(input); inputs[f.name] = input;
+      }
     }
-    const code=body.join('\n').replace(/\n+$/,'');const index=blocks.length;
-    blocks.push({language,code,closed});
-    lines.push(`\uE000${index}\uE001`);
-  }
-  if(!blocks.length&&/^\s*(?:<!doctype html\b|<html\b)/i.test(source)){
-    blocks.push({language:'html',code:source.trim(),closed:true});lines.length=0;lines.push('\uE0000\uE001');
-  }
-  const inline=s=>{
-    const saved=[];
-    const protect=html=>{const id=saved.length;saved.push(html);return `\uE010${id}\uE011`};
-    const styled=s.replace(/`([^`]+)`|\[([^\]\n]+)\]\((https?:\/\/[^\s<>"()]+)\)/g,(_,code,label,url)=>
-      protect(code!==undefined?`<code>${code}</code>`:`<a href="${url}" target="_blank" rel="noopener noreferrer">${label}</a>`))
-      .replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>').replace(/\*([^*]+)\*/g,'<em>$1</em>');
-    return styled.replace(/\uE010(\d+)\uE011/g,(_,id)=>saved[Number(id)]||'');
-  };
-  const out=[],paragraph=[],items=[];
-  function flush(){if(paragraph.length){out.push('<p>'+paragraph.map(inline).join('<br>')+'</p>');paragraph.length=0}if(items.length){out.push('<ul>'+items.map(v=>'<li>'+inline(v)+'</li>').join('')+'</ul>');items.length=0}}
-  // Markdown tables: a header row containing | followed by a --- separator row.
-  const tables=[];
-  const splitCells=r=>{let s=r.trim();if(s.startsWith('|'))s=s.slice(1);if(s.endsWith('|'))s=s.slice(0,-1);return s.split('|').map(c=>c.trim())};
-  const isSep=r=>{if(!r.includes('-'))return false;const cells=splitCells(r);return cells.length>0&&cells.every(c=>/^:?-{1,}:?$/.test(c))};
-  for(let li=0;li<lines.length;li++){
-    const row=lines[li];
-    if(row.includes('|')&&li+1<lines.length&&isSep(lines[li+1])){
-      const head=splitCells(row);const bodyRows=[];
-      let lj=li+2;
-      while(lj<lines.length&&lines[lj].includes('|')&&lines[lj].trim()){bodyRows.push(splitCells(lines[lj]));lj++}
-      const th=head.map(c=>`<th>${inline(c)}</th>`).join('');
-      const tb=bodyRows.map(r=>'<tr>'+head.map((_,ci)=>`<td>${inline(r[ci]||'')}</td>`).join('')+'</tr>').join('');
-      tables.push(`<div class="md-table-wrap"><table class="md-table"><thead><tr>${th}</tr></thead><tbody>${tb}</tbody></table></div>`);
-      lines.splice(li,lj-li,`\uE002${tables.length-1}\uE003`);
-    }
-  }
-  for(const row of lines){
-    if(!row.trim()){flush();continue}
-    if(/^\uE000\d+\uE001$/.test(row)){flush();out.push(row);continue}
-    if(/^\uE002\d+\uE003$/.test(row)){flush();out.push(row);continue}
-    const heading=row.match(/^(#{1,3})\s+(.+)$/);
-    if(heading){flush();const level=Math.min(3,heading[1].length+1);out.push(`<h${level}>${inline(heading[2])}</h${level}>`);continue}
-    const item=row.match(/^\s*[-*]\s+(.+)$/);
-    if(item){if(paragraph.length)flush();items.push(item[1]);continue}
-    if(items.length)flush();paragraph.push(row);
-  }
-  flush();
-  const html=out.join('').replace(/\uE000(\d+)\uE001/g,(_,id)=>{
-    const block=blocks[Number(id)];if(!block)return '';
-    const label=languageLabel(block.language);const status=block.closed?'':'<span class="code-draft">Writing…</span>';
-    return `<section class="code-block" data-code-index="${id}"><div class="code-block-header"><span class="code-language">${escapeHTML(label)}</span>${status}<span class="code-block-actions"><button type="button" class="code-action" data-code-action="copy" data-code-index="${id}" title="Copy this code">Copy</button><button type="button" class="code-action" data-code-action="open" data-code-index="${id}" title="Open the code panel">Open code</button></span></div><pre tabindex="0"><code>${escapeHTML(block.code)}</code></pre></section>`;
-  }).replace(/\uE002(\d+)\uE003/g,(_,id)=>tables[Number(id)]||'');
-  return {html,blocks};
-}
-function markdown(value){return formatMarkdown(value).html}
-function renderMarkdown(body,value){const result=formatMarkdown(value);body.innerHTML=result.html;codeByBody.set(body,result.blocks);return result}
-
-async function copyCodeText(value){
-  try{if(navigator.clipboard&&window.isSecureContext){await navigator.clipboard.writeText(value);return true}}catch{}
-  const text=document.createElement('textarea');text.value=value;text.style.cssText='position:fixed;left:-9999px;top:0;opacity:0';document.body.append(text);text.focus();text.select();
-  try{return !!document.execCommand('copy')}finally{text.remove()}
-}
-function codeFileName(language){
-  const extension=({html:'html',htm:'html',js:'js',mjs:'mjs',jsx:'jsx',ts:'ts',tsx:'tsx',css:'css',json:'json',py:'py',python:'py',cs:'cs',cpp:'cpp',c:'c',rs:'rs',go:'go',sh:'sh'}[language]||'txt');
-  return 'janna-code.'+extension;
-}
-function setCodeStatus(report,complete=true,index=null){
-  const status=$('codeWorkspaceStatus');if(!status)return;
-  if(!complete){status.textContent='Still generating · copy or inspect the draft';status.dataset.state='draft';return}
-  if(!report||!report.blocks){status.textContent='Not tested · save and run the code to verify it';status.dataset.state='unknown';return}
-  const check=index===null?null:report.results?.find(r=>r.block===index+1);
-  if(check){status.textContent=check.status==='passed'?'Syntax passed · build and runtime unverified':check.status==='failed'?'Syntax check failed · review compiler diagnostics':'Unverified · '+(check.reason||'No check available');status.dataset.state=check.status==='passed'?'good':check.status==='failed'?'warning':'unknown';const issues=$('codeWorkspaceIssues');if(issues){issues.replaceChildren();if(check.diagnostic)issues.append(el('pre','code-issue',check.diagnostic));}return}
-  if(report.errors?.length){status.textContent=`${report.errors.length} syntax / structure issue${report.errors.length===1?'':'s'} detected · review before running`;status.dataset.state='warning';return}
-  if(report.warnings?.length){status.textContent=report.warnings.join(' · ');status.dataset.state='unknown';return}
-  if(report.checked){status.textContent='Structural checks passed · runtime behavior not verified';status.dataset.state='good';return}
-  status.textContent='No supported syntax checks · runtime behavior not verified';status.dataset.state='unknown';
-}
-function updateCodeWorkspace(body,index,show=false){
-  const block=codeByBody.get(body)?.[index];if(!block)return false;
-  state.codeWorkspace={body,index,language:block.language,code:block.code,closed:block.closed};
-  $('codeWorkspaceName').textContent=codeFileName(block.language);
-  $('codeWorkspaceLanguage').textContent=block.language.toUpperCase()||'CODE';
-  $('codeWorkspaceCode').textContent=block.code;
-  $('codeWorkspaceEditor').value=block.code;
-  const canPreview=['html','htm'].includes(block.language);
-  $('codePreviewButton').hidden=!canPreview;
-  $('codeInteractiveButton').hidden=!canPreview;
-  setCodeStatus(body._codeValidation,block.closed,index);
-  if(show){$('codeWorkspace').hidden=false;document.body.classList.add('code-open');$('codeWorkspaceSource').hidden=false;$('codeWorkspaceEditor').hidden=true;$('codeWorkspacePreview').hidden=true;$('codePreviewButton').textContent='Preview';}
-  return true;
-}
-function openCodeFromBody(body,index=0){return updateCodeWorkspace(body,index,true)}
-function closeCodeWorkspace(){$('codeWorkspace').hidden=true;document.body.classList.remove('code-open');state.codeWorkspace=null}
-function codeToPreview(){
-  const current=state.codeWorkspace;if(!current)return;
-  const code=current.code;
-  const interactive=$('codeInteractiveButton').getAttribute('aria-pressed')==='true';
-  const csp=`default-src 'none'; img-src data: blob:; style-src 'unsafe-inline' data:; font-src data:; script-src ${interactive?"'unsafe-inline'":"'none'"}; connect-src 'none'; frame-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none'`;
-  // A sandboxed srcdoc document has an opaque origin: no access to Janna APIs or local files.
-  const injected='<meta http-equiv="Content-Security-Policy" content="'+escapeHTML(csp)+'">';
-  const html=/<head\b[^>]*>/i.test(code)?code.replace(/<head\b[^>]*>/i,x=>x+injected):injected+code;
-  const iframe=$('codeWorkspacePreview');iframe.setAttribute('sandbox',interactive?'allow-scripts':'');iframe.srcdoc=html;
-  $('codeWorkspaceSource').hidden=true;$('codeWorkspaceEditor').hidden=true;iframe.hidden=false;
-  $('codePreviewButton').textContent='Source';
-}
-function activeCode(){return state.codeWorkspace?.code||''}
-function bindCodeWorkspace(){
-  $('codeWorkspaceClose').onclick=closeCodeWorkspace;
-  $('codeWorkspaceCopy').onclick=async()=>toast(await copyCodeText(activeCode())?'Code copied':'Copy blocked by this device');
-  $('codeWorkspaceSave').onclick=()=>{if(!state.codeWorkspace)return;const name=codeFileName(state.codeWorkspace.language);const url=URL.createObjectURL(new Blob([activeCode()],{type:'text/plain;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),3000)};
-  $('codeWorkspaceEdit').onclick=()=>{if(!state.codeWorkspace)return;const editor=$('codeWorkspaceEditor'),isEditing=editor.hidden;
-    if(isEditing){editor.value=activeCode();$('codeWorkspaceSource').hidden=true;$('codeWorkspacePreview').hidden=true;editor.hidden=false;editor.focus();$('codeWorkspaceEdit').textContent='Apply edits';}
-    else{state.codeWorkspace.code=editor.value;$('codeWorkspaceCode').textContent=editor.value;editor.hidden=true;$('codeWorkspaceSource').hidden=false;$('codeWorkspaceEdit').textContent='Edit';setCodeStatus(null,true);}
-  };
-  $('codePreviewButton').onclick=()=>{if($('codeWorkspacePreview').hidden){codeToPreview()}else{$('codeWorkspacePreview').hidden=true;$('codeWorkspaceSource').hidden=false;$('codePreviewButton').textContent='Preview'}};
-  $('codeInteractiveButton').onclick=()=>{const b=$('codeInteractiveButton'),active=b.getAttribute('aria-pressed')==='true';b.setAttribute('aria-pressed',String(!active));b.textContent=active?'Scripts off':'Scripts on';if(!$('codeWorkspacePreview').hidden)codeToPreview()};
-  $('codeWorkspaceValidate').onclick=async()=>{if(!state.codeWorkspace)return;const block=state.codeWorkspace;try{const report=await api('/api/code/validate',{code:block.code,language:block.language});setCodeStatus(report,true);
-      const list=$('codeWorkspaceIssues');list.replaceChildren();for(const issue of [...report.errors,...report.warnings])list.append(el('p','code-issue',issue));if(!report.errors?.length&&!report.warnings?.length)list.append(el('p','code-issue','Static checks found no errors. Test the running page separately.'));
-    }catch(e){toast(e.message)}};
-  document.addEventListener('click',async e=>{const btn=e.target.closest('[data-code-action]');if(!btn)return;const body=btn.closest('.message-body'),index=Number(btn.dataset.codeIndex);const block=codeByBody.get(body)?.[index];if(!body||!block)return;
-    if(btn.dataset.codeAction==='copy'){toast(await copyCodeText(block.code)?'Code copied':'Copy blocked by this device')}
-    else if(btn.dataset.codeAction==='open')openCodeFromBody(body,index);
+    okBtn.textContent = okText; okBtn.classList.toggle('danger-btn', !!danger);
+    cancelBtn.hidden = !showCancel; cancelBtn.textContent = cancelText;
+    overlay.hidden = false;
+    const first = fieldsEl.querySelector('input,textarea'); if (first) setTimeout(() => first.focus(), 40);
+    const close = value => { overlay.hidden = true; okBtn.onclick = null; cancelBtn.onclick = null; overlay.onclick = null; resolve(value); };
+    okBtn.onclick = () => { const out = {}; for (const k in inputs) out[k] = inputs[k].value; close(fields.length ? out : true); };
+    cancelBtn.onclick = () => close(null);
+    overlay.onclick = e => { if (e.target === overlay) close(null); };
   });
 }
+const confirmDialog = (title, text, okText = 'Delete') => showDialog({ title, text, okText, danger: true });
 
-function showView(view){state.view=view;document.querySelectorAll('[data-view]').forEach(el=>el.classList.toggle('active',el.dataset.view===view));const chat=['chats','luna'].includes(view);$('chatView').hidden=!chat;$('contentView').hidden=chat;if(!chat)renderContent();closeMobile()}
-function modelRecord(id){return state.modelCatalog.find(m=>m.id===id)||{id,label:id,note:'Installed on this PC',model_class:'Installed local model'}}
-function modelLabel(id){return modelRecord(id).label||id}
-function rememberModelChoice(){try{if(state.model)localStorage.setItem('janna-selected-model',state.model)}catch{}}
-function closeModelMenu(){const menu=$('modelMenu'),list=$('modelMenuList');if(!menu||!list)return;menu.setAttribute('aria-expanded','false');list.hidden=true}
-function syncModelMenu(){
-  const label=$('modelMenuLabel'),list=$('modelMenuList'),sel=$('model');if(!label||!sel)return;
-  const id=sel.value||'';
-  label.textContent=id?modelLabel(id):(state.models.length?'Choose a model':'Set up a model');
-  if($('modelMenu'))$('modelMenu').setAttribute('aria-label',id?('Model: '+label.textContent):'Model');
-  if(!list)return;
-  for(const item of list.querySelectorAll('[role=option]'))item.setAttribute('aria-selected',String(item.dataset.value===id));
+/* ---------- copy ---------- */
+async function copyCodeText(value) {
+  try { if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(value); return true; } } catch { /* fall through */ }
+  const text = document.createElement('textarea'); text.value = value; text.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0';
+  document.body.append(text); text.focus(); text.select();
+  try { return !!document.execCommand('copy'); } finally { text.remove(); }
 }
-function chooseModel(id){
-  const sel=$('model');if(!sel||sel.disabled||!id)return;
-  state.model=id;sel.value=id;rememberModelChoice();syncModelMenu();closeModelMenu();refreshNativeLevels();
-}
-function openModelMenu(){
-  const menu=$('modelMenu'),list=$('modelMenuList');if(!menu||!list||menu.disabled)return;
-  if(!state.models.length){showView('models');return}
-  menu.setAttribute('aria-expanded','true');list.hidden=false;
-  const selected=list.querySelector('[aria-selected=true]')||list.querySelector('[role=option]');
-  selected?.focus();
-}
-function renderModelOptions(models){
-  state.models=models||[];const sel=$('model');const list=$('modelMenuList');
-  const current=state.model||(()=>{try{return localStorage.getItem('janna-selected-model')||''}catch{return ''}})();
-  sel.replaceChildren();if(list)list.replaceChildren();
-  const ordered=[];const seen=new Set();
-  for(const row of state.modelCatalog){if(models.includes(row.id)&&!seen.has(row.id)){ordered.push(row);seen.add(row.id)}}
-  for(const id of models){if(!seen.has(id)){ordered.push(modelRecord(id));seen.add(id)}}
-  if(!ordered.length){sel.add(new Option('Set up a model',''));state.model='';syncModelMenu();return}
-  let group='';
-  for(const row of ordered){
-    sel.add(new Option(row.label,row.id));
-    if(!list)continue;
-    const heading=row.model_class==='Janna engineering profile'?'Janna profiles':(row.cloud?'Cloud models':'Other models on this PC');
-    if(heading!==group){group=heading;list.append(el('div','model-menu-group',heading))}
-    const item=el('button','model-menu-item');item.type='button';item.setAttribute('role','option');item.dataset.value=row.id;
-    item.append(el('strong','',row.label));const noteText=row.note||(row.cloud?'':'Installed on this PC');if(noteText)item.append(el('small','',noteText));
-    item.onclick=()=>chooseModel(row.id);
-    list.append(item);
-  }
-  if(list){
-    const add=el('button','model-menu-item');add.type='button';
-    add.append(el('strong','','Add a model'),el('small','','Qwen, other local models, and Cline'));
-    add.onclick=()=>{closeModelMenu();showView('models')};
-    list.append(add);
-  }
-  state.model=models.includes(current)?current:(models.find(m=>/^janna-pro-1\.0(?::latest)?$/.test(m))||models.find(m=>/^janna-lite-1\.0(?::latest)?$/.test(m))||models.find(m=>/^janna-lite-1\.0(?::latest)?$/.test(m))||models[0]);
-  sel.value=state.model;syncModelMenu();refreshNativeLevels();
-}
-async function refreshNativeLevels(){const selected=state.reasoning;state.nativeLevels=['default'];state.modelVision=false;if(!state.model){state.reasoning='default';return}try{const r=await api('/api/reasoning/'+encodeURIComponent(state.model));state.modelVision=r.vision===true;if(r.verified)state.nativeLevels=r.levels||['default']}catch{}state.reasoning=state.nativeLevels.includes(selected)?selected:'default';if(typeof renderPending==='function')renderPending()}
-function syncDesktopChrome(){
-  window.syncPhoneChrome?.();
-  try{window.chrome?.webview?.postMessage(JSON.stringify({type:'janna.theme',theme:document.body.dataset.theme||'rose'}))}
-  catch{/* PWA and ordinary browser sessions have no native title bar */}
-}
-function refreshResearchSwitch(){
-  const control=$('researchToggle');if(!control)return;
-  const mode=state.settings.research_mode||'auto';
-  const labels={auto:'Web · Auto',always:'Web · On',off:'Web · Off'};
-  const stateEl=$('researchState');if(stateEl)stateEl.textContent={auto:'Auto',always:'On',off:'Off'}[mode]||'Auto';else control.textContent=labels[mode]||labels.auto;
-  control.dataset.mode=mode;
-  control.setAttribute('aria-label','Web research: '+(mode==='off'?'disabled':mode==='always'?'every question':'automatic'));
-  control.setAttribute('aria-pressed',String(mode!=='off'));
-  control.title=mode==='off'?'Research is disabled for this session':
-    mode==='always'?'Search public sources for each question':'Search public sources when current evidence is useful';
-}
-async function cycleResearchSwitch(){
-  if(state.busy)return toast('Finish or stop the active response before changing research mode');
-  const modes=['auto','always','off'];
-  const current=state.settings.research_mode||'auto';
-  const next=modes[(modes.indexOf(current)+1)%modes.length];
-  try{const result=await api('/api/settings',{research_mode:next});state.settings=result.settings;refreshResearchSwitch();
-    toast(next==='off'?'Web research disabled':next==='always'?'Web research enabled for every question':'Automatic research enabled')}
-  catch(e){toast(e.message)}
-}
-function statusBadge(health){if(Array.isArray(health.busy))state.busySessions=health.busy;const ok=health.ollama??!!state.models.length;$('sidebarDot').classList.toggle('offline',!ok);$('headerDot').classList.toggle('offline',!ok);$('sidebarState').textContent=ok?(state.busy?'Working locally':state.busySessions.length?'Working in another chat':(window.__JANNA_WEB__?'Cloud · Ready':'Local model · Ready')):(window.__JANNA_WEB__?'Cloud · Offline':'Local model · Offline');$('headerMode').textContent=window.__JANNA_WEB__?'Web edition':(state.remote?'Private connection':'Local mode');const gpu=health.gpu||state.gpu;state.gpu=gpu;$('gpuState').textContent=gpu?.available?`${gpu.utilization_percent}% GPU`:'GPU'}
-let showArchivedChats=false;
-async function doDeleteSession(s){
-  if(state.busy)return toast('Stop the current task before deleting chats');
-  try{
-    await api('/api/sessions/delete',{session_id:s.id});
-    state.sessions=state.sessions.filter(x=>x.id!==s.id);
-    if(state.session===s.id){state.session=null;await newSession(state.project)}
-    else renderRecents();
-    toast('Conversation deleted');
-  }catch(e){toast(e.message)}
-}
-async function updateSessionMeta(s,patch){
-  try{
-    const r=await api('/api/sessions/update',Object.assign({session_id:s.id},patch));
-    Object.assign(s,r);renderRecents();
-  }catch(e){toast(e.message)}
-}
-function closeChatMenu(){const m=$('chatMenu');if(m)m.hidden=true}
-function openChatMenu(s,anchor){
-  let m=$('chatMenu');
-  if(!m){m=el('div','chat-menu');m.id='chatMenu';document.body.appendChild(m);
-    document.addEventListener('pointerdown',e=>{if(!m.hidden&&!e.target.closest('#chatMenu')&&!e.target.closest('.recent-menu-btn'))m.hidden=true});
-  }
-  m.replaceChildren();
-  const item=(label,fn,danger)=>{const b=el('button','chat-menu-item'+(danger?' danger':''),label);b.type='button';b.onclick=()=>{m.hidden=true;fn()};m.append(b);return b};
-  item('Rename',()=>startRename(s));
-  item(s.pinned?'Unpin':'Pin chat',()=>updateSessionMeta(s,{pinned:!s.pinned}));
-  item('Share',()=>shareSession(s));
-  item(s.archived?'Unarchive':'Archive',()=>updateSessionMeta(s,{archived:!s.archived}));
-  const del=item('Delete',()=>{},true);
-  del.onclick=()=>{if(!del.dataset.armed){del.dataset.armed='1';del.textContent='Tap again to delete';setTimeout(()=>{if(del.isConnected){delete del.dataset.armed;del.textContent='Delete'}},2600);return}m.hidden=true;doDeleteSession(s)};
-  const r=anchor.getBoundingClientRect();m.hidden=false;
-  m.style.left=Math.max(8,Math.min(r.left,window.innerWidth-216))+'px';
-  m.style.top=(r.bottom+196>window.innerHeight?Math.max(8,r.top-196):r.bottom+4)+'px';
-}
-async function shareSession(s){
-  try{
-    const full=await api('/api/session/'+encodeURIComponent(s.id));
-    const text=(full.messages||[]).map(mm=>((mm.role==='user'?'You: ':'Janna: ')+(mm.content||''))).join('\n\n')||(s.title||'New chat');
-    if(navigator.share){try{await navigator.share({title:s.title||'Janna chat',text})}catch{}}
-    else toast(await copyCodeText(text)?'Chat copied to share':'Copy failed');
-  }catch(e){toast(e.message)}
-}
-function startRename(s){
-  const row=document.querySelector('.recent-row[data-sid="'+CSS.escape(s.id)+'"]');
-  if(!row)return;const titleBtn=row.querySelector('.recent-item');if(!titleBtn)return;
-  const input=document.createElement('input');input.className='recent-rename';input.value=s.title||'New chat';input.setAttribute('aria-label','Rename conversation');
-  titleBtn.replaceWith(input);input.focus();input.select();
-  let done=false;
-  const commit=async save=>{if(done)return;done=true;const v=input.value.trim();if(save&&v&&v!==s.title){await updateSessionMeta(s,{title:v})}else renderRecents()};
-  input.addEventListener('keydown',e=>{if(e.key==='Enter')commit(true);if(e.key==='Escape')commit(false);e.stopPropagation()});
-  input.addEventListener('blur',()=>commit(true));
-}
-function renderRecents(){
-  const box=$('sessionList');box.replaceChildren();
-  const sorted=state.sessions.slice().sort((a,b)=>((b.pinned?1:0)-(a.pinned?1:0))||(b.updated-a.updated));
-  const main=sorted.filter(x=>!x.archived),arch=sorted.filter(x=>x.archived);
-  if(!main.length&&!arch.length){box.append(el('div','empty-recents','Start a conversation'))}
-  const addRow=s=>{
-    const row=el('div','recent-row');row.dataset.sid=s.id;
-    const b=el('button','recent-item'+(s.id===state.session?' active':''),s.title||'New chat');
-    b.title=s.title||'New chat';b.onclick=()=>openSession(s.id);
-    row.append(b);
-    if(s.pinned){const pin=el('span','pin-mark');pin.innerHTML='<svg><use href="#i-pin"/></svg>';pin.title='Pinned';row.append(pin)}
-    const menu=el('button','recent-menu-btn','\u22ef');menu.type='button';menu.title='Chat actions';menu.setAttribute('aria-label','Actions for '+(s.title||'conversation'));
-    menu.onclick=e=>{e.stopPropagation();const m=$('chatMenu');if(m&&!m.hidden){closeChatMenu()}else openChatMenu(s,menu)};
-    row.append(menu);box.append(row);
+
+/* ---------- Markdown (dependency-free, offline) + small built-in highlighter ---------- */
+const codeByBody = new WeakMap();
+const HIGHLIGHT_KEYWORDS = ['const','let','var','function','return','if','else','elif','for','while','do','switch','case','break','continue','class','extends','import','from','export','new','typeof','instanceof','in','of','try','catch','finally','throw','async','await','def','lambda','True','False','None','and','or','not','with','as','pass','raise','int','str','float','bool','void','public','private','protected','static','struct','enum','impl','fn','mut','pub','use','mod','match','echo','require','local','end','then','until','repeat','select','insert','update','delete','create','table','where','join','group','order','by','print'];
+function highlightCode(code, lang) {
+  const l = String(lang || '').toLowerCase();
+  const slash = /^(js|javascript|ts|typescript|jsx|tsx|java|c|cpp|cs|csharp|go|rust|rs|php|swift|kotlin|css|scss|json|html|xml)$/.test(l);
+  const hash = /^(py|python|sh|bash|shell|rb|ruby|yml|yaml|toml)$/.test(l);
+  const html = /^(html|xml|svg)$/.test(l);
+  const parts = [];
+  if (html) parts.push('<!--[\\s\\S]*?-->');
+  if (slash) parts.push('\\/\\/[^\\n]*', '\\/\\*[\\s\\S]*?\\*\\/');
+  if (hash) parts.push('#[^\\n]*');
+  if (!slash && !hash && !html) parts.push('\\/\\/[^\\n]*', '#[^\\n]*');
+  parts.push('"(?:[^"\\\\\\n]|\\\\.)*"', "'(?:[^'\\\\\\n]|\\\\.)*'", '`(?:[^`\\\\]|\\\\.)*`');
+  parts.push('\\b\\d[\\d_]*(?:\\.\\d+)?\\b');
+  parts.push('[A-Za-z_$][\\w$]*(?=\\()');
+  parts.push('\\b(?:' + HIGHLIGHT_KEYWORDS.join('|') + ')\\b');
+  const re = new RegExp('(' + parts.join('|') + ')', 'g');
+  let out = '', last = 0, m;
+  const clsFor = tok => {
+    if (/^(\/\/|\/\*|#|<!--)/.test(tok)) return 'tok-com';
+    if (/^["'`]/.test(tok)) return 'tok-str';
+    if (/^\d/.test(tok)) return 'tok-num';
+    if (HIGHLIGHT_KEYWORDS.includes(tok)) return 'tok-kw';
+    return 'tok-fn';
   };
-  main.slice(0,25).forEach(addRow);
-  if(arch.length){
-    const t=el('button','archived-toggle',(showArchivedChats?'\u25be ':'\u25b8 ')+'Archived ('+arch.length+')');
-    t.type='button';t.onclick=()=>{showArchivedChats=!showArchivedChats;renderRecents()};
-    box.append(t);
-    if(showArchivedChats)arch.forEach(addRow);
+  while ((m = re.exec(code))) {
+    if (m.index > last) out += escapeHTML(code.slice(last, m.index));
+    out += '<span class="' + clsFor(m[0]) + '">' + escapeHTML(m[0]) + '</span>';
+    last = m.index + m[0].length;
+    if (m[0].length === 0) re.lastIndex++;
   }
+  out += escapeHTML(code.slice(last));
+  return out;
 }
-
-async function newSession(projectId=state.project){if(state.busy)return toast('Stop the active run first.');try{const s=await api('/api/sessions',{project_id:projectId||null});state.session=s.id;state.sessions.unshift({id:s.id,title:s.title,project_id:s.project_id,updated:s.updated,pinned:false,archived:false});state.events=[];$('conversationLabel').textContent='New chat';renderRecents();renderConversation(s);showView('chats');$('prompt').focus()}catch(e){toast(e.message)}}
-async function openSession(id){if(state.busy)return toast('Stop the active run before switching conversations.');try{const s=await api('/api/session/'+encodeURIComponent(id));state.session=id;state.project=s.project_id||null;state.events=s.events||[];$('conversationLabel').textContent=s.title||'New chat';$('workspaceLabel').textContent=selectedProject()?.name||'Workspace';renderRecents();renderConversation(s);showView(s.purpose==='luna'?'luna':'chats');showRunRecovery(s)}catch(e){toast(e.message)}}
-function completionPanel(report){
-  const panel=el('details','source-evidence');panel.append(el('summary','','Completion checks · '+report.status),el('p','muted',report.message||''));
-  for(const check of report.checks||[]){const item=el('div','evidence-item');item.append(el('strong','',check.name+' · '+check.status+' · exit '+String(check.exit_code??'unavailable')),el('pre','raw-panel',check.tail||'No output'));panel.append(item)}
-  return panel;
-}
-function evidencePanel(report){
-  const panel=el('details','source-evidence'),summary=el('summary','','Evidence · '+report.total+' statements');
-  const filter=el('select','inline-input');filter.setAttribute('aria-label','Filter evidence');
-  const labels={all:'All statements',source_located:'Source located · behavior unverified',inferred:'Inferred · untested',analogy:'Analogy',unverified:'Unverified'};
-  for(const [value,label] of Object.entries(labels))filter.add(new Option(label,value));
-  const list=el('div','evidence-list');
-  function draw(){list.replaceChildren();for(const claim of report.claims.filter(c=>filter.value==='all'||c.category===filter.value)){
-    const row=el('div','evidence-item');row.append(el('small','pill',labels[claim.category]||'Unverified'),el('p','',claim.text));
-    for(const ref of claim.citations||[]){const detail=el('details'),title=el('summary','',ref.path+':'+ref.first_line+' · '+(ref.status==='source_located'?'source matched':'unverified'));detail.append(title);
-      if(ref.excerpt)detail.append(el('pre','raw-panel',ref.excerpt));
-      detail.append(el('small','muted',ref.reason||('Working-copy SHA-256 '+ref.sha256+' · commit '+(ref.commit||'uncommitted'))));row.append(detail)}list.append(row)
-  }}
-  filter.onchange=draw;panel.append(summary,el('p','muted',report.scope),filter,list);if(report.truncated)panel.append(el('p','muted','Showing the first 100 statements.'));draw();return panel;
-}
-function makeMessage(m){const wrapper=document.createElement('article');wrapper.className='message '+(m.role==='user'?'user':'assistant');if(m.role==='user'){const bubble=document.createElement('div');bubble.className='user-bubble';bubble.textContent=m.content||'';wrapper.appendChild(bubble);if(Array.isArray(m.attached)&&m.attached.length)wrapper.append(el('div','attachment-note',m.attached.map(item=>item.name+' · '+(item.kind==='image'?'image':'log')).join(' · ')));const uact=el('div','message-actions user-actions');const ucopy=el('button','message-action');ucopy.title='Copy';ucopy.setAttribute('aria-label','Copy');ucopy.innerHTML='<svg><use href="#i-copy"/></svg>';ucopy.onclick=async()=>{toast(await copyCodeText(m.content||'')?'Copied':'Copy failed')};uact.append(ucopy);wrapper.appendChild(uact);return wrapper}const header=document.createElement('div');header.className='assistant-head';const img=document.createElement('img');img.className='small-mark';img.src='/mark-clean.png';img.alt='';header.append(img,document.createTextNode('Janna'));wrapper.appendChild(header);const content=document.createElement('div');content.className='message-body';content._codeValidation=m.code_validation||null;renderMarkdown(content,m.content||'');wrapper.appendChild(content);
-  const actions=el('div','message-actions');const copyBtn=el('button','message-action');copyBtn.title='Copy response';copyBtn.setAttribute('aria-label','Copy response');copyBtn.innerHTML='<svg><use href="#i-copy"/></svg>';copyBtn.onclick=async()=>{toast(await copyCodeText(m.content||'')?'Copied':'Copy failed')};const shareBtn=el('button','message-action');shareBtn.title='Share';shareBtn.setAttribute('aria-label','Share');shareBtn.innerHTML='<svg><use href="#i-share"/></svg>';shareBtn.onclick=async()=>{const text=m.content||'';if(navigator.share){try{await navigator.share({text})}catch{}}else toast(await copyCodeText(text)?'Copied to share':'Copy failed')};const listenBtn=el('button','message-action');listenBtn.title='Listen';listenBtn.setAttribute('aria-label','Listen to this response');listenBtn.innerHTML='<svg><use href="#i-play"/></svg>';listenBtn.onclick=()=>msgSpeakToggle(m.content||'',listenBtn);actions.append(copyBtn,listenBtn,shareBtn);wrapper.appendChild(actions);
-  if(m.activity&&Array.isArray(m.activity.steps)&&m.activity.steps.length){const chain=document.createElement('details');chain.className='activity-chain';const sum=document.createElement('summary');sum.textContent='Thought for '+fmtDur(m.activity.seconds||1);const ol=document.createElement('ol');ol.className='activity-steps';for(const label of m.activity.steps){const li=document.createElement('li');li.textContent=finishedStep(label);ol.append(li)}chain.append(sum,ol);wrapper.insertBefore(chain,content);}
-  if(m.evidence?.claims?.length)wrapper.append(evidencePanel(m.evidence));
-  if(m.completion_verification)wrapper.append(completionPanel(m.completion_verification));
-  if(m.code_repaired)wrapper.append(el('small','muted','Syntax errors corrected in one checked pass. Original draft retained below; runtime behavior remains unverified.'));
-  if(m.model_used && m.model_used!==state.model)wrapper.append(el('span','pill','Recovered with '+modelLabel(m.model_used)));
-  if(m.research_note)wrapper.append(el('p','research-integrity-note',m.research_note));
-  if(m.sources?.length && state.settings.show_citations!==false){
-    const refs=el('details','source-references'),sum=el('summary','','References · '+m.sources.length);
-    const freshness=m.research_freshness||'unknown';
-    if(freshness==='stale_cache')sum.textContent+=' (offline cache, may be outdated)';
-    if(freshness==='local_only')sum.textContent+=' (local source only)';
-    refs.append(sum);
-    for(const src of m.sources.slice(0,12)){
-      const row=el('div','reference-row'),url=String(src.url||'');
-      if(/^https?:\/\//.test(url)){
-        const a=el('a','reference-link',(src.title||url)+(src.stale?' · STALE':''));
-        a.href=url;a.target='_blank';a.rel='noopener noreferrer';row.append(a);
-      }else row.append(el('span','',src.title||'Local source'));
-      if(src.snippet)row.append(el('small','',src.snippet));refs.append(row)
+function formatMarkdown(value) {
+  const source = String(value || '').replace(/\r\n/g, '\n');
+  const rows = source.split('\n'), blocks = [], lines = [];
+  const languageLabel = x => ({ js: 'JavaScript', ts: 'TypeScript', jsx: 'React JSX', tsx: 'React TSX', html: 'HTML', css: 'CSS', py: 'Python', cs: 'C#', cpp: 'C++', c: 'C', rs: 'Rust', json: 'JSON', sh: 'Shell' }[x] || x.toUpperCase() || 'Code');
+  for (let i = 0; i < rows.length; i++) {
+    const m = rows[i].match(/^ {0,3}(`{3,}|~{3,})\s*([^\n]*)$/);
+    if (!m) { lines.push(escapeHTML(rows[i])); continue; }
+    const delimiter = m[1], language = String(m[2] || '').trim().split(/\s+/)[0].replace(/[^a-z0-9#+._-]/gi, '').toLowerCase();
+    const body = []; let closed = false;
+    while (++i < rows.length) {
+      const line = rows[i], end = line.match(/^ {0,3}(`{3,}|~{3,})\s*$/);
+      if (end && end[1][0] === delimiter[0] && end[1].length >= delimiter.length) { closed = true; break; }
+      body.push(line);
     }
-    wrapper.append(refs)
+    const code = body.join('\n').replace(/\n+$/, ''); const index = blocks.length;
+    blocks.push({ language, code, closed });
+    lines.push(`\uE000${index}\uE001`);
   }
-  if(m.original&&m.original!==m.content||m.status||m.refusal_origin||m.metrics?.tokens_per_second){const foot=document.createElement('div');foot.className='message-metadata';if(m.status){const status=document.createElement('span');status.textContent='Work · '+String(m.status).toLowerCase()+(m.status_origin?' ('+m.status_origin+')':'');foot.append(status)}if(m.refusal_origin){foot.append(el('span','', 'Model response · shown unedited'))}if(m.metrics?.time_to_first_token_ms!=null){foot.append(el('span','',`First response ${Math.round(m.metrics.time_to_first_token_ms)} ms`))}if(m.metrics?.tokens_per_second){foot.append(el('span','',`${m.metrics.tokens_per_second} tokens/sec · measured`))}if(m.original&&m.original!==m.content){const toggle=document.createElement('button');toggle.className='raw-toggle';toggle.textContent='Show original';const raw=document.createElement('pre');raw.hidden=true;raw.className='raw-panel';raw.textContent=m.original;toggle.onclick=()=>{raw.hidden=!raw.hidden;toggle.textContent=raw.hidden?'Show original':'Hide original'};foot.append(toggle);wrapper.append(foot,raw)}else wrapper.appendChild(foot)}if(m.run_id)wrapper.append(savedActivity(m.run_id));if(m.cancelled)wrapper.append(el('small','muted','Queued instruction cancelled'));return wrapper}
-function renderConversation(s){closeCodeWorkspace();const msgs=$('messages');msgs.replaceChildren();const has=!!s.messages?.length;$('welcome').hidden=has;msgs.hidden=!has;$('chatView').classList.toggle('has-messages',has);const target=has?$('composerDock'):$('welcomeComposerSlot');target.appendChild($('composer'));$('composerDock').hidden=!has;if(has){for(const m of s.messages)msgs.appendChild(makeMessage(m));renderQueuedInputs(s.inputs||[]);scrollThread();const last=msgs.lastElementChild?.querySelector('.message-body');if(last&&codeByBody.get(last)?.length&&window.innerWidth>=1150)openCodeFromBody(last,0)}else{$('thread').scrollTop=0}window.updatePhoneLayout?.()}
-function scrollThread(){if(!state.tailFollow||!window.getSelection()?.isCollapsed)return;const el=$('thread');requestAnimationFrame(()=>{if(state.tailFollow)el.scrollTop=el.scrollHeight})}
-async function openLunaChat(){
-  if(state.busy)return toast('Finish or stop the current run before opening Luna chat.');
-  try{const session=await api('/api/luna/chat',{project_id:state.project||null});await refreshBootstrap();await openSession(session.id);}
-  catch(error){toast(error.message)}
-}
-function savedActivity(runId){
-  const details=el('details','saved-activity'),summary=el('summary','','Saved run activity'),content=el('div');
-  details.append(summary,content);let loaded=false;
-  details.ontoggle=async()=>{if(!details.open||loaded)return;try{
-    const result=await api('/api/runs/'+encodeURIComponent(runId)+'/activity');
-    content.replaceChildren(el('p','muted','Run status: '+result.state));
-    for(const event of result.events){const p=event.payload,a=p.activity||{},row=el('div','saved-activity-row');if(p.type==='specialization')continue;const labels={diagnostic:'Technical diagnostic',error:'Run failed',accepted:'Run accepted',start:'Run started',first_token:'First answer received',metrics:'Generation measurements',model_used:'Model used',stop_requested:'Stop requested',stopped:'Stopped',cancelled:'Provider cancelled'};
-      row.append(el('strong','',a.title||p.message||p.stage||labels[p.type]||'Activity update'));
-      if(p.type==='metrics')row.append(el('small','muted',p.tokens_per_second?`${p.tokens_per_second} tokens/sec · measured`:'No generation timing available'));if(p.type==='first_token')row.append(el('small','muted',`${Math.round(p.milliseconds)} ms`));if(a.detail||a.output||p.type==='diagnostic'&&p.text)row.append(el('pre','', [a.detail,a.output,p.type==='diagnostic'?p.text:''].filter(Boolean).join('\n')));
-      content.append(row);
-    }loaded=true;
-  }catch(error){content.textContent=error.message}};
-  return details;
-}
-function renderQueuedInputs(inputs){
-  $('queuedInputs')?.remove();const pending=inputs.filter(x=>x.state==='queued');if(!pending.length)return;
-  const root=el('section','queued-inputs');root.id='queuedInputs';root.setAttribute('aria-label','Queued instructions');
-  root.append(el('strong','','Queued for the next step'));
-  for(const item of pending){const row=el('div','queued-input'),input=el('textarea');input.value=item.text;input.setAttribute('aria-label','Pending instruction');
-    const change=async(text)=>{try{await api('/api/run/input/edit',{session_id:state.session,input_id:item.id,text});renderQueuedInputs((await api('/api/session/'+state.session)).inputs||[])}catch(error){toast(error.message)}};
-    row.append(input,button('Save edit',()=>change(input.value)),button('Remove',()=>change(null)));root.append(row);
-  }$('messages').append(root);
-}
-function showRunRecovery(session){
-  for(const goal of (session.goals||[]).slice(0,1)){
-    const panel=el('div','run-recovery');panel.append(el('strong','','Goal · '+goal.state),
-      el('p','',goal.prompt),el('small','muted','Original deadline: '+new Date(goal.deadline*1000).toLocaleString()+'. Waiting and restarts count.'));
-    if(!['running','completed','budget_exhausted'].includes(goal.state)&&goal.deadline*1000>Date.now())
-      panel.append(button('Resume after inspecting saved work',()=>{$('prompt').value='/goal resume';send()}));
-    $('messages').append(panel);
+  if (!blocks.length && /^\s*(?:<!doctype html\b|<html\b)/i.test(source)) {
+    blocks.push({ language: 'html', code: source.trim(), closed: true }); lines.length = 0; lines.push('\uE0000\uE001');
   }
-  const runs=session.runs||[],latest=runs[0];if(!latest)return;
-  const active=!['completed','failed','stopped','blocked','outcome_unknown'].includes(latest.state);
-  if(active){send(latest);return}
-  if(latest.state==='outcome_unknown'){
-    const notice=el('div','run-recovery','Previous run outcome unknown after backend restart. Inspect saved progress and project changes before continuing.');
-    notice.append(button('Inspect saved progress',()=>send(latest)));$('messages').append(notice);
-  }
-}
-
-function syncSendState(){const c=$('composer');if(c)c.classList.toggle('is-empty',!$('prompt').value.trim())}
-function updateBusy(){const busy=state.busy;$('composer').classList.toggle('is-busy',busy);$('send').hidden=false;$('send').title=busy?'Queue instructions for the next step':'Send';$('stop').hidden=!busy;$('stop').disabled=state.stopRequested;$('stop').title=state.stopRequested?'Stopping; waiting for confirmation':'Stop this run';$('prompt').disabled=false;$('prompt').placeholder=busy?'Queue instructions for the next step…':(state.mode==='agent'?'Describe what you want built or repaired…':'Ask Janna anything…');$('mode').disabled=busy;$('model').disabled=busy;if($('modelMenu'))$('modelMenu').disabled=busy;if(busy)closeModelMenu();statusBadge({ollama:!!state.model});$('sidebarState').textContent=busy?'Working locally':$('sidebarState').textContent}
-function setMode(mode){state.mode=mode;$('mode').value=mode;if(mode==='agent'&&!state.project){toast('Choose a project for coding work.');openProjectDialog()}$('prompt').placeholder=mode==='agent'?'Describe what you want built or repaired…':'Ask Janna anything…';}
-function renderPending(){
-  const tray=$('attachmentTray');if(!tray)return;
-  tray.replaceChildren();
-  tray.hidden=!state.pending.length;
-  for(const item of state.pending){
-    const chip=el('span','attachment-chip');
-    if(item.kind==='image'&&item.file){const img=document.createElement('img');img.alt='';img.src=URL.createObjectURL(item.file);chip.append(img)}
-    chip.append(document.createTextNode(item.name+' · '+(item.kind==='image'?(state.modelVision?'image':'image, pixels not sent'):'log')));
-    chip.append(button('Remove',()=>{state.pending=state.pending.filter(row=>row!==item);renderPending()}));
-    tray.append(chip);
-  }
-}
-function downscaleImageFile(file){return new Promise((resolve,reject)=>{const url=URL.createObjectURL(file);const img=new Image();img.onload=()=>{try{const scale=Math.min(1,1568/Math.max(img.naturalWidth||1,img.naturalHeight||1));const w=Math.max(1,Math.round(img.naturalWidth*scale)),h=Math.max(1,Math.round(img.naturalHeight*scale));const cv=document.createElement('canvas');cv.width=w;cv.height=h;const cx=cv.getContext('2d');cx.fillStyle='#ffffff';cx.fillRect(0,0,w,h);cx.drawImage(img,0,0,w,h);URL.revokeObjectURL(url);cv.toBlob(blob=>{if(!blob){reject(new Error('Could not shrink the image'));return}resolve(new File([blob],(file.name||'photo').replace(/\.[a-z0-9]+$/i,'')+'.jpg',{type:'image/jpeg'}))},'image/jpeg',0.85)}catch(err){URL.revokeObjectURL(url);reject(err)}};img.onerror=()=>{URL.revokeObjectURL(url);reject(new Error('Could not read the image'))};img.src=url})}
-function fileBase64(file){return new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result).split(',')[1]||'');reader.onerror=()=>reject(reader.error||new Error('Could not read the file'));reader.readAsDataURL(file)})}
-async function send(resumeRun=null){
-  if(!resumeRun?.id)resumeRun=null;
-  const attached=resumeRun?[]:(state.pending||[]).slice();
-  const prompt=$('prompt').value.trim()||(attached.length?'Look at the attached evidence.':'');
-  if(!prompt&&!resumeRun)return;
-  if(!resumeRun&&!state.busy&&state.busySessions.length)return toast('Another local task is running. Open Luna to inspect or stop it; your message stays here.');
-  if(state.busy){
-    if(!state.session)return;
-    try{
-      const queued=await api('/api/run/update',{session_id:state.session,run_id:state.runId,prompt});
-      $('prompt').value='';syncSendState();
-      $('messages').append(makeMessage({role:'user',content:prompt}));
-      scrollThread();
-      toast(`Queued for the next step · ${queued.queued} pending`);renderQueuedInputs((await api('/api/session/'+state.session)).inputs||[]);
-    }catch(e){toast(e.message)}
-    return;
-  }
-  if(!resumeRun&&!state.model){showView('models');return toast('Install Janna Pro 1.1 or Janna Lite 1.1 from the Models page.')}
-  if(!resumeRun){
-    try{
-      const check=await api('/api/project/preflight',{prompt,mode:state.mode,project_id:state.project||null});
-      if(check.needs_project){state.projectDraft=prompt;openProjectDialog();toast('Choose the folder you want edited. Your request is saved.');return}
-    }catch(e){toast(e.message);return}
-  }
-  if(!state.session){await newSession();if(!state.session)return}
-  const sid=state.session;
-  state.busy=true;state.runId=resumeRun?.id||null;state.stopRequested=false;state.stream='';state.events=[];state.tailFollow=true;
-  updateBusy();$('prompt').value='';syncSendState();if(!resumeRun){state.pending=[];renderPending()}
-  $('welcome').hidden=true;$('messages').hidden=false;
-  $('chatView').classList.add('has-messages');
-  $('composerDock').appendChild($('composer'));$('composerDock').hidden=false;
-  const user=makeMessage({role:'user',content:prompt,attached:attached.map(item=>({name:item.name,kind:item.kind}))});
-  if(!resumeRun&&attached.some(item=>item.kind==='image'&&item.file)){
-    const previews=document.createElement('div');previews.className='attachment-previews';
-    for(const item of attached.filter(row=>row.kind==='image'&&row.file)){const img=document.createElement('img');img.className='attachment-preview';img.alt=item.name;img.src=URL.createObjectURL(item.file);previews.append(img)}
-    user.append(previews);
-  }
-  const response=makeMessage({role:'assistant',content:''});
-  if(!resumeRun)$('messages').append(user);$('messages').append(response);
-  const body=response.querySelector('.message-body');
-  const live=document.createElement('section');
-  live.className='work-stream';live.setAttribute('aria-label','Live task activity');if(state.mode!=='agent')live.classList.add('chat-stream');
-  live.innerHTML=`<button class="work-stream-heading" type="button" aria-expanded="true"><span class="work-stream-indicator"></span><b class="work-stream-title">Thinking</b><span class="work-stream-clock">0s</span><span class="work-stream-chevron">⌄</span></button><div class="work-stream-body"><ol class="work-stream-list"></ol></div>`;
-  response.append(live);
-  live.hidden=state.settings.show_progress===false;
-  const title=live.querySelector('.work-stream-title');title.setAttribute('role','status');title.setAttribute('aria-live','polite');const setTitle=value=>{if(title.textContent!==value)title.textContent=value};
-  const list=live.querySelector('.work-stream-list');
-  const clock=live.querySelector('.work-stream-clock');
-  const wrap=live.querySelector('.work-stream-body');
-  const timeline=[];let droppedFrom='';
-  let sources=[],began=performance.now()-(resumeRun?.created?Math.max(0,Date.now()-resumeRun.created*1000):0),done=false,recovered=false,codeReport=null;
-  live.querySelector('.work-stream-heading').onclick=()=>{wrap.hidden=!wrap.hidden;live.querySelector('.work-stream-heading').setAttribute('aria-expanded',String(!wrap.hidden))};
-  const elapsed=setInterval(()=>{if(!done)clock.textContent=Math.max(0,Math.round((performance.now()-began)/1000))+'s'},1000);
-  function add(stage,label,info='',url=''){
-    if(!label)return;
-    const prev=timeline[timeline.length-1];
-    if(prev&&prev.label===label&&prev.detail===info)return;
-    const row={stage,label,detail:info,url};timeline.push(row);
-    if(timeline.length>48)timeline.shift();
-    const lastDone=list.lastElementChild?.querySelector('strong');if(lastDone)lastDone.textContent=finishedStep(lastDone.textContent);
-    const li=el('li','work-stream-step'),dot=el('span','work-step-mark'),details=el('div','work-step-content');
-    // Details stay one tap away. Anything the person must act on stays visible.
-    if(stage==='recovery'||stage==='connection'||label==='Run failed')li.classList.add('open');
-    if(info||url)li.onclick=event=>{if(event.target.tagName!=='A')li.classList.toggle('open')};
-    details.append(el('strong','',label));
-    if(info)details.append(el('small','',info));
-    if(url&&/^https?:\/\//i.test(url)){const a=el('a','work-step-link','Source');a.href=url;a.target='_blank';a.rel='noopener noreferrer';details.append(a)}
-    li.append(dot,details);list.append(li);
-    while(list.children.length>12)list.firstElementChild.remove();
-    [...list.children].forEach((node,i)=>node.classList.toggle('is-current',i===list.children.length-1&&!done));
-    clock.textContent=Math.round((performance.now()-began)/1000)+'s';
-  }
-  scrollThread();
-  let nextFrame=0,dirty=false, metrics=null,painted=0;
-  const render=()=>{dirty=false;body.style.whiteSpace='pre-wrap';if(state.stream.length>painted)body.append(document.createTextNode(state.stream.slice(painted)));painted=state.stream.length;if(state.codeWorkspace?.body===body&&$('codeWorkspaceEditor').hidden&&$('codeWorkspacePreview').hidden){updateCodeWorkspace(body,state.codeWorkspace.index)}scrollThread()};
-  try{
-    const options={session_id:sid,prompt,mode:state.mode,model:state.model,reasoning:state.reasoning,
-      effort:state.effort,speed:state.speed,autocontinue:true,
-      polish:state.settings.refine_reports===true,passes:state.settings.autonomy_passes||8,luna_member:state.lunaMember||'luna',
-      attachments:attached.map(({kind,name,text,data})=>({kind,name,text,data}))};
-    for await(const ev of JannaRuns.subscribe(options,state.token,(connection,runId,detail)=>{
-      if(runId)state.runId=runId;
-      if(connection==='reconnecting'&&!droppedFrom){droppedFrom=title.textContent;setTitle('Reconnecting to your PC')}
-      else if(connection==='connected'&&droppedFrom){setTitle(droppedFrom);droppedFrom=''}
-    },resumeRun?.id)){
-        state.runId=ev.run_id;
-        switch(ev.type){
-          case 'start':window.lunaSetState?.(ev.mode==='agent'?'coding':'thinking');setTitle(ev.mode==='agent'?'Working':'Thinking');break;
-          case 'progress':
-            window.lunaSetState?.(ev.stage==='research'?'researching':ev.stage==='verification'?'checking':'thinking');
-            setTitle(ev.message||'Working');
-            if(ev.message)add(ev.stage,ev.message);break;
-          case 'specialization':
-            // Expertise is already provided to the model. Do not clutter chat with internal plumbing.
-            break;
-          case 'reasoning':{
-            // ChatGPT-style: reasoning shows as an activity status in the chain,
-            // never as raw model text.
-            setTitle('Thinking');add('analysis','Thinking through the problem');break}
-          case 'reasoning_activity':
-            setTitle('Thinking');add('analysis','Thinking through the problem');break;
-          case 'sources':
-            window.lunaSetState?.('researching');sources=ev.sources||[];
-            {
-              const descriptors={live_leads:'Live source leads; content still needs verification',stale_cache:'Live search unavailable — old cached references, NOT current',local_only:'Local source matches only; external sources unavailable',unavailable:'No research leads available; answer from known material only'};
-              const freshness=ev.freshness||'unavailable';
-              // One line, like every other finished action. The answer carries the source links.
-              const names=sources.slice(0,6).map(src=>`${src.stale?'Old: ':''}${src.title}`).join(' · ');
-              add('research',sources.length?`Checked ${sources.length} ${sources.length===1?'source':'sources'}`:'Found no sources',[descriptors[freshness]||'',names].filter(Boolean).join(' — '));
-            }
-            break;
-          case 'delta':window.lunaSetState?.('writing');state.stream+=ev.text||'';dirty=true;setTitle('Writing');break;
-          case 'cycle':setTitle(ev.goal?`Goal step ${ev.index}`:'Working');if(ev.goal)add('implementation',title.textContent,'Working within the original goal deadline');else if(ev.index>1)add('implementation','Started another pass on the work',`Pass ${ev.index} of at most ${ev.total}`);break;
-          case 'activity':
-            window.lunaSetState?.('coding');state.events.push(ev.activity);if(state.events.length>300)state.events.shift();
-            add(ev.activity.kind==='error'?'verification':'implementation',ev.activity.title||'Tool activity',ev.activity.detail||ev.activity.status||'');break;
-          case 'diagnostic':state.events.push({title:'Technical report',detail:ev.text,status:'notice'});add('verification','Technical diagnostic',ev.text);break;
-          case 'first_token':break;
-          case 'metrics':metrics=ev;break;
-          case 'notice':add('overview',ev.message||'Notice');break;
-          case 'model_used':if(ev.fallback)add('overview','Model recovery',`Continued with installed model ${modelLabel(ev.model)}`);break;
-          case 'code_validation':codeReport=ev.report;if(ev.report?.errors?.length)add('verification','Code review',ev.report.errors.length+' issues to inspect');else if(ev.report?.warnings?.length)add('verification','Partially verified',ev.report.warnings.join(' · '));else if(ev.report?.checked)add('verification','Syntax check','Syntax checks passed; build and runtime unverified');break;
-          case 'completion_verification':add('verification','Completion checks · '+ev.report.status,ev.report.message||'Inspect the recorded task results');break;
-          case 'polishing':setTitle('Improving the final explanation');add('verification','Refining the report','Original technical evidence is preserved');break;
-          case 'input_accepted':case 'input_queued':add('input',ev.message);api('/api/session/'+sid).then(s=>renderQueuedInputs(s.inputs||[])).catch(()=>{});break;
-          case 'stop_requested':state.stopRequested=true;updateBusy();setTitle('Stopping…');break;
-          case 'recovery':done=true;recovered=true;if(dirty)render();setTitle('Outcome unknown');add('recovery','Recovery required',ev.message);toast(ev.message,12000);break;
-          case 'error':done=true;setTitle('Run failed');add('verification','Run failed',ev.message);toast(ev.message||'Task failed');break;
-          case 'cancelled':case 'stopped':state.stopRequested=true;setTitle('Stopped');break;
-          case 'done':
-            done=true;state.stream=ev.text||state.stream;sources=ev.sources||sources;voiceSpeak(state.stream);
-            {
-              const selection=window.getSelection();
-              const preserveSelection=selection&&!selection.isCollapsed&&response.contains(selection.anchorNode);
-              const isChatRun=options.mode!=='agent';
-              const secs=Math.max(1,Math.round((performance.now()-began)/1000));
-              const activity=isChatRun&&timeline.length?{steps:timeline.map(t=>t.label),seconds:secs}:null;
-              const finished=makeMessage({role:'assistant',content:state.stream,original:ev.original,status:ev.status,status_origin:ev.status_origin,refusal_origin:ev.refusal_origin,polished:ev.polished,metrics:ev.metrics,code_validation:ev.code_validation||codeReport,code_repaired:ev.code_repaired,evidence:ev.evidence,completion_verification:ev.completion_verification,sources,research_freshness:ev.research_freshness,research_note:ev.research_note,model_used:ev.model_used,activity});
-              if(timeline.length){setTitle(ev.run_state==='stopped'?'Stopped':ev.run_state==='blocked'?'Work blocked':isChatRun?`Thought for ${fmtDur(secs)}`:'Activity');clock.textContent=timeline.length+' steps';live.classList.add('is-done');[...list.children].forEach(n=>n.classList.remove('is-current'));wrap.hidden=true;if(!preserveSelection&&!activity)finished.append(live);}
-              if(preserveSelection){if(dirty)render();}
-              else {response.replaceWith(finished);const code=finished.querySelector('.message-body');if(codeByBody.get(code)?.length&&window.innerWidth>=1150)openCodeFromBody(code,0);}
-            }
-            break;
-        }
-        if(dirty&&performance.now()-nextFrame>55&&!done){nextFrame=performance.now();render()}
-    }
-    if(dirty&&!done)render();
-    if(!done)throw new Error('Connection lost; the run outcome is unknown. Reopen this conversation to reconcile.');
-  }catch(e){toast(e.message);if(dirty)render();setTitle('Connection lost · outcome unknown');add('connection','Outcome unknown',e.message);live.append(button('Reconnect to saved run',()=>{state.busy=false;send({id:state.runId})}));}
-  finally{
-    window.lunaSetState?.(done&&!recovered&&!state.stopRequested?'done':'idle');
-    clearInterval(elapsed);state.busy=false;updateBusy();
-    try{await refreshBootstrap()}catch{}
-    if(done&&!recovered&&state.session===sid&&window.getSelection()?.isCollapsed){try{const s=await api('/api/session/'+encodeURIComponent(sid));state.events=s.events||state.events;renderConversation(s);$('conversationLabel').textContent=s.title||'New chat'}catch{}}
-    scrollThread();
-  }
-}
-async function stop(){
-  if(!state.session||state.stopRequested)return;
-  if(!state.runId)return toast('Waiting for the server to identify this run. Stop will be available once accepted.');
-  state.stopRequested=true;updateBusy();
-  try{const receipt=await api('/api/stop',{session_id:state.session,run_id:state.runId});toast(receipt.message);if(!receipt.stop_requested){state.stopRequested=false;updateBusy()}}
-  catch(e){state.stopRequested=false;updateBusy();toast('Stop request failed: '+e.message+'. You can retry.');}
-}
-function renderContent(){
-  const view=state.view,heading=$('contentHeading'),body=$('contentBody');
-  const titles={
-    projects:['Projects','Choose a real checkout to investigate, edit, build and verify.'],
-    models:['Models','Janna Pro 1.1, Janna Lite 1.1, and other installed models.'],
-    knowledge:['Knowledge','Janna Pro’s engineering playbooks, reference sources, and reviewed lessons.'],
-    research:['Research','Find live source references, implementation examples, and local code matches.'],
-    plugins:['Plugins','Connect tools to your workspace. Changes and deployments require explicit project scope.']
+  const inline = s => {
+    const saved = [];
+    const protect = html => { const id = saved.length; saved.push(html); return `\uE010${id}\uE011`; };
+    const styled = s.replace(/`([^`]+)`|\[([^\]\n]+)\]\((https?:\/\/[^\s<>"()]+)\)/g, (_, code, label, url) =>
+      protect(code !== undefined ? `<code>${code}</code>` : `<a href="${url}" target="_blank" rel="noopener noreferrer">${label}</a>`))
+      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/\*([^*]+)\*/g, '<em>$1</em>');
+    return styled.replace(/\uE010(\d+)\uE011/g, (_, id) => saved[Number(id)] || '');
   };
-  const [name,lead]=titles[view]||['Workspace',''];
-  heading.innerHTML=`<h1>${escapeHTML(name)}</h1><p class="content-lead">${escapeHTML(lead)}</p>`;
-  body.replaceChildren();
-  if(view==='projects')renderProjectsPanel(body);
-  else if(view==='models')renderModelsPanel(body);
-  else if(view==='knowledge')renderKnowledgePanel(body);
-  else if(view==='research')renderResearchPanel(body);
-  else if(view==='plugins')renderPluginsPanel(body);
+  const out = [], paragraph = [], items = [];
+  function flush() { if (paragraph.length) { out.push('<p>' + paragraph.map(inline).join('<br>') + '</p>'); paragraph.length = 0; } if (items.length) { out.push('<ul>' + items.map(v => '<li>' + inline(v) + '</li>').join('') + '</ul>'); items.length = 0; } }
+  const tables = [];
+  const splitCells = r => { let s = r.trim(); if (s.startsWith('|')) s = s.slice(1); if (s.endsWith('|')) s = s.slice(0, -1); return s.split('|').map(c => c.trim()); };
+  const isSep = r => { if (!r.includes('-')) return false; const cells = splitCells(r); return cells.length > 0 && cells.every(c => /^:?-{1,}:?$/.test(c)); };
+  for (let li = 0; li < lines.length; li++) {
+    const row = lines[li];
+    if (row.includes('|') && li + 1 < lines.length && isSep(lines[li + 1])) {
+      const head = splitCells(row); const bodyRows = [];
+      let lj = li + 2;
+      while (lj < lines.length && lines[lj].includes('|') && lines[lj].trim()) { bodyRows.push(splitCells(lines[lj])); lj++; }
+      const th = head.map(c => `<th>${inline(c)}</th>`).join('');
+      const tb = bodyRows.map(r => '<tr>' + head.map((_, ci) => `<td>${inline(r[ci] || '')}</td>`).join('') + '</tr>').join('');
+      tables.push(`<div class="md-table-wrap"><table class="md-table"><thead><tr>${th}</tr></thead><tbody>${tb}</tbody></table></div>`);
+      lines.splice(li, lj - li, `\uE002${tables.length - 1}\uE003`);
+    }
+  }
+  for (const row of lines) {
+    if (!row.trim()) { flush(); continue; }
+    if (/^\uE000\d+\uE001$/.test(row)) { flush(); out.push(row); continue; }
+    if (/^\uE002\d+\uE003$/.test(row)) { flush(); out.push(row); continue; }
+    const heading = row.match(/^(#{1,3})\s+(.+)$/);
+    if (heading) { flush(); const level = Math.min(3, heading[1].length + 1); out.push(`<h${level}>${inline(heading[2])}</h${level}>`); continue; }
+    const item = row.match(/^\s*[-*]\s+(.+)$/);
+    if (item) { if (paragraph.length) flush(); items.push(item[1]); continue; }
+    if (items.length) flush(); paragraph.push(row);
+  }
+  flush();
+  const html = out.join('').replace(/\uE000(\d+)\uE001/g, (_, id) => {
+    const block = blocks[Number(id)]; if (!block) return '';
+    const label = languageLabel(block.language);
+    const isHtml = ['html', 'htm'].includes(block.language);
+    const extra = isHtml
+      ? `<button type="button" class="code-action" data-code-action="preview" data-code-index="${id}" title="Preview this page">Preview</button><button type="button" class="code-action" data-code-action="save" data-code-index="${id}" title="Save to Library">Save</button>`
+      : '';
+    return `<section class="code-block" data-code-index="${id}"><div class="code-block-header"><span class="code-language">${escapeHTML(label)}</span><span class="code-block-actions"><button type="button" class="code-action" data-code-action="copy" data-code-index="${id}" title="Copy this code">Copy</button>${extra}</span></div><pre tabindex="0"><code>${highlightCode(block.code, block.language)}</code></pre></section>`;
+  }).replace(/\uE002(\d+)\uE003/g, (_, id) => tables[Number(id)] || '');
+  return { html, blocks };
+}
+function renderMarkdown(body, value) { const result = formatMarkdown(value); body.innerHTML = result.html; codeByBody.set(body, result.blocks); return result; }
+function codeFileName(language) {
+  const extension = ({ html: 'html', htm: 'html', js: 'js', mjs: 'mjs', jsx: 'jsx', ts: 'ts', tsx: 'tsx', css: 'css', json: 'json', py: 'py', python: 'py', cs: 'cs', cpp: 'cpp', c: 'c', rs: 'rs', go: 'go', sh: 'sh' }[language] || 'txt');
+  return 'janna-code.' + extension;
 }
 
-function el(tag,cls,text){const e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e}
-function button(text,click,kind='text-btn'){const b=el('button',kind,text);b.type='button';b.onclick=click;return b}
-function section(parent,title){const h=el('h3','section-title',title);h.style.margin='30px 0 12px';parent.append(h)}
-function renderProjectsPanel(root){const add=button('Add project',openProjectDialog,'action-btn');root.append(add);if(!state.projects.length){const p=el('p','muted','No projects selected yet. Add the exact folder containing your current source checkout.');root.append(p)}const grid=el('div','cards');grid.style.marginTop='20px';for(const p of state.projects){const card=el('div','card'),title=el('h3','',p.name),desc=el('p','',p.path),row=el('div','form-row');row.append(button('Open project',()=>{state.project=p.id;$('workspaceLabel').textContent=p.name;newSession(p.id)}),button('Inspect project',()=>showProjectDetail(p.id)));card.append(title,desc,row);if(state.project===p.id)card.append(el('span','pill','Current project'));grid.append(card)}root.append(grid);section(root,'Connected services');const con=el('div','cards');con.id='services';con.innerHTML='<div class="card"><h3>GitHub</h3><p>Checking authorization…</p></div><div class="card"><h3>Figma</h3><p>Checking configuration…</p></div>';root.append(con);api('/api/connections').then(r=>{con.replaceChildren();for(const [key,label] of [['github','GitHub'],['figma','Figma']]){const data=r[key]||{};const card=el('div','card');card.append(el('h3','',label),el('p','',data.connected?'Connected':(data.status||'Not connected')));if(data.repository)card.append(el('p','code-inline',data.repository));if(data.pull_requests?.length)for(const pr of data.pull_requests)card.append(el('p','',`#${pr.number} · ${pr.title}`));con.append(card)}}).catch(()=>{});section(root,'Computer and emulator controls');const row=el('div','card');row.append(el('h3','','Project applications'),el('p','','Launch an application from your selected project and stop only that process. Nothing outside the project can be launched.'));const input=el('input','inline-input');input.placeholder='relative/path/to/Emulator.exe';input.id='exeRelative';input.style.width='100%';row.append(input);row.append(button('Launch application',async()=>{if(!state.project)return toast('Select a project');try{await api('/api/process/start',{project_id:state.project,path:input.value});toast('Application started.');showProjectDetail(state.project)}catch(e){toast(e.message)}},'action-btn'));row.append(button('Show running applications',()=>openDrawer('processes')));root.append(row);section(root,'Verification');const testBox=el('div','card');testBox.append(el('h3','','Build and test'),el('p','','Janna can run the build and regression suite for your selected checkout. It records actual output and does not treat a successful compile as proof of gameplay.'));testBox.append(button('Run project tests',()=>{setMode('agent');$('prompt').value='Inspect the current repository, identify its documented regression test command, execute it, and report the exact results. Do not modify unrelated code.';showView('chats');$('prompt').focus()},'action-btn'));root.append(testBox)}
-async function showProjectDetail(id){state.project=id;const p=selectedProject();if(!p)return;openDrawer('project');let target=$('drawerBody');target.replaceChildren();target.append(el('p','',p.path));try{const snap=await api('/api/project/status/'+id);for(const [key,label] of [['branch','Branch'],['head','Commit'],['modified_count','Modified files']])target.append(el('p','',`${label}: ${snap[key]??'Not available'}`));const procs=await api('/api/processes');for(const item of procs.processes||[]){if(item.project_id!==id)continue;const row=el('div','list-row');row.append(el('strong','',`${item.name} · PID ${item.pid}`),button('Stop',async()=>{try{await api('/api/process/stop',{process_id:item.id});toast('Process stopped.');showProjectDetail(id)}catch(e){toast(e.message)}}));target.append(row)}}catch(e){target.append(el('p','muted',e.message))}}
-function renderModelsPanel(root){
-  const ready=!!state.pro?.installed, lite=!!(state.pro?.installed_lite||state.pro?.installed_lite);
-  const lightweightSelected=lite&&(!ready||/^janna-lite-1\.0|^janna-lite-1\.0/.test(state.model));
-  const feature=el('div','card pro-hero');feature.append(el('span','eyebrow','JANNA INTELLIGENCE'),el('h2','',lightweightSelected?'Janna Lite 1.1':'Janna Pro 1.1'));
-  feature.append(el('p','',lightweightSelected?'A lighter local engineering model for 8 GB GPUs, with smaller context and memory budgets.':'Your local engineering model for emulator design, graphics, JITs, decompilation, and tested coding workflows.'));
-  feature.append(el('span','pill',ready?'Ready on this PC':lite?'Janna Lite 1.1 ready':'Setup required'));
-  if(!ready && !lite){
-    if(window.__JANNA_WEB__){
-      feature.append(el('p','muted','This web version uses cloud models — no installation needed. Pick a model on the chat screen and start asking. Local Janna Pro 1.1 / Janna Lite 1.1 setup belongs to the desktop app.'));
-    }else{
-    feature.append(el('p','muted',state.pro?.base_installed?
-      'The model weights are already present. Finish setting up Janna Pro below.':
-      'No model installed yet. Janna can install the official local runtime, model weights and coding tools on this Windows PC—no paid API required.'));
-    if(state.remote){feature.append(el('p','muted','Model installation is available only from the Windows desktop. Open Janna on your PC to complete setup.'));}
-    else{
-      const actions=el('div','form-row');
-      const install=button('Set up Janna Pro 1.1',async()=>{
-        if(!confirm('Set up Janna Pro 1.1 on this Windows PC? The first run downloads roughly 8.3 GB of model weights plus official local tools. This uses disk space and internet data, but no paid model API.'))return;
-        install.disabled=true;
-        try{await api('/api/setup/start',{lightweight:false,skip_coding_agent:false});toast('Setting up Janna Pro. You can follow the progress below.');watchSetup(progress,install)}
-        catch(e){install.disabled=false;toast(e.message,12000)}
-      },'action-btn');
-      const small=button('Use a lighter model',async()=>{
-        if(!confirm('Install the smaller Janna Lite 1.1 profile instead? It uses a smaller 9B base and will not have the same capability as the recommended Janna Pro 1.1.'))return;
-        small.disabled=true;
-        try{await api('/api/setup/start',{lightweight:true,skip_coding_agent:false});watchSetup(progress,small)}
-        catch(e){small.disabled=false;toast(e.message,12000)}
-      });
-      actions.append(install,small);feature.append(actions);
-      const progress=el('pre','setup-progress','Checking setup status…');feature.append(progress);
-      watchSetup(progress);
-    }
-    }
-  }else{
-    const name=ready?'janna-pro-1.0':(state.pro?.installed_lite?'janna-lite-1.0':'janna-lite-1.0');
-    feature.append(button('Use '+(ready?'Janna Pro 1.1':'Janna Lite 1.1'),()=>{
-      chooseModel(state.models.find(m=>m===name||m.startsWith(name+':'))||state.model);showView('chats');
-    },'action-btn'));
-  }
-  root.append(feature);
-  section(root,'Installed models');
-  root.append(button('Refresh model status',async()=>{await refreshBootstrap();renderContent()}));
-  const grid=el('div','cards');
-  for(const id of state.models){
-    const row=modelRecord(id);const card=el('div','card');card.append(el('h3','',row.label),el('p','',row.note||'Installed on this PC.'));
-    if(id===state.model)card.append(el('span','pill','Selected'));
-    else card.append(button('Select',()=>{chooseModel(id);showView('chats')}));grid.append(card)
-  }
-  root.append(grid);
-  if(!state.models.length)root.append(el('p','muted','No local model is ready. Complete setup above; model downloads can be resumed if interrupted.'));
-  section(root,'Add a local model');
-  root.append(el('p','muted','One click downloads a model from the local registry onto this PC. Janna Pro 1.1 and Janna Lite 1.1 stay the Janna profiles. Cline can use the same installed model when it is pointed at Ollama on this computer.'));
-  const library=el('div','cards');
-  for(const item of state.library||[]){
-    const card=el('div','card');
-    card.append(el('h3','',item.label),el('p','',item.note),el('p','',item.fit));
-    if(item.installed)card.append(el('span','pill','Installed'));
-    else card.append(button('Install',()=>installLibraryModel(item),'action-btn'));
-    library.append(card);
-  }
-  root.append(library);
-  section(root,'Cline');
-  const cline=el('div','card');
-  cline.append(el('h3','','Cline command'),el('p','','Cline is a separate coding app. Installing it does not replace OpenCode, and Janna Work mode still uses OpenCode with Janna Pro or Janna Lite.'));
-  if(state.clineInstalled)cline.append(el('span','pill','Installed'),el('p','muted','Run cline auth and choose Ollama at http://127.0.0.1:11434 to use a model installed here.'));
-  else cline.append(button('Install Cline',installCline,'action-btn'),el('p','muted','Requires Node.js npm. After install, run cline auth and choose Ollama. No API key is stored by this button.'));
-  root.append(cline);
-  const progress=el('pre','setup-progress','');progress.id='libraryProgress';progress.hidden=true;root.append(progress);
-  const info=el('p','muted','Janna Pro 1.1 is an engineering-specialized profile derived from separately downloaded upstream weights, not independently trained weights. Source attribution is available in the release documentation.');
-  info.style.marginTop='24px';root.append(info);
-}
-async function installLibraryModel(item){
-  if(!confirm(`Download ${item.label} (${item.id})?\n\n${item.fit}. ${item.note}\n\nThis uses disk space and internet data. It does not replace Janna Pro 1.1 or Janna Lite 1.1. Cline can select it if Cline uses Ollama on this PC.`))return;
-  const progress=$('libraryProgress');if(progress){progress.hidden=false;progress.textContent='Starting download…'}
-  try{await api('/api/models/install',{tag:item.id});if(progress)watchSetup(progress)}
-  catch(e){toast(e.message,12000)}
-}
-async function installCline(){
-  if(!confirm('Install the Cline command from the official npm package?\n\nCline is separate from Janna. Work mode still uses OpenCode. After install, run cline auth and choose Ollama at http://127.0.0.1:11434. This button does not save an API key.'))return;
-  const progress=$('libraryProgress');if(progress){progress.hidden=false;progress.textContent='Starting Cline install…'}
-  try{await api('/api/tools/cline/install',{});if(progress)watchSetup(progress)}
-  catch(e){toast(e.message,12000)}
-}
-async function watchSetup(target,buttonNode){
-  const alive=()=>document.body.contains(target);
-  let status;
-  try{status=await api('/api/setup/status')}catch(err){if(alive())target.textContent='Setup status unavailable: '+err.message;return}
-  if(!alive())return;
-  const latest=status.messages||[];
-  target.textContent=(status.running?'Installing…':status.state==='ready'?'Install finished.':status.state==='failed'?'Setup needs attention.':'')+'\n'+latest.slice(-13).join('\n');
-  target.scrollTop=target.scrollHeight;
-  if(status.running){setTimeout(()=>watchSetup(target,buttonNode),1500);return}
-  if(buttonNode)buttonNode.disabled=false;
-  if(status.state==='ready'){await refreshBootstrap();if(state.view==='models')renderContent()}
-}
-
-async function renderKnowledgePanel(root){
-  const summary=el('div','card');summary.append(el('span','eyebrow','JANNA PRO 1.0 / ENGINEERING LIBRARY'),el('h2','','Emulator & decomp knowledge'));
-  root.append(summary);
-  try{
-    const pack=await api('/api/expertise');
-    summary.append(el('p','',`${pack.counts.platforms} console/platform families · ${pack.counts.playbooks} engineering methods · ${pack.counts.sources} primary-source reference leads`));
-    summary.append(el('p','muted','These are versioned engineering references retrieved for relevant tasks, not model-weight training. Source facts must be checked against current code.'));
-    const search=el('input','inline-input');search.placeholder='Try: PS3 SPU DMA, Switch 2 GPU barriers, N64 decomp…';search.style.width='100%';
-    const found=el('div','knowledge-retrieval');
-    async function lookup(){
-      if(!search.value.trim())return;
-      try{const res=await api('/api/expertise/search',{query:search.value});found.replaceChildren();
-        if(!res.relevant){found.append(el('p','muted','Enter a specific emulator, GPU, CPU, or binary question.'));return}
-        found.append(el('h3','','Selected references'));
-        for(const p of [...res.platforms,...res.playbooks])found.append(el('span','pill',p.title));
-        for(const source of res.sources.slice(0,7)){const a=el('a','reference-link',source.title);a.href=source.url;a.target='_blank';a.rel='noopener noreferrer';found.append(a,el('span','muted',' — '+source.focus),el('div'))}
-      }catch(e){toast(e.message)}
-    }
-    summary.append(search,button('Find engineering methods',lookup,'action-btn'),found);
-    search.onkeydown=e=>{if(e.key==='Enter')lookup()};
-  }catch(e){summary.append(el('p','muted','Engineering catalog unavailable: '+e.message))}
-  section(root,'Personal knowledge');
-  const textarea=el('textarea','inline-input');textarea.rows=3;textarea.placeholder='Remember a preferred coding style, project convention, or workflow…';textarea.style.width='100%';
-  root.append(textarea,button('Save note',async()=>{try{await api('/api/memory',{text:textarea.value,project_id:state.project||null});toast('Note saved locally');renderContent()}catch(e){toast(e.message)}},'action-btn'));
-  const container=el('div','knowledge-items');container.style.marginTop='22px';root.append(container);
-  try{const r=await api('/api/memory');for(const m of r.items){const row=el('div','list-row'),info=el('div');info.append(el('strong','',m.text),el('p','',m.project_id?'Project-specific':'All projects'));row.append(info,button('Remove',async()=>{await api('/api/memory/delete',{id:m.id});renderContent()}));container.append(row)}if(!r.items.length)container.append(el('p','muted','No personal notes yet.'))}catch(e){container.append(el('p','muted',e.message))}
-  section(root,'Reviewed engineering lessons');
-  const lesson=el('textarea','inline-input');lesson.rows=2;lesson.placeholder='What did a real emulator test or investigation establish?';lesson.style.width='100%';
-  const evidence=el('input','inline-input');evidence.placeholder='Evidence: commit, test result, issue, or local report';evidence.style.width='100%';
-  root.append(lesson,evidence,button('Save verified lesson',async()=>{
-    if(!confirm('Save this as a user-reviewed engineering lesson? It may need re-verification later.'))return;
-    try{await api('/api/expertise/lessons/add',{text:lesson.value,evidence:evidence.value,project_id:state.project||null,reviewed:true});toast('Reviewed lesson saved');renderContent()}catch(e){toast(e.message)}
-  },'action-btn'));
-  try{const r=await api('/api/expertise/lessons');for(const x of r.lessons.slice(-12).reverse()){
-    const row=el('div','list-row'),info=el('div');info.append(el('strong','',x.text),el('p','muted',x.evidence));row.append(info,button('Delete',async()=>{await api('/api/expertise/lessons/delete',{id:x.id});renderContent()}));root.append(row)
-  }}catch(e){root.append(el('p','muted',e.message))}
-}
-
-function focusPrompt(text=''){
-  closeDrawer();showView('chats');
-  if(text){$('prompt').value=text;syncSendState()}
-  $('prompt').focus();
-}
-async function drawTools(){
-  const root=$('drawerBody');root.replaceChildren();
-  root.append(button('Verified build',()=>openDrawer('vibe'),'action-btn'),button('Janna Pro trainer',()=>openDrawer('training'),'action-btn'),button('Connect iPhone',()=>openDrawer('remote'),'action-btn'));
-  root.append(el('p','muted','Research, source exploration and coding tools are available from the same conversation. Select a project for file edits and tests.'));
-  section(root,'Active project');
-  const project=selectedProject();
-  const projectCard=el('div','card tools-card');
-  projectCard.append(el('strong','',project?.name||'No project selected'),el('p','muted',project?'Your current source checkout is available to Work mode.':'Chat works without a project. Choose one when you want Janna to edit or test actual code.'));
-  projectCard.append(button(project?'Change project':'Choose project',openProjectDialog,'action-btn'));
-  projectCard.append(button('Edit project files',()=>{setMode('agent');closeDrawer();$('prompt').focus()}));
-  if(project)projectCard.append(button('Add changes to GitHub',reviewGitHubPush));
-  root.append(projectCard);
-  root.append(el('p','muted','To add a GitHub repository link to your website, choose the website folder and describe where it belongs. Janna edits that project. Add changes to GitHub pushes an already committed feature branch through your existing Git login.'));
-  section(root,'Research & code');
-  const input=el('input','inline-input');input.placeholder='What should Janna investigate?';input.style.width='100%';
-  const go=button('Research in chat',()=>{if(!input.value.trim())return toast('Enter a research question');focusPrompt('Research and cite current sources: '+input.value.trim())},'action-btn');
-  root.append(input,go,el('p','muted','Janna researches automatically when useful. External search providers receive a short, scrubbed query—not your project files.'));
-  section(root,'Connections');
-  root.append(button('Engineering workbench',()=>openDrawer('engineering'),'text-btn'),button('GitHub and Figma',()=>openDrawer('connections'),'text-btn'),button('PC controls',()=>openDrawer('host'),'action-btn'),button('Build and test harness',()=>openDrawer('harness'),'text-btn'),button('Manage Discord bot',()=>openDrawer('bots'),'text-btn'),button('iPhone access',()=>openDrawer('remote'),'text-btn'));
-  section(root,'Free research options');
-  const status=el('div','card');root.append(status);
-  try{const keys=await api('/api/research/providers');status.append(el('p','',keys.tavily?'Free web search key connected':'No dedicated search key yet · public fallbacks are active'));
-    const tav=el('input','inline-input');tav.type='password';tav.placeholder='Tavily free API key';tav.autocomplete='off';tav.style.width='100%';
-    status.append(tav,button('Save free search key',async()=>{if(!tav.value.trim())return toast('Paste a key from your Tavily dashboard');try{await api('/api/research/providers',{provider:'tavily',key:tav.value.trim()});tav.value='';toast('Search connection saved on this PC');drawTools()}catch(e){toast(e.message)}},'action-btn'));
-    const link=el('a','reference-link','Get free search credits');link.href='https://app.tavily.com/';link.target='_blank';link.rel='noopener noreferrer';status.append(link);
-    status.append(el('p','muted','Google-grounded search is also supported as an explicit opt-in integration. It uses a hosted model and may have billing or privacy implications.'));
-    const gem=el('input','inline-input');gem.type='password';gem.placeholder='Optional Gemini API key';gem.autocomplete='off';gem.style.width='100%';
-    const opt=el('label','toggle-setting'),ck=el('input');ck.type='checkbox';ck.checked=keys.google_enabled===true;opt.append(ck,el('span','','Allow Google-grounded source lookups (sends public search queries to Google)'));
-    status.append(gem,opt,button('Save Google search preference',async()=>{try{await api('/api/research/providers',{provider:'google',key:gem.value.trim(),google_enabled:ck.checked});gem.value='';toast('Research preference updated');drawTools()}catch(e){toast(e.message)}},'text-btn'));
-  }catch(e){status.append(el('p','muted','Research connections: '+e.message))}
-}
-async function drawProfile(){
-  const root=$('drawerBody');root.replaceChildren();
-  const heading=el('div','profile-hero');
-  const mark=el('img','profile-mark');mark.src='/mark-clean.png';mark.alt='Janna logo';
-  heading.append(mark,el('div','','Choose how you use Janna'));
-  heading.lastChild.textContent='Choose how you use Janna';
-  const web=!!window.__JANNA_WEB__;
-  root.append(heading,el('p','muted',web?'Your chats and preferences stay in this browser on the web edition. Export a backup file any time, and import it here or on another device.':'Profiles identify your local workspace. Imported chats and preferences remain on this PC. Discord sign-in verifies an identity but does not upload or sync local projects.'));
-  const current=el('div','profile-current');root.append(current);
-  const reload=async()=>{const r=await api('/api/profile');current.textContent='Current: '+r.profile.label+' · '+r.profile.kind;state.profile=r.profile;$('profileName').textContent=r.profile.label;return r};
-  try{await reload()}catch(e){current.textContent=e.message}
-  section(root,'Continue');
-  const guest=button('Use as guest',async()=>{try{await api('/api/profile/select',{kind:'guest'});await reload();toast('Guest profile selected')}catch(e){toast(e.message)}},'profile-choice');
-  const win=button('Use this Windows profile',async()=>{try{await api('/api/profile/select',{kind:'windows'});await reload();toast('Windows profile selected')}catch(e){toast(e.message)}},'profile-choice');
-  const discord=button('Continue with Discord',async()=>{try{const r=await api('/api/profile/discord/start',{});if(!r.available){toast(r.message,11000);const p=el('p','muted',`Register the redirect URI in your Discord developer application: ${r.redirect_uri}`);root.append(p);return}window.open(r.url,'_blank','noopener,noreferrer');toast('Finish Discord authorization in the browser, then refresh this panel.',10000)}catch(e){toast(e.message)}},'profile-choice discord-choice');
-  if(web){root.append(guest)}else{root.append(guest,win,discord)}
-  section(root,web?'Back up or move your chats':'Transfer an existing setup');
-  root.append(el('p','muted',web?'Export saves your chats and preferences in this browser as one JSON file. Import merges it without deleting anything already here.':'Export your chats and preferences from another Janna Windows installation, then import the JSON file here. API keys, device pairing and absolute project paths are excluded.'));
-  const upload=el('input','profile-upload');upload.type='file';upload.accept='.json,application/json';upload.hidden=true;
-  upload.onchange=async()=>{const file=upload.files?.[0];if(!file)return;if(file.size>999999)return toast('Profile must be under 1 MB');if(!web&&!window.confirm('Import conversations and preferences from this selected file? Current conversations will be preserved.'))return;
-    try{const payload=JSON.parse(await file.text());const r=await api('/api/profile/import',payload);toast(`Imported ${r.imported.conversations} conversations and ${r.imported.notes} notes`);await refreshBootstrap();await reload()}catch(e){toast(e.message,11000)}finally{upload.value=''}};
-  root.append(button(web?'Import profile':'Import Windows profile',()=>upload.click(),'action-btn'),upload);
-  root.append(button('Export this profile',async()=>{try{const data=await api('/api/profile/export');const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));const a=el('a');a.href=url;a.download='janna_profile.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),5000)}catch(e){toast(e.message)}},'text-btn'));
-}
-function openDrawer(kind){const box=$('drawer');box.hidden=false;box.dataset.kind=kind;const title={tools:'Tools & connections',profile:'Your profile',harness:'Test harness',host:'PC controls',settings:'Settings',companion:'Your companion',activity:'Activity',connections:'Connections',project:'Project details',processes:'Running applications',bots:'Discord bot',remote:'iPhone access',training:'Janna Pro trainer',vibe:'Verified build',engineering:'Engineering tools'};const k={tools:'WORKSPACE',profile:'JANNA ACCOUNT',harness:'VERIFICATION',host:'WINDOWS HOST',settings:'JANNA',companion:'COMPANION',activity:'WORKSPACE',connections:'INTEGRATIONS',project:'LOCAL PROJECT',processes:'WINDOWS',bots:'AUTOMATION',remote:'PRIVATE ACCESS',vibe:'JANNA PRO',engineering:'EVIDENCE WORKBENCH'};$('drawerTitle').textContent=title[kind]||'Workspace';$('drawerKicker').textContent=k[kind]||'JANNA';$('drawerBody').replaceChildren();switch(kind){case 'training':return drawTraining();case 'vibe':return window.drawVibe();case 'engineering':return drawEngineering();case 'tools':return drawTools();case 'profile':return drawProfile();case 'harness':return drawHarness();case 'host':return drawHostControls();case 'settings':return drawSettings();case 'companion':return drawCompanion();case 'activity':return drawActivity();case 'connections':return drawConnections();case 'processes':return drawProcesses();case 'bots':return drawBots();case 'remote':return drawRemote();case 'project':return;}}
-function closeDrawer(){$('drawer').hidden=true}
-function legacyDrawSettings(){const root=$('drawerBody');root.append(el('p','','The appearance and personality are yours to customize. Model infrastructure remains behind the scenes.'));section(root,'Appearance');const grid=el('div','theme-grid');const samples={rose:['#fce9f2','#fff8fb'],velvet:['#1d1119','#241722'],porcelain:['#f1f0ec','#fbfaf8'],pro:['#181d21','#1f2326'],sakura:['#f6ecee','#fffaf8'],matcha:['#eaf0e4','#f8f9f2'],indigo:['#eaeaf3','#f8f8fc'],midnight:['#121722','#161a24']};for(const [name,palette] of Object.entries(samples)){const b=button(name[0].toUpperCase()+name.slice(1),async()=>{await persistSettings({theme:name});drawSettings()},'theme-option'+((state.settings.theme||'rose')===name?' selected':''));const swatch=el('span','theme-swatch');swatch.style.setProperty('--sample-side',palette[0]);swatch.style.setProperty('--sample-main',palette[1]);b.prepend(swatch);grid.append(b)}root.append(grid);section(root,'Personality');const select=el('select','inline-input');for(const name of ['precise','friendly','technical','concise'])select.add(new Option(name[0].toUpperCase()+name.slice(1),name));select.value=state.settings.personality||'precise';select.onchange=()=>persistSettings({personality:select.value});root.append(select);section(root,'Responses');const refine=el('label','toggle-setting');const check=el('input');check.type='checkbox';check.checked=state.settings.refine_reports!==false;check.onchange=async()=>{await persistSettings({refine_reports:check.checked});toast(check.checked?'Final coding reports are refined locally in Standard speed.':'Extra local rewriting is disabled.')};refine.append(check,el('span','','Refine final coding reports with a second local pass'));root.append(refine,el('p','muted','Improves clarity without claiming unverified results. Boost skips the extra pass to protect response speed.'));section(root,'Reasoning');root.append(el('p','',`Active workflow depth: ${state.effort}. Adjust it in the message composer.`));const native=el('select','inline-input');for(const level of state.nativeLevels){native.add(new Option(level==='default'?'Automatic native reasoning':String(level).toUpperCase(),String(level)))}native.value=String(state.reasoning);native.onchange=()=>{state.reasoning=native.value;toast('Native reasoning preference updated')};root.append(native);root.append(el('p','',`These native thinking controls apply to Chat. Coding tasks use the model's verified provider defaults, plus the selected work depth and regression checks.`));section(root,'Integrations & devices');root.append(button('Private iPhone access',()=>openDrawer('remote')),button('GitHub and Figma',()=>openDrawer('connections')),button('Discord bot',()=>openDrawer('bots')));section(root,'Autonomous coding');root.append(el('p','', 'Janna works across successive verified passes until the objective is complete, blocked, stopped, or reaches your safety limit.'));const loops=el('select','inline-input');for(const n of [4,8,12])loops.add(new Option(`${n} passes maximum`,String(n)));loops.value=String(state.settings.autonomy_passes||8);loops.onchange=()=>persistSettings({autonomy_passes:Number(loops.value)});root.append(loops);section(root,'Advanced');root.append(el('p','',`Autonomous work uses explicit project boundaries and a Stop control. Protect your source with commits and backups before large changes.`));}
-async function persistSettings(partial){try{const r=await api('/api/settings',partial);state.settings=r.settings;document.body.dataset.theme=state.settings.theme||'rose';localStorage.setItem('janna-theme',document.body.dataset.theme);syncDesktopChrome();refreshResearchSwitch()}catch(e){toast(e.message)}}
-async function drawCompanion(){if(window.drawLuna)return window.drawLuna();const root=$('drawerBody');const badge=el('div','card');badge.append(el('h3','','Janna is here'),el('p','','Your companion watches registered projects for changes without consuming GPU inference while idle. It can keep project notes and report activity when you return.'));root.append(badge);section(root,'Project activity');try{const r=await api('/api/companion');for(const a of (r.events||[]).slice(0,18)){const row=el('div','list-row');row.append(el('strong','',a.text),el('small','muted',new Date(a.time*1000).toLocaleString()));root.append(row)}if(!r.events?.length)root.append(el('p','muted','Everything is quiet. Add a project to begin watching changes.'))}catch(e){root.append(el('p','muted',e.message))}section(root,'Automations');root.append(button('Manage Discord bot',()=>openDrawer('bots')),button('View agent activity',()=>openDrawer('activity')))}
-window.noteEngineering=function(event){if(!event?.name)return;const key=event.name+'|'+event.title+'|'+(event.time||'');if(window.noteEngineering.seen?.has(key))return;(window.noteEngineering.seen||=new Set()).add(key);state.events.push({title:event.title,status:event.name,detail:event.detail||''});if(state.events.length>300)state.events.shift();const msgs=$('messages');if(!msgs||msgs.hidden)return;const row=el('div','saved-activity-row');row.append(el('strong','',event.title),el('small','muted',event.name));msgs.append(row);scrollThread()};
-function drawActivity(){const root=$('drawerBody');root.append(el('p','',state.busy?'Janna is actively working. Tool results appear as the coding agent reports them.':'Recent execution evidence from this conversation.'));const list=el('ol','drawer-events');for(const ev of state.events.slice(-80).reverse()){const li=el('li');li.append(el('b','',ev.title||'Activity'),el('small','',`${ev.status||'Recorded'}${ev.tool?' · '+ev.tool:''}`));if(ev.detail||ev.output){const det=el('details'),sum=el('summary','', 'Technical evidence'),pre=el('pre','',[ev.detail,ev.output].filter(Boolean).join('\n\n'));det.append(sum,pre);li.append(det)}list.append(li)}if(!state.events.length)root.append(el('p','muted','No agent actions in this conversation yet.'));root.append(list)}
-async function drawConnections(){const root=$('drawerBody');root.append(el('p','','Janna uses the GitHub and Figma accounts already authenticated on this computer. It does not copy credentials into your chats.'));try{const c=await api('/api/connections');for(const [key,name] of [['github','GitHub'],['figma','Figma']]){const x=c[key]||{};const card=el('div','card');card.style.marginBottom='12px';card.append(el('h3','',name),el('p','',x.connected?'Connected':(x.status||'Not connected')));if(x.repository)card.append(el('span','code-inline',x.repository));root.append(card)}}catch(e){root.append(el('p','',e.message))}root.append(button('Sign in to GitHub',async()=>{try{const r=await api('/api/connections/sign-in',{provider:'github'});toast(r.message||'Continue sign-in in the new Windows window.')}catch(e){toast(e.message)}},'action-btn'));root.append(button('Sign in to Figma',async()=>{try{await persistSettings({figma_enabled:true});const r=await api('/api/connections/sign-in',{provider:'figma',model:state.model});toast(r.message||'Complete Figma sign-in in the Windows sign-in window.')}catch(e){toast(e.message)}},'action-btn'));root.append(button('Enable Figma for coding tasks',async()=>{try{await persistSettings({figma_enabled:true});toast('Figma integration enabled for new agent runs. Complete your Figma sign-in when prompted.')}catch(e){toast(e.message)}},'action-btn'));root.append(el('p','','Figma access requires an authenticated MCP connection. GitHub access uses your existing GitHub authorization.'))}
-async function drawProcesses(){const root=$('drawerBody');root.append(el('p','','Only applications explicitly launched by Janna can be stopped here.'));try{const result=await api('/api/processes');for(const p of result.processes||[]){const row=el('div','list-row');row.append(el('strong','',`${p.name} · PID ${p.pid}`));row.append(button('Stop',async()=>{await api('/api/process/stop',{process_id:p.id});drawProcesses()}));root.append(row)}if(!result.processes?.length)root.append(el('p','muted','No Janna-managed applications are running.'))}catch(e){root.append(el('p','muted',e.message))}}
-async function drawBots(){const root=$('drawerBody');if(!state.project){root.append(el('p','', 'Choose the project containing your Discord bot first.'));root.append(button('Choose project',openProjectDialog));return}root.append(el('p','',`Current project: ${selectedProject()?.name||'Project'}. Bot credentials must remain in your own environment variables, never in Janna's configuration.`));const input=el('input','inline-input');input.placeholder='bot.py or src/bot.js';input.id='botEntry';root.append(input);const checks=el('div','form-row');const startOn=el('input');startOn.type='checkbox';startOn.id='botAuto';const label=el('label','', 'Start when Janna starts');label.prepend(startOn);checks.append(label);root.append(checks);root.append(button('Save bot setup',async()=>{try{await api('/api/bots/configure',{project_id:state.project,script:input.value,autostart:startOn.checked,autorestart:true});toast('Bot configuration saved');drawBots()}catch(e){toast(e.message)}},'action-btn'));root.append(button('Start bot',async()=>{try{await api('/api/bots/start',{project_id:state.project});toast('Bot started');drawBots()}catch(e){toast(e.message)}}),button('Stop bot',async()=>{try{await api('/api/bots/stop',{project_id:state.project});toast('Bot stopped');drawBots()}catch(e){toast(e.message)}}));try{const r=await api('/api/bots');for(const b of r.bots||[]){if(b.project_id!==state.project)continue;root.append(el('p','code-inline',`${b.script} · ${b.running?'Running':'Stopped'}`));root.append(button('View bot log',async()=>{try{const log=await api('/api/bots/log/'+encodeURIComponent(state.project));const pre=el('pre','raw-panel',log.text||'No output');root.append(pre)}catch(e){toast(e.message)}}))}}catch(e){root.append(el('p','muted',e.message))}}
-async function drawRemote(){
- const root=$('drawerBody');root.replaceChildren();
- root.append(el('h3','','Connect your iPhone'),el('p','','Pair once. Janna remembers your phone and reconnects when Safari returns or the network changes. Keep this PC awake and signed in, with Tailscale connected on both devices.'));
- if(state.remote){root.append(el('p','','You are using the private phone connection. Manage pairing and setup on your PC.'));return;}
- const check=el('div','card');root.append(check);
- try{const status=await api('/api/remote/status');check.append(el('p','',status.message));
-  if(status.url){const link=el('a','code-inline',status.url);link.href=status.url;link.target='_blank';link.rel='noopener';check.append(link,button('Copy phone address',()=>navigator.clipboard.writeText(status.url).then(()=>toast('Phone address copied.')).catch(()=>toast('Select and copy the displayed address.'))));}
- }catch(error){check.textContent=error.message;}
- root.append(el('p','','1. Install Tailscale on your iPhone and sign in to the same account as this PC.'),button('Set up private phone access',async()=>{try{const r=await api('/api/remote/setup',{});toast(r.message,12000)}catch(e){toast(e.message)}},'action-btn'),button('Check connection again',drawRemote),el('p','','2. Open the private address in Safari. Create a code here and enter it on your phone.'),button('Create pairing code',async()=>{try{const r=await api('/api/remote/pair-code',{});code.textContent=r.code+' · valid for 5 minutes';}catch(e){toast(e.message)}},'action-btn'));
- const code=el('p','code-inline','');root.append(code,el('p','','3. In Safari, tap Share → Add to Home Screen. Open Janna from that icon. If it asks again, pair that Home Screen app once.'));
- root.append(el('p','muted','Private access prevents automatic PC sleep while its background service runs; the display can turn off. Work stays on your PC when the phone locks. Reopening Janna reconnects to saved progress. Manual sleep, shutdown, signing out or network loss makes it temporarily unavailable.'));
- try{const r=await api('/api/pairing/devices');for(const device of r.devices){const row=el('div','list-row');row.append(el('strong','',device.label),button('Revoke',async()=>{await api('/api/remote/revoke',{id:device.id});drawRemote()}));root.append(row)}}catch(e){root.append(el('p','muted',e.message))}
-}
-async function drawTraining(){
- const root=$('drawerBody');root.replaceChildren();
- root.append(el('h3','','Janna Pro trainer'),el('p','','Experimental training tools for your exact Janna Pro 27B model. Parameter updates and saved-adapter reload are verified; engineering improvements and deployment are not yet qualified. Your current Janna Pro profile is not replaced.'));
- if(state.remote){root.append(el('p','','Start and stop training from the PC.'));return;}
- const summary=el('div','card'),log=el('pre','');root.append(summary);
- let current=null;const saved=el('select','inline-input');saved.setAttribute('aria-label','Saved adapter');
- const refresh=async()=>{try{const r=await api('/api/training');current=r;const selection=saved.value;saved.replaceChildren();for(const item of r.checkpoints||[]){const option=el('option','',`${item.steps} steps · ${item.id.slice(0,8)}`);option.value=item.id;saved.append(option)}if([...saved.options].some(o=>o.value===selection))saved.value=selection;summary.replaceChildren(el('p','',r.configured?'Training environment configured.':'Configure the local training environment below.'));if(r.job){summary.append(el('p','',`${r.job.mode}: ${r.job.status}`),el('p','',`Saved optimizer steps: ${r.job.progress?.optimizer_steps??r.job.result?.optimizer_steps??0}`));if(r.job.error)summary.append(el('p','',r.job.error));log.textContent=r.job.log||'Checking model identity…';}return r;}catch(e){summary.textContent=e.message;}};
- const initial=await refresh();if(!initial)return;
- const start=async(mode,steps=2)=>{try{await api('/api/training/start',{mode,steps,checkpoint_id:saved.value});await refresh()}catch(e){toast(e.message)}};
- const actions=el('div','form-row');actions.append(button('Check model',()=>start('forward'),'action-btn'),button('Check learning · 64 steps',()=>start('smoke',64),'action-btn'),button('Coding pilot · 64 steps',()=>start('pilot',64),'action-btn'),button('Specialist pilot · 64 steps',()=>start('specialist',64),'action-btn'),button('Coding tasks · 64 steps',()=>start('vibe',64),'action-btn'),button('Continue saved run · 32 steps',()=>start('continue',32),'action-btn'),button('Verify saved adapter',()=>start('reload')),button('Stop training',async()=>{try{await api('/api/training/stop',{});await refresh()}catch(e){toast(e.message)}}));root.append(actions,saved,el('p','muted','Training reserves the GPU and unloads idle inference models. It requires 12 GiB free RAM to start and stops below 2 GiB. The learning check uses two artificial associations. The coding pilot uses eight verified examples and compares four held-out tasks. Both save experimental adapters without changing your active model. The specialist pilot adds address, instruction and binary-layout kernels: 16 training examples and six separate evaluation tasks. Each pilot is limited to 30 minutes; no adapter is activated automatically.'),log);
- const settings=el('details',''),heading=el('summary','','Training environment');settings.append(heading);const inputs={};
- for(const [key,label] of [['python','WSL training Python'],['gguf','Exact Janna Pro weight file'],['gguf_python','GGUF reader folder'],['tokenizer','Exact tokenizer folder']]){const input=el('input','inline-input');input.value=initial.config?.[key]||'';input.style.width='100%';input.setAttribute('aria-label',label);settings.append(el('label','',label),input);inputs[key]=input;}
- settings.append(button('Save environment',async()=>{try{await api('/api/training/configure',Object.fromEntries(Object.entries(inputs).map(([k,v])=>[k,v.value])));await refresh();toast('Training environment saved.')}catch(e){toast(e.message)}}));root.append(settings);
- const poll=setInterval(()=>{if($('drawer').hidden||$('drawer').dataset.kind!=='training'){clearInterval(poll);return;}refresh()},2000);
-}
-
-async function useSelectedProject(project){
-  const draft=state.projectDraft??$('prompt').value;
-  state.project=project.id;$('projectDialog').close();
-  await refreshBootstrap();await newSession(project.id);
-  $('prompt').value=draft;syncSendState();delete state.projectDraft;$('prompt').focus();
-}
-async function reviewGitHubPush(){
-  if(!state.project){openProjectDialog();return}
-  try{
-    const r=await api('/api/plugins/prepare',{plugin:'github',action:'push',project_id:state.project,arguments:{}});
-    if(confirm(r.title+'\n\n'+r.command_preview+'\n\nPush these committed changes?')){
-      const done=await api('/api/plugins/execute',{approval_id:r.approval_id});
-      toast(done.ok?'Branch pushed successfully':'Push failed: '+(done.output||done.error));
-    }
-  }catch(e){toast(e.message)}
-}
-function openProjectDialog(){if(!$('projectDialog').open){$('projectDialog').showModal();$('projectPath').focus()}}
-function openMobile(){$('sidebar').classList.add('mobile-open');$('mobileScrim').classList.add('visible');$('mobileScrim').hidden=false}
-function closeMobile(){$('sidebar').classList.remove('mobile-open');$('mobileScrim').classList.remove('visible');$('mobileScrim').hidden=true}
-
-function renderResearchPanel(root){
-  const form=el('div','card research-console');
-  form.append(el('h3','','Evidence search'),el('p','','Search the public web and GitHub. When live services fail, Janna can fall back to previously found references or code in the selected project. Cached results are always labelled.'));
-  const input=el('input','inline-input');input.placeholder='Search for GPU barrier implementation, a repository, or an unfamiliar tool';
-  input.style.width='100%';input.maxLength=500;form.append(input);
-  const advanced=el('div','form-row'),codeLabel=el('label','setting-check'),code=el('input');code.type='checkbox';code.checked=true;codeLabel.append(code,document.createTextNode('Search code and selected project'));advanced.append(codeLabel);
-  const go=button('Research',search,'action-btn');advanced.append(go);form.append(advanced);root.append(form);
-  const results=el('div','research-results');results.style.marginTop='20px';root.append(results);
-  input.addEventListener('keydown',e=>{if(e.key==='Enter')search()});
-  async function search(){
-    if(!input.value.trim())return toast('Enter a research query');
-    go.disabled=true;results.replaceChildren();results.append(el('p','muted','Checking independent research sources…'));
-    try{
-      const response=await api('/api/research',{query:input.value,code:code.checked,project_id:state.project||''});
-      results.replaceChildren();
-      const statuses={live_leads:'Live reference leads (not independently verified)',stale_cache:'Offline fallback · cached references may be outdated',local_only:'Local source matches only',unavailable:'No references available — try a narrower query or reconnect'};
-      const headline=el('div','research-status');headline.append(el('strong','',statuses[response.freshness]||'Research results'));
-      if(response.cache_age_seconds!=null)headline.append(el('small','',`Last retrieved about ${Math.ceil(response.cache_age_seconds/3600)} hours ago`));
-      results.append(headline);
-      const list=el('div','research-source-list');
-      for(const item of response.results||[]){
-        const card=el('div','card research-source'),url=String(item.url||''),heading=el('strong','research-result-title',item.title||'Reference');
-        if(/^https?:\/\//i.test(url)){
-          const a=el('a','reference-link',item.title||url);a.href=url;a.target='_blank';a.rel='noopener noreferrer';heading.replaceWith(a);card.append(a)
-        }else card.append(heading);
-        if(item.snippet)card.append(el('p','',item.snippet));
-        const note=el('small','',`${item.stale?'Outdated · ':''}${item.source==='local-code'?'Local project':item.source?.startsWith('github')?'GitHub reference':'Public search'}${item.license?' · License: '+item.license:''}`);card.append(note);list.append(card)
-      }
-      if(!response.results?.length)list.append(el('p','muted','All sources failed or returned no matches. Janna will not invent references.'));
-      results.append(list);
-      const info=el('details','provider-details');info.append(el('summary','','Source availability'));
-      for(const prov of response.providers||[])info.append(el('p','',`${prov.name}: ${prov.status}`));results.append(info);
-    }catch(e){results.replaceChildren();results.append(el('p','muted','Research could not complete: '+e.message))}
-    finally{go.disabled=false}
-  }
-  section(root,'GitHub source explorer');
-  const explore=el('div','card source-explorer');
-  explore.append(el('h3','','Read actual implementations'),el('p','', 'Inspect public repository structure and bounded source excerpts. Check licenses before copying code or applying patches.'));
-  const repo=el('input','inline-input'),terms=el('input','inline-input'),file=el('input','inline-input');
-  repo.placeholder='Repository · owner/name';terms.placeholder='Find relevant subsystem · GPU barriers, SPU DMA…';file.placeholder='Optional source path · src/video/renderer.cpp';
-  explore.append(repo,terms,file);
-  const resultsBox=el('div','repository-results');
-  async function inspect(action){
-    resultsBox.replaceChildren();resultsBox.append(el('p','muted','Checking GitHub source…'));
-    try{
-      const v=await api('/api/source/inspect',{action,repository:repo.value,query:terms.value,path:file.value,ref:'HEAD'});
-      resultsBox.replaceChildren();
-      if(action==='map'){
-        resultsBox.append(el('p','',`${v.repo} · ${v.branch} · Reported license: ${v.license}`));
-        resultsBox.append(el('p','muted',v.notice));
-        if(v.tree_truncated)resultsBox.append(el('p','muted','The upstream tree was truncated, so file discovery is incomplete.'));
-        for(const item of v.files){const r=el('div','reference-row');const link=el('a','reference-link',item.path);link.href=item.url;link.target='_blank';link.rel='noopener noreferrer';r.append(link);
-          r.append(button('Inspect',()=>{file.value=item.path;inspect('file')}));resultsBox.append(r)
-        }
-      }else{
-        const link=el('a','reference-link',v.path);link.href=v.url;link.target='_blank';link.rel='noopener noreferrer';
-        resultsBox.append(link,el('p','muted',v.notice));const pre=el('pre','raw-panel');pre.textContent=v.excerpt;resultsBox.append(pre)
-      }
-    }catch(e){resultsBox.replaceChildren();resultsBox.append(el('p','muted',e.message))}
-  }
-  const actions=el('div','form-row');actions.append(button('Map repository',()=>inspect('map'),'action-btn'),button('Read source file',()=>inspect('file')));
-  explore.append(actions,resultsBox);root.append(explore);
-}
-async function renderPluginsPanel(root){
-  root.append(el('p','muted','Plugins use existing installed tools and credentials. Publishing actions require an explicit one-time confirmation from your PC.'));
-  const grid=el('div','cards');root.append(grid);
-  try{
-    const data=await api('/api/plugins');
-    for(const item of data.plugins||[]){
-      const card=el('div','card plugin-card');
-      card.append(el('h3','',item.name),el('p','',item.description));
-      const badge=el('span','pill',item.connected?'Ready':item.installed?'Setup needed':'Not installed');card.append(badge);
-      if(item.id==='research')card.append(button('Search sources',()=>showView('research')));
-      if(item.id==='browser'){
-        badge.textContent=item.enabled?'Enabled':item.installed?'Available':'Setup needed';
-        card.append(el('p','',item.installed?'Uses its own temporary browser session. Your personal tabs stay separate.':'On the PC, run scripts/Install-Browser-Tools.ps1 from your Janna installation.'));
-        if(item.installed)card.append(button(item.enabled?'Disable browser':'Enable browser',async()=>{
-          try{await persistSettings({browser_enabled:!item.enabled});showView('plugins')}catch(e){toast(e.message)}
-        }));
-      }
-      if(item.id==='github'){
-        card.append(button('Connect account',()=>openDrawer('connections')));
-        if(state.project)card.append(button('Prepare branch push',async()=>{
-          try{
-            const r=await api('/api/plugins/prepare',{plugin:'github',action:'push',project_id:state.project,arguments:{}});
-            if(confirm(r.title+'\n\n'+r.command_preview+'\n\nProceed?')){
-              const done=await api('/api/plugins/execute',{approval_id:r.approval_id});toast(done.ok?'Branch pushed successfully':'Push failed: '+(done.output||done.error));
-            }
-          }catch(e){toast(e.message)}
-        }))
-      }
-      if(item.id==='figma')card.append(button('Figma connection',()=>openDrawer('connections')));
-      if(item.id==='cloudflare'){
-        card.append(button('Prepare Pages deployment',()=>{
-          if(!state.project)return toast('Select a project first');
-          const fields=el('div','deploy-fields');
-          const projectName=el('input','inline-input'),folder=el('input','inline-input'),branch=el('input','inline-input');
-          projectName.placeholder='Cloudflare Pages project';folder.placeholder='Build output (e.g. dist)';branch.placeholder='Preview branch';
-          folder.value='dist';branch.value='preview';fields.append(projectName,folder,branch);
-          fields.append(button('Review deployment',async()=>{
-            try{
-              const draft=await api('/api/plugins/prepare',{plugin:'cloudflare',action:'pages_deploy',project_id:state.project,
-                arguments:{name:projectName.value,directory:folder.value,branch:branch.value}});
-              if(confirm(draft.title+'\n\n'+draft.command_preview+'\n\nDeploy from this PC?')){
-                const result=await api('/api/plugins/execute',{approval_id:draft.approval_id});toast(result.ok?'Pages deployment completed':'Deployment failed: '+(result.output||result.error),12000)
-              }
-            }catch(e){toast(e.message,10000)}
-          },'action-btn'));card.append(fields)
-        }))
-      }
-      if(item.id==='harness')card.append(button('Project test tasks',()=>openDrawer('harness')));
-      if(item.id==='discord')card.append(button('Manage bot',()=>openDrawer('bots')));
-      grid.append(card)
-    }
-  }catch(e){grid.append(el('p','muted','Plugin status is unavailable: '+e.message))}
-}
-async function drawHostControls(){
-  const root=$('drawerBody');root.replaceChildren();
-  root.append(el('p','muted','Run fixed, read-only checks on the Windows PC hosting Janna. Your iPhone never executes Windows commands. These checks do not alter your running app, Git branches, or releases.'));
-  const results=el('div','card');results.append(el('p','muted','No PC diagnostics have been run from this device.'));root.append(results);
-  const check=button('Check PowerShell & GitHub on my PC',async()=>{
-    check.disabled=true;results.replaceChildren(el('p','','Checking your connected PC…'));
-    try{
-      const response=await api('/api/host/readiness');
-      results.replaceChildren(el('h3','',response.host+' · '+response.executed_on));
-      for(const [name,row] of Object.entries(response.checks||{})){
-        const label=name.replaceAll('_',' ');
-        const entry=el('div','list-row');
-        entry.append(el('strong','',label+' · '+row.status),el('pre','raw-panel',row.detail||('Exit '+String(row.exit_code??'unavailable'))));
-        results.append(entry);
-      }
-      if(response.github_release_published)results.append(el('p','', 'Release was published.'));
-      else results.append(el('p','muted','No GitHub release was published and your running Janna was not replaced.'));
-    }catch(error){results.replaceChildren(el('p','muted','PC diagnostic unavailable: '+error.message))}
-    finally{check.disabled=false}
-  },'action-btn');
-  root.insertBefore(check,results);
-  root.append(button('Build and test project',()=>openDrawer('harness')));
-  root.append(button('Use local coding agent (Work)',()=>{
-    if(!state.project){openProjectDialog();toast('Select a registered project first.');return;}
-    setMode('agent');closeDrawer();showView('chats');
-    $('prompt').value='Diagnose Windows PowerShell and GitHub tools on this PC, then inspect this project. Report actual command outputs. Do not push, publish, stop or replace my running Janna.';
-    $('prompt').focus();
-  }));
-  root.append(el('p','muted','Building and GitHub pushes require an existing registered project. Public releases and native installation still require independent validation and explicit approval.'));
-}
-
-async function drawHarness(){
-  const root=$('drawerBody');root.append(el('p','','Tasks must be declared in janna.tasks.json inside your project. Janna records real output and never labels a failed test as passing.'));
-  if(!state.project){root.append(button('Choose project',openProjectDialog));return}
-  try{
-    const tasks=await api('/api/harness/tasks/'+encodeURIComponent(state.project));
-    for(const t of tasks.tasks||[]){
-      const row=el('div','list-row');row.append(el('div','',t.name+' · '+(t.description||t.id)));
-      row.append(button('Run',async()=>{try{const r=await api('/api/harness/run',{project_id:state.project,task_id:t.id});toast('Test task started · '+r.run.id);drawHarness()}catch(e){toast(e.message)}}));root.append(row)
-    }
-    if(!tasks.tasks?.length)root.append(el('p','muted','No project tasks are declared. Add janna.tasks.json with explicit build or test command arrays.'));
-    const runs=await api('/api/harness');section(root,'Recent runs');
-    for(const run of (runs.runs||[]).slice(-8).reverse()){
-      const card=el('div','card');card.append(el('h3','',run.name+' · '+run.status),el('pre','raw-panel',run.tail||'No output yet'));
-      if(run.status==='running')card.append(button('Stop',async()=>{await api('/api/harness/stop',{run_id:run.id});drawHarness()}));root.append(card)
-    }
-  }catch(e){root.append(el('p','muted',e.message))}
-}
-
-async function drawEngineering(){
-  const root=$('drawerBody');root.replaceChildren();
-  root.append(el('p','muted','Read-only inspection and reproducible tools for emulator, shader, binary and matching-decomp work. All paths stay inside your selected checkout. No ROM or firmware is uploaded.'));
-  const project=selectedProject();if(!project){root.append(button('Choose project',openProjectDialog,'action-btn'));return}
-  const wrap=el('div','card');wrap.append(el('h3','','Engineering workbench'));
-  const query=el('input','inline-input');query.placeholder='Search symbol, opcode, register, error…';query.style.width='100%';
-  const relative=el('input','inline-input');relative.placeholder='Project-relative binary or .spv path';relative.style.width='100%';
-  const report=el('pre','raw-panel','Select a tool to inspect actual evidence.');report.style.whiteSpace='pre-wrap';
-  async function run(action,payload){report.textContent='Checking…';try{const result=await api('/api/engineering/'+action,{project_id:project.id,...payload});report.textContent=JSON.stringify(result,null,2)}catch(e){report.textContent='Analysis unavailable: '+e.message}}
-  const target=el('input','inline-input');target.placeholder='Trace destination, e.g. gpu_submit';target.setAttribute('aria-label','Trace destination');
-  wrap.append(query,button('Find exact symbols',()=>run('index',{query:query.value}),'action-btn'),
-    button('Find call sites',()=>run('index',{query:query.value,kind:'calls'})),
-    button('Search text',()=>run('symbols',{query:query.value})),target,
-    button('Trace static call path',()=>run('index',{action:'trace',query:query.value,end:target.value})),relative,
-    button('Inspect binary',()=>run('binary',{path:relative.value})),button('Validate SPIR-V',()=>run('spirv',{path:relative.value})),
-    button('Disassemble SPIR-V',()=>run('disassemble',{path:relative.value})),
-    button('Analyze with installed Ghidra',()=>{if(confirm('Analyze this local binary with installed Ghidra? This executes Ghidra on the selected file with a 2 GB heap and 220-second limit.'))run('ghidra',{path:relative.value,confirmed:true})}),report);root.append(wrap);
-  section(root,'Saved binary layouts');
-  const formatName=el('input','inline-input');formatName.placeholder='Format name';formatName.setAttribute('aria-label','Saved format name');
-  const schema=el('textarea','inline-input');schema.rows=9;schema.setAttribute('aria-label','Versioned binary layout JSON');schema.placeholder='{"name":"Packet","revision":1,"endian":"little","fields":[{"name":"magic","type":"u32","offset":0}]}';
-  root.append(el('p','muted','Keep explicit offsets, endian, alignment, padding and version gates. Saved layouts are hypotheses; decoding bytes does not prove their meaning.'),formatName,
-    button('List saved revisions',()=>run('formats',{action:'list'})),schema,
-    button('Save new revision',()=>{try{run('formats',{action:'save',schema:JSON.parse(schema.value)})}catch(e){toast('Enter valid layout JSON: '+e.message)}}),
-    button('Decode selected binary',()=>run('formats',{action:'inspect',path:relative.value,name:formatName.value})));
-  section(root,'Available analysis tools');
-  try{const result=await api('/api/engineering/tools');
-    const gpu=el('p','muted',result.gpu_scheduler?.gpu_reserved?'GPU reserved for a graphics test':'GPU is available for Janna inference');root.append(gpu);
-    for(const tool of result.tools||[]){const line=el('div','list-row');line.append(el('strong','',tool.purpose),el('small','muted',tool.installed?'Installed · '+tool.id:'Not installed · '+tool.id));root.append(line)}
-  }catch(e){root.append(el('p','muted',e.message))}
-  root.append(el('p','muted','To execute external analyzers, declare an explicit project task in janna.tasks.json. Graphics performance tasks can request gpu_exclusive to prevent competing model inference.'));
-}
-async function drawUpdates(){
-  const root=$('drawerBody');root.replaceChildren();root.append(el('h3','','Janna updates'),el('p','muted','Check the official Janna GitHub release feed. An update is downloaded and SHA-256 verified before any installation. Existing projects and local model weights are never included in app updates.'));
-  const status=el('div','card');root.append(status);status.textContent='Checking release feed…';
-  try{const result=await api('/api/update/check');status.replaceChildren();
-    if(!result.available){status.append(el('p','',result.published?'Janna is up to date.':(result.reason||'No update available.')));return}
-    status.append(el('h3','','Version '+result.version),el('p','',result.notes||'Verified source release'));
-    const prepare=button('Download verified update',async()=>{prepare.disabled=true;try{const r=await api('/api/update/prepare',{});toast(r.message,10000);const apply=button('Install when I close Janna',async()=>{if(!confirm('Install verified Janna '+result.version+' after closing the app?'))return;try{const done=await api('/api/update/apply',{confirmed:true});toast(done.message,12000)}catch(e){toast(e.message)}},'action-btn');status.append(apply)}catch(e){toast(e.message,12000)}finally{prepare.disabled=false}},'action-btn');status.append(prepare);
-  }catch(e){status.textContent='Release check failed: '+e.message}
-}
-// A step reads as work in progress while it runs and as a finished action afterwards.
-const FINISHED_WORDS={Analyzing:'Analyzed',Thinking:'Thought',Working:'Worked',Comparing:'Compared',Weighing:'Weighed',Organizing:'Organized',Breaking:'Broke',Inspecting:'Inspected',Checking:'Checked',Reading:'Read',Running:'Ran',Writing:'Wrote',Building:'Built',Finding:'Found',Searching:'Searched',Editing:'Edited',Testing:'Tested',Reviewing:'Reviewed',Fetching:'Fetched',Verifying:'Verified',Looking:'Looked',Planning:'Planned',Refining:'Refined',Repairing:'Repaired',Correcting:'Corrected',Diagnosing:'Diagnosed',Preparing:'Prepared',Starting:'Started',Trying:'Tried',Loading:'Loaded',Applying:'Applied'};
-const fmtDur=s=>{s=Math.max(1,Math.round(Number(s)||0));return s>=60?Math.floor(s/60)+'m '+(s%60)+'s':s+'s'};
-function finishedStep(text){const value=String(text||'');const first=value.split(' ',1)[0];return FINISHED_WORDS[first]?FINISHED_WORDS[first]+value.slice(first.length):value}
-const JANNA_THEMES={sage:['#d8e2d3','#eef2e9'],rose:['#fce9f2','#fff8fb'],velvet:['#1d1119','#241722'],porcelain:['#f1f0ec','#fbfaf8'],pro:['#181d21','#1f2326'],sakura:['#f6ecee','#fffaf8'],matcha:['#eaf0e4','#f8f9f2'],indigo:['#eaeaf3','#f8f8fc'],midnight:['#121722','#161a24'],washi:['#f3eee4','#fffdf7'],kintsugi:['#1b2529','#243038'],ume:['#f1e1e5','#fff7f8'],yoru:['#131c29','#182235'],kyoto:['#ede4d7','#faf4e9'],moss:['#26382f','#324537'],sora:['#d9eaf0','#f3faff'],akane:['#f3dfd4','#fff8f0'],zen:['#e8e6df','#f8f7f3'],beni:['#24171c','#2e1d24'],shinku:['#1d1517','#251a1d'],shu:['#f4e1da','#fff9f5'],botan:['#eee1ed','#fcf7fc'],tsuki:['#181c22','#232830'],ruri:['#152238','#1e2e47'],asagi:['#d5ebe8','#f4fbfa'],fuji:['#efe6f4','#fbf7fd'],momiji:['#f8e6d8','#fff8f2'],yuzu:['#f7f3d8','#fffdf3'],take:['#e3edd9','#f6faf3'],mizu:['#dceaf5','#f5f9fd'],kinari:['#f3ecdf','#fbf8f2'],kohaku:['#f8ead0','#fffaf1'],murasaki:['#ece4f6','#faf7fd'],toki:['#f8e4e6','#fff7f8'],moegi:['#e7f0c8','#f8fbea'],gin:['#e6e8ea','#f7f8f8'],chawan:['#f0e6d4','#fbf6ee'],yanagi:['#e4eee4','#f5faf5'],wakatake:['#e8f0dc','#f7fbf3'],usuzumi:['#e8e6e4','#f7f6f4'],ao:['#d9e6f6','#f4f8fd'],enji:['#f6e0dc','#fff6f4'],suzu:['#e4e7e4','#f6f7f6'],kakishibu:['#f6e3d4','#fff7f1'],hanada:['#d7e8f2','#f3f9fc'],kujaku:['#d7efe6','#f2fbf7'],komugi:['#f4ead4','#fdf8ee'],shirayuki:['#f4f6f8','#fbfcfd'],nuri:['#1a1412','#241c18'],tetsu:['#1c2024','#262b30'],kurocha:['#241c16','#2e241c'],nezumi:['#232528','#2c3034'],fukamidori:['#14241c','#1c3026'],konpeki:['#101c30','#17263c'],budou:['#241828','#301e36'],akatsuki:['#2a1820','#361f2a'],roiro:['#141414','#1c1c1c'],kachi:['#141828','#1c2236'],miru:['#142420','#1c302a'],susutake:['#26241c','#322e24'],namari:['#1e2226','#282e34'],enkai:['#0e1c24','#142830'],karasuba:['#16141a','#201c24'],sumizome:['#16181c','#1e2228'],benibana:['#2a1214','#38181c'],yamabuki:['#2a2414','#362e18'],rikyunezu:['#1c221c','#262e26'],soba:['#2a241c','#342c22'],ember:['#ffe3c2','#fff6ea'],dusk:['#15162a','#1c1d36'],slate:['#1e2326','#262c30'],crimson:['#141013','#1c1619'],leaf:['#dcebd2','#f5faf0'],lilac:['#e9e5f5','#faf8fe'],blaze:['#ffe1c7','#fff5ea'],harbor:['#fbe0d9','#fff7ee'],violet:['#1b1430','#231a3d'],forest:['#dfe6dc','#f5f7f0'],tide:['#121c19','#18241f'],blossom:['#fbe3ec','#fff6f9'],azure:['#10192a','#162236'],moon:['#fde6ef','#fff8fb']};
-const COLOR_THEMES={ember:'Ember',dusk:'Dusk',slate:'Slate',crimson:'Crimson',leaf:'Leaf',lilac:'Lilac',blaze:'Blaze',harbor:'Harbor',violet:'Violet',forest:'Forest',tide:'Tide',blossom:'Blossom',azure:'Azure',moon:'Moon'};
-const themeLabel=name=>COLOR_THEMES[name]||(name==='sage'?'Sage Green':name[0].toUpperCase()+name.slice(1));
-let activeSettingsTab='appearance';
-let settingsActiveTab='general';
-function drawSettings(){
-  const root=$('drawerBody');root.replaceChildren();
-  const shell=el('div','settings-shell');
-  const searchInput=el('input','settings-search-input');searchInput.placeholder='Search settings';searchInput.setAttribute('aria-label','Search settings');
-  const searchWrap=el('div','settings-search');searchWrap.append(searchInput);
-  const rail=el('nav','settings-rail');rail.setAttribute('aria-label','Settings sections');
-  const panes=el('div','settings-panes');
-  const mainRow=el('div','settings-main');mainRow.append(rail,panes);
-  shell.append(searchWrap,mainRow);root.append(shell);
-  const TABLABELS={general:'General',appearance:'Appearance',personalization:'Personalization',usage:'Usage',data:'Data controls',effort:'How hard Janna works',checking:'Checking answers',research:'Web research',tools:'Tools and connections',device:'On-device control'};
-  const TABGROUPS=[['Personal',['general','appearance','personalization','usage','data']],['Janna',['effort','checking','research','tools','device']]];
-  const paneMap={},tabBtns={};
-  const activate=id=>{if(!paneMap[id])id='general';settingsActiveTab=id;for(const k in paneMap)paneMap[k].hidden=k!==id;for(const k in tabBtns)tabBtns[k].classList.toggle('active',k===id)};
-  for(const [group,ids] of TABGROUPS){rail.append(el('div','settings-group',group));for(const id of ids){const b=el('button','settings-tab',TABLABELS[id]);b.type='button';b.onclick=()=>activate(id);tabBtns[id]=b;rail.append(b)}}
-  searchInput.addEventListener('input',()=>{const q=searchInput.value.trim().toLowerCase();for(const id in tabBtns)tabBtns[id].hidden=!!q&&!TABLABELS[id].toLowerCase().includes(q);if(tabBtns[settingsActiveTab]&&tabBtns[settingsActiveTab].hidden){const fv=Object.keys(tabBtns).find(k=>!tabBtns[k].hidden);if(fv)activate(fv)}});
-  let content=null;
-  const paneFor=id=>{if(!paneMap[id]){const pane=el('div','settings-content settings-pane');pane.hidden=id!==settingsActiveTab;paneMap[id]=pane;panes.append(pane)}content=paneMap[id];return content};
-  const row=(title,description,child)=>{const node=el('div','settings-row'),texts=el('div','settings-row-description');texts.append(el('strong','',title),el('p','',description));node.append(texts);if(child)node.append(child);content.append(node);return node};
-  const toggle=(name,key,description)=>{const box=el('input');box.type='checkbox';box.setAttribute('aria-label',name);box.checked=state.settings[key]===true;box.onchange=()=>persistSettings({[key]:box.checked});row(name,description,box)};
-  const select=(name,key,description,values,wide=false)=>{const s=el('select','inline-input'+(wide?' settings-wide':''));for(const [label,value] of values)s.add(new Option(label,value));s.value=String(state.settings[key]??values[0][1]);s.onchange=async()=>{await persistSettings({[key]:s.value});if(key==='speed'){$('speed').value=s.value;state.speed=s.value}if(key==='effort'){$('effort').value=s.value;state.effort=s.value}if(key==='language')applyLocale()};row(name,description,s)};
-  const dangerBtn=(label,action)=>{const b=button(label,async()=>{if(b.dataset.armed){b.disabled=true;try{await action()}finally{b.disabled=false}}else{b.dataset.armed='1';b.textContent='Tap again to confirm';b.classList.add('armed');setTimeout(()=>{if(b.isConnected){delete b.dataset.armed;b.textContent=label;b.classList.remove('armed')}},3500)}},'text-btn danger-btn');return b};
-  {
-    paneFor('general');
-    content.append(el('h3','','General'));
-    const languageChoices=(state.languages&&state.languages.length?state.languages:[{id:'auto',name:'Automatic'},{id:'en',name:'English'},{id:'it',name:'Italiano'}]).map(item=>[item.name,item.id]);
-    const chosen=(state.languages||[]).find(item=>item.id===(state.settings.language||'auto'));
-    const note=chosen?.chrome==='full'?'Replies and menus are in English.':chosen?.chrome==='partial'?'Replies use this language. A few labels are translated; most menus stay in English.':'Replies use this language. Menus stay in English.';
-    select('Language','language',(state.settings.language||'auto')==='auto'?'Auto-detect: replies follow the language of your latest message. Menus stay in English.':note+' Code, paths, and technical names are never changed.',languageChoices,true);
-  }{
-    paneFor('appearance');
-    const appearance=el('select','inline-input');
-    for(const [label,value] of [['System','system'],['Light','light'],['Dark','dark']])appearance.add(new Option(label,value));
-    appearance.value=state.settings.appearance_mode||((state.settings.theme||'rose')==='velvet'?'dark':'light');
-    appearance.onchange=async()=>{const mode=appearance.value;const dark=mode==='dark'||(mode==='system'&&window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches);await persistSettings({appearance_mode:mode,theme:dark?'velvet':'rose'});drawSettings()};
-    row('Appearance','System follows your device. Light is the Rose theme; Dark is Velvet. The color themes are right below.',appearance);
-    const current=state.settings.theme||'rose';
-    const grid=names=>{const box=el('div','theme-grid');for(const name of names){const palette=JANNA_THEMES[name];const choice=button(themeLabel(name),async()=>{await persistSettings({theme:name});drawSettings()},'theme-option'+(current===name?' selected':''));choice.setAttribute('aria-pressed',String(current===name));const swatch=el('span','theme-swatch');swatch.style.setProperty('--sample-side',palette[0]);swatch.style.setProperty('--sample-main',palette[1]);choice.prepend(swatch);box.append(choice)}return box};
-    const names=Object.keys(JANNA_THEMES);
-    content.append(el('h3','','Appearance'));
-    content.append(el('h3','','Color themes'),grid(names.filter(name=>COLOR_THEMES[name])));
-    content.append(el('h3','','Japanese-inspired themes'),grid(names.filter(name=>!COLOR_THEMES[name])));
-    content.append(el('p','muted','The original Janna wave crest stays unchanged; dark themes place it on a clean ivory surface.'));
-  }{
-    paneFor('personalization');
-    content.append(el('h3','','Personalization'));
-    select('Writing style','personality','Choose the tone of replies without changing evidence or technical rigor.',[['Precise','precise'],['Friendly','friendly'],['Technical','technical'],['Concise','concise'],['Craftsman','craftsman']]);
-    toggle('Enter to send','send_on_enter','Use Enter to send; Shift+Enter inserts a line break.');
-    toggle('Live work updates','show_progress','Show chronological source lookups, tool actions, and checks directly in chat.');
-    toggle('Citations','show_citations','Display source links with answers when searches found supporting leads.');
-    toggle('Read replies aloud','voice_output','Use available system voices after generation. Dictation is opt-in and may use a browser service.');
-    row('Chat history','Manage conversations from the sidebar: open a chat\u2019s \u22ef menu to rename, pin, share, archive, or delete it.');
-    content.append(button('Manage memory',()=>{closeDrawer();showView('knowledge')},'text-btn'),button('Profile and import',()=>openDrawer('profile'),'text-btn'),button('Check for software updates',()=>{drawUpdates();$('drawerBody').prepend(button('← Back to settings',drawSettings,'text-btn'))},'text-btn'));
-    if(window.__JANNA_WEB__){
-      content.append(el('h3','','Memory'));
-      const memBox=el('input');memBox.type='checkbox';memBox.setAttribute('aria-label','Enable memory');memBox.checked=state.settings.memory_enabled!==false;memBox.onchange=()=>persistSettings({memory_enabled:memBox.checked});
-      row('Enable memory','Let Janna remember facts across chats in this browser. Say "tandaan mo..." in any chat to save one.',memBox);
-      row('Saved memories','Facts Janna has saved about you. Ask her what she remembers about you in any chat.',dangerBtn('Clear memory',async()=>{try{await api('/api/memory/clear',{});toast('Memory cleared')}catch(e){toast(e.message)}}));
-    }
-  }{
-    paneFor('effort');
-    content.append(el('h3','','How hard Janna works'));
-    row('Model identity','Janna Pro 1.1 is the full profile; Janna Lite 1.1 is optimized for lower-memory computers. Provenance is documented in the release notes.');
-    select('Reasoning effort','effort','Changes tool and verification budgets, not the underlying model intelligence.',[['Quick','quick'],['Balanced','balanced'],['High','high'],['Maximum','maximum']]);
-    const native=el('select','inline-input');for(const val of state.nativeLevels||['default'])native.add(new Option(val==='default'?'Automatic':String(val),String(val)));
-    native.value=String(state.reasoning);native.onchange=()=>state.reasoning=native.value;
-    row('Native model thinking','Only levels advertised by the installed model are shown.',native);
-    select('Speed profile','speed','Boost lowers generation and context budgets. It does not guarantee 1.5× tokens per second.',[['Standard','standard'],['1.5× Boost','boost']]);
-    paneFor('checking');
-    content.append(el('h3','','Checking answers'));
-    toggle('Check generated code','verify_generated_code','Check supported code blocks with the installed syntax tools.');
-    toggle('Correct generated code','repair_generated_code','Try one checked correction for generated engineering code. The original draft is kept; Boost skips the extra model call.');
-    toggle('Correct generated web pages','repair_generated_html','Try one correction when a generated HTML page fails its checks.');
-    toggle('Refine technical reports','refine_reports','Optional extra local editing pass improves clarity but adds latency.');
-    toggle('Automatic model recovery','model_failover','Retry temporary failures. If another local model is installed, Janna can switch to it and will label the change.');
-  }{
-    paneFor('research');
-    content.append(el('h3','','Web research'));
-    select('Live research','research_mode','Automatic searches when current information is useful. Every question sends a scrubbed search query each time. Offline never searches. Local source files are never uploaded.',[['Automatic','auto'],['Every question','always'],['Offline','off']]);
-    toggle('Find source implementations','github_research','Search GitHub implementation references when a coding question benefits from current code.');
-    row('When search is unavailable','Janna falls back to independent public sources, your GitHub sign-in, local project search, and clearly labelled saved references. No source result is presented as verified code.');
-    content.append(button('Open Research',()=>{closeDrawer();showView('research')},'text-btn'),button('Connect free search providers',()=>openDrawer('tools'),'text-btn'));
-    if(!window.__JANNA_WEB__)content.append(dangerBtn('Delete cached research',async()=>{try{await api('/api/research/cache/clear',{});toast('Research cache cleared')}catch(e){toast(e.message)}}));
-  }{
-    paneFor('tools');
-    content.append(el('h3','','Tools and connections'));
-    row('Plugins','Figma, Forge, and browser tools are turned on and off here, and only reach the model when enabled.');
-    content.append(button('Manage plugins',()=>{closeDrawer();showView('plugins')},'text-btn'),button('Project tools and connections',()=>openDrawer('tools'),'text-btn'),button('Test harness',()=>openDrawer('harness'),'text-btn'),button('Connect iPhone',()=>openDrawer('remote'),'text-btn'),button('Discord bot',()=>openDrawer('bots'),'text-btn'),button('Janna Pro trainer',()=>openDrawer('training'),'text-btn'));
-  }{
-    paneFor('device');
-    content.append(el('h3','','On-device control'));
-    row('Local model','Your chat model runs on your PC. Opt-in research requests connect to public search providers, so set research to Offline for confidential questions.');
-    row('Project access','Run development tools in the selected project. Publishing requires a one-time local approval.');
-    content.append(button('Manage paired phones',()=>openDrawer('remote'),'text-btn'));
-  }
-  {
-    paneFor('usage');
-    content.append(el('h3','','Usage'));
-    row('Plan',window.__JANNA_WEB__?'Free plan \u2014 no account and no paid tiers. Everything is stored in your browser.':'Local \u2014 Janna runs on your own hardware.');
-    row('Conversations','Chats not in the archive.',el('strong','',String(state.sessions.filter(x=>!x.archived).length)));
-    row('Messages','Across all your conversations.',el('strong','',window.__JANNA_WEB__?String(state.sessions.reduce((n,x)=>n+(x.msgs||0),0)):'\u2014'));
-  }
-  if(window.__JANNA_WEB__){
-    paneFor('data');
-    content.append(el('h3','','Data controls'));
-    row('Your data in this browser','On the web edition, chats and settings are stored only in this browser. Janna does not train on your chats or upload them; only the message you send reaches the model.');
-    row('Export data','Download your chats and preferences as one JSON file.',button('Export',async()=>{try{const data=await api('/api/profile/export');const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));const a=el('a');a.href=url;a.download='janna_profile.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),5000);toast('Profile exported')}catch(e){toast(e.message)}},'text-btn'));
-    row('Import data','Bring chats and preferences from an exported Janna profile file.',button('Import',()=>openDrawer('profile'),'text-btn'));
-    row('Clear all chats','Delete every conversation stored in this browser. This cannot be undone.',dangerBtn('Clear all chats',async()=>{try{await api('/api/sessions/clear',{});state.sessions=[];closeDrawer();await newSession(state.project);await refreshBootstrap();toast('All chats cleared')}catch(e){toast(e.message)}}));
-  }
-  if(!window.__JANNA_WEB__&&tabBtns.data)tabBtns.data.hidden=true;
-  activate(settingsActiveTab);
-}
-function speechTag(sample=''){
-  const code=state.settings.language||'auto';
-  const row=(state.languages||[]).find(item=>item.id===code);
-  if(row&&row.speech)return row.speech;
-  if(code==='auto')return /\b(?:il|la|questo|sono|posso|grazie)\b/i.test(sample||$('prompt')?.value||'')?'it-IT':(navigator.language||'en-US');
-  return code==='it'?'it-IT':'en-US';
-}
-function applyLocale(){
-  const it=state.settings.language==='it';
-  const chosen=(state.languages||[]).find(item=>item.id===state.settings.language);
-  document.documentElement.lang=state.settings.language&&state.settings.language!=='auto'?state.settings.language:'en';
-  document.documentElement.dir=chosen?.dir||'ltr';
-  const nav=$('navChats');if(nav)nav.lastChild.textContent=it?'Conversazioni':'Conversations';
-  const newLabel=$('newChat')?.querySelector('span');if(newLabel)newLabel.textContent=it?'Nuova chat':'New chat';
-  const welcome=$('welcome')?.querySelector('h1');if(welcome)welcome.textContent=it?'Da dove cominciamo?':'Where should we begin?';
-  const hint=$('welcome')?.querySelector('.welcome-hint span > span')?.parentNode;
-  if(hint)hint.lastChild.textContent=window.__JANNA_WEB__?'Cloud session · Chats stay in this browser':(it?'Sessione locale · File sul tuo computer':'Local session · Files stay on your machine');
-  if(!state.busy){$('prompt').placeholder=it?'Chiedi qualcosa a Janna…':'Ask Janna anything…'}
-}
-async function refreshBootstrap(){const b=await api('/api/bootstrap');state.token=b.token||state.token;saveLocalToken();state.projects=b.projects||[];state.sessions=b.sessions||[];state.modelCatalog=b.model_catalog||[];state.library=b.library||[];state.clineInstalled=!!b.cline_installed;state.languages=b.languages||[];state.pro=b.pro||null;state.project=b.active_project||state.project;state.settings=b.settings||state.settings;applyLocale();refreshResearchSwitch();document.body.dataset.theme=state.settings.appearance_mode==='system'?(window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches?'velvet':'rose'):(state.settings.theme||'rose');syncDesktopChrome();state.speed=state.settings.speed||state.speed;state.effort=state.settings.effort||state.effort;$('speed').value=state.speed;$('effort').value=state.effort;renderModelOptions(b.models||[]);statusBadge({ollama:!!b.models?.length});renderRecents();$('workspaceLabel').textContent=selectedProject()?.name||'Workspace';$('projectQuickLabel').textContent=selectedProject()?.name||'Choose project';$('profileName').textContent=b.profile?.label||'Guest workspace';$('profilePlan').textContent=window.__JANNA_WEB__?'Free plan':'';return b}
-async function initialConnection(){const r=await fetch('/api/remote-info',{signal:AbortSignal.timeout(15000)});if(!r.ok)throw new Error('Janna is not reachable from this device');const info=await r.json();state.remote=!!info.remote;if(state.remote){state.token=localStorage.getItem('janna-pair-token')||'';if(!state.token){$('pairDialog').showModal();return false}try{await refreshBootstrap()}catch(error){if(error.status!==403&&error.status!==401)throw error;$('pairDialog').showModal();return false}return true}await refreshBootstrap();return true}
-async function pairDevice(e){e.preventDefault();$('pairError').textContent='';try{const r=await fetch('/api/pair',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:$('pairCode').value,label:'iPhone / Janna PWA'})});const o=await r.json();if(!r.ok)throw new Error(o.error||'Pairing failed');state.token=o.token;saveLocalToken();$('pairDialog').close();await initializeWorkspace();workspaceReady=true}catch(err){$('pairError').textContent=err.message}}
-async function initializeWorkspace(){await refreshBootstrap();if(state.sessions.length)await openSession(state.sessions[0].id);else await newSession(state.project)}
-function bind(){bindCodeWorkspace();
- const jump=button('Jump to latest',()=>{state.tailFollow=true;scrollThread();jump.hidden=true},'jump-latest');jump.hidden=true;$('chatView').append(jump);
- $('thread').addEventListener('scroll',()=>{const t=$('thread');state.tailFollow=t.scrollHeight-t.scrollTop-t.clientHeight<70;jump.hidden=state.tailFollow},{passive:true});
-for(const nav of document.querySelectorAll('[data-view]'))nav.onclick=()=>nav.dataset.view==='luna'?openLunaChat():showView(nav.dataset.view);$('newChat').onclick=()=>newSession();$('sidebarSettings').onclick=()=>{if(window.innerWidth<701)closeMobile();openDrawer('settings')};$('navSettings').onclick=()=>{if(window.innerWidth<701)closeMobile();openDrawer('settings')};$('settingsButton').onclick=()=>openDrawer('settings');$('drawerClose').onclick=closeDrawer;$('companionButton').onclick=()=>openDrawer('companion');$('connectionButton').onclick=()=>openDrawer('tools');$('researchToggle').onclick=cycleResearchSwitch;$('profileOpen').onclick=e=>{e.stopPropagation();const m=$('profileMenu');m.hidden=!m.hidden;if(!m.hidden){$('pmName').textContent=$('profileName').textContent;$('pmPlan').textContent=$('profilePlan').textContent||'Free plan'}};
-document.addEventListener('pointerdown',e=>{const m=$('profileMenu');if(m&&!m.hidden&&!e.target.closest('#profileMenu')&&!e.target.closest('#profileOpen'))m.hidden=true});
-$('pmPersonalization').onclick=()=>{$('profileMenu').hidden=true;if(window.innerWidth<701)closeMobile();settingsActiveTab='personalization';openDrawer('settings')};
-$('pmProfile').onclick=()=>{$('profileMenu').hidden=true;if(window.innerWidth<701)closeMobile();openDrawer('profile')};
-$('pmSettings').onclick=()=>{$('profileMenu').hidden=true;if(window.innerWidth<701)closeMobile();openDrawer('settings')};
-$('sidebarSearch').onclick=()=>openSearch();
-$('searchClose').onclick=()=>$('searchDialog').close();
-$('searchForm').addEventListener('submit',e=>e.preventDefault());
-let searchTimer=null;
-$('searchInput').addEventListener('input',()=>{clearTimeout(searchTimer);searchTimer=setTimeout(runSearch,220)});
-function renderSearchResults(list){const box=$('searchResults');box.replaceChildren();if(!list.length){box.append(el('p','muted','No chats found.'));return}for(const r of list){const b=el('button','search-result',r.title||'New chat');b.type='button';b.onclick=()=>{$('searchDialog').close();openSession(r.id)};box.append(b)}}
-function openSearch(){$('searchInput').value='';renderSearchResults(state.sessions.filter(x=>!x.archived).slice(0,8));$('searchDialog').showModal();setTimeout(()=>$('searchInput').focus(),60)}
-async function runSearch(){const q=$('searchInput').value.trim();if(!q){renderSearchResults(state.sessions.filter(x=>!x.archived).slice(0,8));return}try{const r=await api('/api/sessions/search?q='+encodeURIComponent(q));renderSearchResults(r.results||[])}catch(e){toast(e.message)}}$('projectQuick').onclick=openProjectDialog;$('workspaceAction').onclick=openProjectDialog;$('mobileMenu').onclick=()=>{if(window.innerWidth>=701&&$('sidebar').style.display==='none'){$('sidebar').style.display='';document.body.classList.remove('sidebar-collapsed')}else openMobile()};$('mobileScrim').onclick=closeMobile;$('sidebarCollapse').onclick=()=>{if(window.innerWidth<701)closeMobile();else{const sb=$('sidebar');sb.style.display=sb.style.display==='none'?'':'none';document.body.classList.toggle('sidebar-collapsed',sb.style.display==='none')}};$('send').onclick=send;const syncSendState=()=>$('composer').classList.toggle('is-empty',!$('prompt').value.trim());$('prompt').addEventListener('input',syncSendState);syncSendState();for(const chip of document.querySelectorAll('.suggest-chip'))chip.onclick=()=>{if(state.sending)return;$('prompt').value=chip.dataset.prompt||'';send()};$('stop').onclick=stop;$('mode').onchange=()=>setMode($('mode').value);$('model').onchange=()=>{state.model=$('model').value;rememberModelChoice();syncModelMenu();refreshNativeLevels()};$('modelMenu').onclick=()=>{if($('modelMenu').getAttribute('aria-expanded')==='true')closeModelMenu();else openModelMenu()};document.addEventListener('pointerdown',e=>{if(!e.target.closest('.model-top-select'))closeModelMenu()});$('speed').onchange=()=>{state.speed=$('speed').value;persistSettings({speed:state.speed});toast(state.speed==='boost'?'Boost reduces unnecessary context and output. Actual speed varies.':'Standard speed restored.')};$('effort').onchange=()=>{state.effort=$('effort').value;persistSettings({effort:state.effort})};$('prompt').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&state.settings.send_on_enter!==false){e.preventDefault();send()}});document.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();newSession()}if(e.key==='Escape'){closeModelMenu();closeDrawer()}});$('projectForm').onsubmit=async e=>{e.preventDefault();try{const result=await api('/api/projects',{path:$('projectPath').value});await useSelectedProject(result.project)}catch(err){toast(err.message)}};$('cancelProject').onclick=()=>$('projectDialog').close();$('nativePick').onclick=async()=>{try{const r=await api('/api/projects/pick',{});await useSelectedProject(r.project)}catch(e){toast(e.message)}};$('pairForm').onsubmit=pairDevice;$('voiceMic').onclick=voiceDictate;$('attachmentButton').onclick=e=>{e.stopPropagation();const m=$('composerMenu');const open=m.hidden;m.hidden=!open;$('attachmentButton').setAttribute('aria-expanded',String(open))};$('menuAttach').onclick=()=>{$('composerMenu').hidden=true;$('attachment').click()};$('prompt').addEventListener('focus',()=>{$('composerMenu').hidden=true});$('prompt').addEventListener('pointerdown',()=>{$('composerMenu').hidden=true});document.addEventListener('pointerdown',e=>{const m=$('composerMenu');if(m&&!m.hidden&&!e.target.closest('#composer')){m.hidden=true;$('attachmentButton').setAttribute('aria-expanded','false')}});$('attachment').onchange=async e=>{
-  const files=[...(e.target.files||[])];e.target.value='';
-  for(const file of files){
-    if(state.pending.length>=4){toast('Attach at most 4 files.');break}
-    const name=file.name||'attachment';
-    const image=/\.(png|jpe?g|webp)$/i.test(name)||['image/png','image/jpeg','image/webp'].includes(file.type);
-    try{
-      if(image){
-        if(/\.(svg|gif)$/i.test(name)){toast(name+' is not a PNG, JPEG, or WebP.');continue}
-        let useFile=file,useName=name;
-        if(file.size>1200000){
-          if(window.__JANNA_WEB__){const small=await downscaleImageFile(file).catch(()=>null);if(!small){toast(name+' could not be shrunk to fit.');continue}useFile=small;useName=small.name}
-          else{toast(name+' is over 1.2 MB.');continue}
-        }
-        if(state.pending.filter(item=>item.kind==='image').length>=2){toast('Attach at most 2 images.');continue}
-        const data=await fileBase64(useFile);
-        state.pending.push({kind:'image',name:useName,data,file:useFile});
-        if(!state.modelVision)toast(name+' stays on this PC. This model has not advertised vision, so its pixels will not be sent.');
-      }else{
-        if(file.size>180000){toast(name+' is over 180,000 characters. Put it in the project instead.');continue}
-        const text=await file.text();
-        if(text.includes('\u0000')){toast(name+' is not a text log.');continue}
-        state.pending.push({kind:'log',name,text});
-      }
-    }catch(err){toast(err.message||'Could not read '+name)}
-  }
-  renderPending();
+/* ---------- response style (Customize setting) ----------
+   The web backend has no style channel: its system prompt is fixed.
+   The style is applied by appending a short directive to the prompt SENT
+   to the model. The directive is stripped again when rendering history,
+   so what you see in the chat is exactly what you typed. */
+const STYLE_DIRECTIVES = {
+  Concise: 'Answer concisely: short sentences, no extra padding.',
+  Formal: 'Answer in a formal, professional tone.',
+  Tutor: 'Answer like a patient tutor: explain each step simply and check understanding.',
+  Comprehensive: 'Answer comprehensively, with full detail and examples.',
 };
- document.body.classList.add('ready');window.addEventListener('online',recoverConnection);document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')recoverConnection()});}
-let workspaceReady=false,connectionCheck=false;
-async function recoverConnection(){
- if(connectionCheck||state.busy)return;
- connectionCheck=true;
- try{
-  if(!workspaceReady){if(!await initialConnection())return;await initializeWorkspace();workspaceReady=true;}
-  else{const result=await api('/api/status');statusBadge(result);}
- }catch(error){if(error.status===401||error.status===403){workspaceReady=false;if(state.remote)$('pairDialog').showModal();}$('sidebarState').textContent='PC unreachable · reconnecting';$('headerMode').textContent='Waiting for your PC';$('sidebarDot').classList.add('offline');$('headerDot').classList.add('offline');}
- finally{connectionCheck=false;}
+function styleDirective() {
+  const style = state.settings.response_style || 'Default';
+  if (style === 'Custom') { const c = String(state.settings.custom_style || '').trim(); return c ? 'Follow this response style: ' + c : ''; }
+  return STYLE_DIRECTIVES[style] || '';
 }
-async function init(){bind();window.refreshLuna?.();try{document.body.dataset.theme=localStorage.getItem('janna-theme')||'rose';syncDesktopChrome()}catch{}await recoverConnection();setInterval(recoverConnection,10000);if('serviceWorker' in navigator&&location.protocol==='https:'){navigator.serviceWorker.register('/sw.js').catch(()=>{})}}
-init();
+const stripStyleDirective = text => String(text || '').replace(/\n\n\[Response style:[^\]]*\]\s*$/, '');
 
-// ---- Voice conversation mode (ChatGPT-style talk loop) ----
-// Tap the waveform button: Janna listens, answers in the chat, and speaks the
-// answer back, then listens again. Mic + speech are the browser's own engines.
-const voiceTalk = { active: false, phase: 'idle', muted: false, recog: null, watch: null, restart: null, quiet: 0 };
+/* ---------- voice: dictation + voice conversation mode ---------- */
+function speechTag(sample = '') {
+  const code = state.settings.language || 'auto';
+  const row = (state.languages || []).find(item => item.id === code);
+  if (row && row.speech) return row.speech;
+  if (code === 'auto') return /\b(?:il|la|questo|sono|posso|grazie)\b/i.test(sample || $('prompt')?.value || '') ? 'it-IT' : (navigator.language || 'en-US');
+  return code === 'it' ? 'it-IT' : 'en-US';
+}
+function voiceSpeak(text) {
+  if (state.settings.voice_output !== true || !('speechSynthesis' in window)) return;
+  const cleaned = String(text || '').replace(/```[\s\S]*?```/g, ' [code block omitted] ').replace(/[<>{}*_#]/g, '').slice(0, 1700);
+  if (!cleaned.trim()) return;
+  try { window.speechSynthesis.cancel(); const utter = new SpeechSynthesisUtterance(cleaned); utter.lang = speechTag(cleaned); utter.rate = 1.07; window.speechSynthesis.speak(utter); } catch { /* unavailable */ }
+}
+function voiceDictate() {
+  const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!Rec) return toast('Microphone dictation is not available in this browser. You can still type.');
+  if (state.voiceListening) { try { state.voiceRecognizer?.stop(); } catch { /* ignore */ } return; }
+  const recognition = new Rec(); state.voiceRecognizer = recognition;
+  recognition.lang = speechTag();
+  recognition.interimResults = true; recognition.continuous = false; recognition.maxAlternatives = 1;
+  const previous = $('prompt').value; let transcript = '';
+  recognition.onresult = e => { transcript = Array.from(e.results).map(r => r[0].transcript).join(' '); $('prompt').value = (previous + ' ' + transcript).trim(); autoGrowPrompt(); syncSendState(); };
+  recognition.onerror = e => toast('Voice transcription: ' + String(e.error || 'unavailable') + '. Some browsers require network access.');
+  recognition.onend = () => { state.voiceListening = false; $('voiceMic').classList.remove('listening'); $('voiceMic').setAttribute('aria-pressed', 'false'); $('prompt').focus(); };
+  try { recognition.start(); state.voiceListening = true; $('voiceMic').classList.add('listening'); $('voiceMic').setAttribute('aria-pressed', 'true'); }
+  catch (e) { toast('Microphone could not start: ' + e.message); }
+}
+const voiceTalk = { active: false, phase: 'idle', muted: false, recog: null, watch: null, restart: null, quiet: 0, errStrikes: 0, errKind: '', chunkTimer: null, langOverride: '', langRetried: false, stopped: false };
 function voiceOverlay() {
   let ov = document.getElementById('voiceOverlay');
   if (ov) return ov;
   ov = document.createElement('div');
   ov.className = 'voice-overlay'; ov.id = 'voiceOverlay'; ov.dataset.phase = 'idle';
-  ov.innerHTML = '<button class="voice-orb" id="voiceOrb" type="button" aria-label="Voice orb"><i></i><i></i><i></i><i></i><i></i></button><div class="voice-caption" id="voiceCaption">I’m listening…</div><div class="voice-sub">Just talk to Janna — she’ll answer out loud.</div><div class="voice-controls"><button class="voice-ctl" id="voiceMuteBtn" type="button" title="Mute microphone" aria-label="Mute microphone"><svg><use href="#i-mic"/></svg></button><button class="voice-ctl close" id="voiceCloseBtn" type="button" title="End voice chat" aria-label="End voice chat"><svg><use href="#i-close"/></svg></button></div>';
+  ov.innerHTML = '<button class="voice-orb" id="voiceOrb" type="button" aria-label="Voice orb"><i></i><i></i><i></i><i></i><i></i></button><div class="voice-caption" id="voiceCaption">I\u2019m listening\u2026</div><div class="voice-sub">Just talk to Janna \u2014 she\u2019ll answer out loud.</div><div class="voice-controls"><button class="voice-ctl" id="voiceMuteBtn" type="button" title="Mute microphone" aria-label="Mute microphone"><svg><use href="#i-mic"/></svg></button><button class="voice-ctl close" id="voiceCloseBtn" type="button" title="End voice chat" aria-label="End voice chat"><svg><use href="#i-close"/></svg></button></div>';
   document.body.appendChild(ov);
   ov.querySelector('#voiceCloseBtn').onclick = () => voiceClose();
   ov.querySelector('#voiceMuteBtn').onclick = () => voiceToggleMute();
@@ -1309,17 +284,13 @@ function voiceSetPhase(phase, caption) {
 function voiceClean(text) {
   return String(text || '').replace(/```[\s\S]*?```/g, ' [code block omitted] ').replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/[<>{}*_#~`>]/g, '').replace(/\s+/g, ' ').trim().slice(0, 1700);
 }
-// --- Listen button on chat responses: read one message aloud. Separate
-// from voice conversation mode; tapping again (or another message's
-// button) stops it. Sentence chunks + a watchdog, same lesson as voice
-// mode: one long utterance can silently hang in Chrome/Android TTS. ---
 const msgSpeech = { btn: null, timer: null, queue: [] };
 function msgSpeakClean(text) {
   return String(text || '').replace(/```[\s\S]*?```/g, ' [code block omitted] ').replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/[<>{}*_#~`>]/g, '').replace(/\s+/g, ' ').trim();
 }
 function msgSpeakStop() {
   clearTimeout(msgSpeech.timer);
-  try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch {}
+  try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch { /* ignore */ }
   if (msgSpeech.btn) { msgSpeech.btn.innerHTML = '<svg><use href="#i-play"/></svg>'; msgSpeech.btn.title = 'Listen'; msgSpeech.btn = null; }
   msgSpeech.queue = [];
 }
@@ -1340,7 +311,7 @@ function msgSpeakToggle(text, btn) {
     const part = msgSpeech.queue.shift();
     if (part == null) { msgSpeakStop(); return; }
     const u = new SpeechSynthesisUtterance(part);
-    try { u.lang = speechTag(); } catch {}
+    try { u.lang = speechTag(); } catch { /* ignore */ }
     let advanced = false;
     const advance = () => { if (advanced) return; advanced = true; clearTimeout(msgSpeech.timer); step(); };
     u.onend = advance; u.onerror = advance;
@@ -1351,18 +322,14 @@ function msgSpeakToggle(text, btn) {
 }
 function voiceTalkSpeak(text) {
   const clean = voiceClean(text);
-  if (!clean || !('speechSynthesis' in window)) { voiceSetPhase('idle', 'My answer is in the chat — voice isn’t available here.'); return; }
-  try { window.speechSynthesis.cancel(); } catch {}
-  // Speak in sentence-sized chunks: one long utterance can silently never
-  // start (or never end) in Chrome/Android TTS, which used to hang the whole
-  // conversation in the 'speaking' phase. Each chunk has a watchdog that
-  // force-advances if neither onend nor onerror ever fires.
+  if (!clean || !('speechSynthesis' in window)) { voiceSetPhase('idle', 'My answer is in the chat \u2014 voice isn\u2019t available here.'); return; }
+  try { window.speechSynthesis.cancel(); } catch { /* ignore */ }
   const chunks = [];
   for (const part of clean.match(/[^.!?…]+[.!?…]*\s*/g) || [clean]) { const t = part.trim(); if (t) chunks.push(t); }
   const queue = [];
   for (const c of chunks) { if (c.length <= 180) queue.push(c); else for (let i = 0; i < c.length; i += 180) queue.push(c.slice(i, i + 180)); }
   if (!queue.length) queue.push(clean);
-  voiceSetPhase('speaking', clean.length > 220 ? clean.slice(0, 220) + '…' : clean);
+  voiceSetPhase('speaking', clean.length > 220 ? clean.slice(0, 220) + '\u2026' : clean);
   let idx = 0;
   const step = () => {
     clearTimeout(voiceTalk.chunkTimer);
@@ -1379,9 +346,9 @@ function voiceTalkSpeak(text) {
   };
   step();
 }
-function voiceExtract(el) {
-  const clone = el.cloneNode(true);
-  clone.querySelectorAll('.activity-chain,.message-actions,.work-stream,pre,button,details').forEach(n => n.remove());
+function voiceExtract(elm) {
+  const clone = elm.cloneNode(true);
+  clone.querySelectorAll('.thinking,.message-actions,pre,button,details').forEach(n => n.remove());
   return clone.textContent.replace(/\s+/g, ' ').trim();
 }
 function voiceWatchReply(beforeCount) {
@@ -1392,15 +359,15 @@ function voiceWatchReply(beforeCount) {
     if (state.busy) return;
     clearInterval(voiceTalk.watch);
     const els = document.querySelectorAll('.message.assistant');
-    const el = els[els.length - 1];
-    if (el && els.length > beforeCount) voiceTalkSpeak(voiceExtract(el));
-    else voiceTalkSpeak('Tapos na — nasa chat ang sagot ko.');
+    const elm = els[els.length - 1];
+    if (elm && els.length > beforeCount) voiceTalkSpeak(voiceExtract(elm));
+    else voiceTalkSpeak('Done \u2014 my answer is in the chat.');
   }, 700);
   setTimeout(() => { clearInterval(voiceTalk.watch); }, 125000);
 }
 function voiceSubmit(text) {
   const before = document.querySelectorAll('.message.assistant').length;
-  voiceSetPhase('thinking', '“' + text + '”');
+  voiceSetPhase('thinking', '\u201c' + text + '\u201d');
   $('prompt').value = text; syncSendState();
   send();
   voiceWatchReply(before);
@@ -1408,21 +375,21 @@ function voiceSubmit(text) {
 function voiceListen() {
   if (!voiceTalk.active || voiceTalk.muted) return;
   const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!Rec) { voiceSetPhase('idle', 'This browser doesn’t support listening. Just type, or close this.'); return; }
-  try { voiceTalk.recog?.stop(); } catch {}
+  if (!Rec) { voiceSetPhase('idle', 'This browser doesn\u2019t support listening. Just type, or close this.'); return; }
+  try { voiceTalk.recog?.stop(); } catch { /* ignore */ }
   const recog = new Rec(); voiceTalk.recog = recog;
   recog.lang = voiceTalk.langOverride || speechTag(); recog.interimResults = true; recog.continuous = false; recog.maxAlternatives = 1;
-  voiceSetPhase('listening', 'I’m listening… go ahead.');
+  voiceSetPhase('listening', 'I\u2019m listening\u2026 go ahead.');
   recog.onresult = e => {
     let interim = '', finalText = '';
     for (const r of e.results) { if (r.isFinal) finalText += r[0].transcript; else interim += r[0].transcript; }
     if (interim) voiceSetPhase('listening', interim);
-    if (finalText.trim()) { voiceTalk.quiet = 0; voiceTalk.errStrikes = 0; try { recog.stop(); } catch {} voiceSubmit(finalText.trim()); }
+    if (finalText.trim()) { voiceTalk.quiet = 0; voiceTalk.errStrikes = 0; try { recog.stop(); } catch { /* ignore */ } voiceSubmit(finalText.trim()); }
   };
   recog.onerror = e => {
     const err = String(e.error || '');
     if (err === 'language-not-supported' && !voiceTalk.langRetried) { voiceTalk.langRetried = true; voiceTalk.langOverride = 'en-US'; voiceTalk.errStrikes = 0; }
-    else if (err === 'not-allowed' || err === 'service-not-allowed') { voiceSetPhase('idle', 'I can’t hear you — allow the microphone for Janna, then try again.'); voiceTalk.recog = null; voiceTalk.errStrikes = 0; }
+    else if (err === 'not-allowed' || err === 'service-not-allowed') { voiceSetPhase('idle', 'I can\u2019t hear you \u2014 allow the microphone for Janna, then try again.'); voiceTalk.recog = null; voiceTalk.errStrikes = 0; }
     else if (err === 'no-speech') { voiceTalk.quiet++; }
     else if (err) { voiceTalk.errStrikes = (voiceTalk.errStrikes || 0) + 1; voiceTalk.errKind = err; }
   };
@@ -1430,57 +397,1416 @@ function voiceListen() {
     if (voiceTalk.recog !== recog) return;
     if (!voiceTalk.active || voiceTalk.muted || voiceTalk.phase !== 'listening') return;
     clearTimeout(voiceTalk.restart);
-    if ((voiceTalk.errStrikes || 0) >= 2) { const k = voiceTalk.errKind || ''; voiceTalk.errStrikes = 0; voiceTalk.stopped = true; voiceSetPhase('idle', k === 'network' ? 'My hearing can’t reach the speech service — the internet it needs is weak or unavailable. Tap the circle to try again, or just type.' : 'Something’s wrong with my listening (' + k + ') — tap the circle to try again.'); return; }
-    if (voiceTalk.quiet >= 3) { voiceTalk.stopped = true; voiceSetPhase('idle', 'I can’t hear anything — tap the circle to try again.'); return; }
+    if ((voiceTalk.errStrikes || 0) >= 2) { const k = voiceTalk.errKind || ''; voiceTalk.errStrikes = 0; voiceTalk.stopped = true; voiceSetPhase('idle', k === 'network' ? 'My hearing can\u2019t reach the speech service \u2014 the internet it needs is weak or unavailable. Tap the circle to try again, or just type.' : 'Something\u2019s wrong with my listening (' + k + ') \u2014 tap the circle to try again.'); return; }
+    if (voiceTalk.quiet >= 3) { voiceTalk.stopped = true; voiceSetPhase('idle', 'I can\u2019t hear anything \u2014 tap the circle to try again.'); return; }
     voiceTalk.restart = setTimeout(() => { if (!voiceTalk.stopped) voiceListen(); }, 350);
   };
-  try { recog.start(); } catch {}
+  try { recog.start(); } catch { /* ignore */ }
 }
 function voiceOrbTap() {
-  if (voiceTalk.phase === 'speaking') { clearTimeout(voiceTalk.chunkTimer); try { window.speechSynthesis.cancel(); } catch {} voiceListen(); }
-  else if (voiceTalk.phase === 'listening') { try { voiceTalk.recog?.stop(); } catch {} voiceSetPhase('idle', 'Paused — tap the circle to continue.'); }
+  if (voiceTalk.phase === 'speaking') { clearTimeout(voiceTalk.chunkTimer); try { window.speechSynthesis.cancel(); } catch { /* ignore */ } voiceListen(); }
+  else if (voiceTalk.phase === 'listening') { try { voiceTalk.recog?.stop(); } catch { /* ignore */ } voiceSetPhase('idle', 'Paused \u2014 tap the circle to continue.'); }
   else if (voiceTalk.phase === 'idle' && !voiceTalk.muted) { voiceTalk.stopped = false; voiceListen(); }
 }
 function voiceToggleMute() {
   voiceTalk.muted = !voiceTalk.muted;
   const btn = document.getElementById('voiceMuteBtn'); if (btn) btn.classList.toggle('muted', voiceTalk.muted);
-  if (voiceTalk.muted) { clearTimeout(voiceTalk.chunkTimer); try { voiceTalk.recog?.stop(); } catch {} try { window.speechSynthesis.cancel(); } catch {} voiceSetPhase('idle', 'Mic is muted — tap the mic to talk again.'); }
+  if (voiceTalk.muted) { clearTimeout(voiceTalk.chunkTimer); try { voiceTalk.recog?.stop(); } catch { /* ignore */ } try { window.speechSynthesis.cancel(); } catch { /* ignore */ } voiceSetPhase('idle', 'Mic is muted \u2014 tap the mic to talk again.'); }
   else { voiceTalk.stopped = false; voiceListen(); }
 }
 function voiceOpen() {
   msgSpeakStop();
   voiceOverlay();
   voiceTalk.active = true; voiceTalk.muted = false; voiceTalk.quiet = 0; voiceTalk.errStrikes = 0; voiceTalk.stopped = false;
-  // Prime text-to-speech inside this tap: Android Chrome can silently drop
-  // speak() calls that were never unlocked by a user gesture.
-  try { const synth = window.speechSynthesis; if (synth) { synth.getVoices(); const prime = new SpeechSynthesisUtterance(' '); prime.volume = 0; synth.speak(prime); } } catch {}
+  try { const synth = window.speechSynthesis; if (synth) { synth.getVoices(); const prime = new SpeechSynthesisUtterance(' '); prime.volume = 0; synth.speak(prime); } } catch { /* ignore */ }
   document.body.classList.add('voice-open');
   const btn = document.getElementById('voiceMuteBtn'); if (btn) btn.classList.remove('muted');
   voiceTalk.langOverride = ''; voiceTalk.langRetried = false;
-  // Ask for the microphone EXPLICITLY first: on Android Chrome the speech
-  // recognizer's own permission flow is unreliable — it can fail forever
-  // without ever showing the prompt. getUserMedia shows the real prompt and
-  // gives a definite answer we can act on.
   if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-    voiceSetPhase('idle', 'One moment — asking for microphone permission…');
+    voiceSetPhase('idle', 'One moment \u2014 asking for microphone permission\u2026');
     navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
-      stream.getTracks().forEach(t => { try { t.stop(); } catch {} });
+      stream.getTracks().forEach(t => { try { t.stop(); } catch { /* ignore */ } });
       if (voiceTalk.active && !voiceTalk.muted) voiceListen();
     }).catch(err => {
       if (!voiceTalk.active) return;
       if (err && err.name === 'NotFoundError') { voiceListen(); return; }
       voiceTalk.stopped = true;
-      voiceSetPhase('idle', 'The microphone wasn’t allowed. To fix it: tap the lock icon in the address bar → Permissions → Microphone → Allow, then close and reopen this.');
+      voiceSetPhase('idle', 'The microphone wasn\u2019t allowed. To fix it: tap the lock icon in the address bar \u2192 Permissions \u2192 Microphone \u2192 Allow, then close and reopen this.');
     });
   } else voiceListen();
 }
 function voiceClose() {
   voiceTalk.active = false;
   clearInterval(voiceTalk.watch); clearTimeout(voiceTalk.restart);
-  try { voiceTalk.recog?.stop(); } catch {}
-  try { window.speechSynthesis.cancel(); } catch {}
+  try { voiceTalk.recog?.stop(); } catch { /* ignore */ }
+  try { window.speechSynthesis.cancel(); } catch { /* ignore */ }
   document.body.classList.remove('voice-open');
   document.getElementById('voiceOverlay')?.remove();
 }
-document.getElementById('voiceModeBtn')?.addEventListener('click', voiceOpen);
-document.addEventListener('keydown', e => { if (e.key === 'Escape' && voiceTalk.active) voiceClose(); });
+
+/* ---------- theme ---------- */
+function applyTheme() {
+  const mode = state.settings.appearance_mode || 'light';
+  const dark = mode === 'dark' || (mode === 'system' && window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches);
+  document.body.dataset.theme = dark ? 'dark' : 'light';
+  document.body.classList.toggle('wrap-code', state.settings.wrap_code === true);
+  document.body.classList.toggle('reduce-motion', state.settings.reduce_motion === true);
+  if (window.syncPhoneChrome) { try { window.syncPhoneChrome(); } catch { /* ignore */ } }
+}
+function syncDesktopChrome() { applyTheme(); }
+
+/* ---------- models ---------- */
+function modelRecord(id) { return state.modelCatalog.find(m => m.id === id) || { id, label: id, note: 'Cloud model', model_class: 'Janna Cloud' }; }
+function modelLabel(id) { return modelRecord(id).label || id; }
+function rememberModelChoice() { try { if (state.model) localStorage.setItem('janna-selected-model', state.model); } catch { /* ignore */ } }
+function renderModelOptions(models) {
+  state.models = models || [];
+  const current = state.model || (() => { try { return localStorage.getItem('janna-selected-model') || ''; } catch { return ''; } })();
+  const ordered = [];
+  const seen = new Set();
+  for (const row of state.modelCatalog) { if (state.models.includes(row.id) && !seen.has(row.id)) { ordered.push(row); seen.add(row.id); } }
+  for (const id of state.models) { if (!seen.has(id)) { ordered.push(modelRecord(id)); seen.add(id); } }
+  state.model = ordered.some(r => r.id === current) ? current : (ordered[0]?.id || '');
+  syncModelPicker();
+  refreshNativeLevels();
+}
+function syncModelPicker() {
+  const label = $('modelPickerLabel');
+  if (label) label.textContent = state.model ? modelLabel(state.model) : 'Choose a model';
+}
+async function refreshNativeLevels() {
+  state.modelVision = false;
+  if (!state.model) return;
+  try { const r = await api('/api/reasoning/' + encodeURIComponent(state.model)); state.modelVision = r.vision === true; }
+  catch { /* vision unknown: treat as no vision */ }
+  renderPending();
+}
+function chooseModel(id) {
+  if (!id || !state.models.includes(id)) return;
+  state.model = id; rememberModelChoice(); syncModelPicker(); closeModelPicker(); refreshNativeLevels();
+}
+function closeModelPicker() { const p = $('modelPicker'); if (p) p.hidden = true; $('modelPickerBtn').setAttribute('aria-expanded', 'false'); }
+function openModelPicker() {
+  const p = $('modelPicker'), btn = $('modelPickerBtn');
+  if (!p || !state.models.length) { toast('No models available yet.'); return; }
+  if (!p.hidden) { closeModelPicker(); return; }
+  closePlusMenu();
+  p.replaceChildren();
+  const groups = [['Janna Cloud', r => r.id === 'janna-cloud'], ['APInex', r => r.id.startsWith('apinex-')], ['Other cloud models', r => r.id !== 'janna-cloud' && !r.id.startsWith('apinex-')]];
+  for (const [name, pred] of groups) {
+    const rows = state.modelCatalog.filter(r => state.models.includes(r.id) && pred(r));
+    if (!rows.length) continue;
+    p.append(el('div', 'model-picker-group', name));
+    for (const row of rows) {
+      const item = el('button', 'model-picker-item');
+      item.type = 'button'; item.setAttribute('role', 'radio'); item.setAttribute('aria-checked', String(row.id === state.model));
+      const radio = el('span', 'radio');
+      const texts = el('div', 'mp-texts');
+      texts.append(el('strong', '', row.label));
+      const note = row.note || (row.vision ? 'Can see images' : '');
+      if (note) texts.append(el('small', '', note + (row.vision ? ' · Sees images' : '')));
+      item.append(radio, texts);
+      if (row.id === state.model) { const c = el('span', 'mp-check'); c.innerHTML = '<svg><use href="#i-check"/></svg>'; item.append(c); }
+      item.onclick = () => chooseModel(row.id);
+      p.append(item);
+    }
+  }
+  const foot = el('div', 'model-picker-foot');
+  foot.append(document.createTextNode('Free \u2014 all models included. No account, no paid tiers.'));
+  p.append(foot);
+  p.hidden = false;
+  btn.setAttribute('aria-expanded', 'true');
+}
+
+/* ---------- attachments ---------- */
+function downscaleImageFile(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file); const img = new Image();
+    img.onload = () => {
+      try {
+        const scale = Math.min(1, 1568 / Math.max(img.naturalWidth || 1, img.naturalHeight || 1));
+        const w = Math.max(1, Math.round(img.naturalWidth * scale)), h = Math.max(1, Math.round(img.naturalHeight * scale));
+        const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+        const cx = cv.getContext('2d'); cx.fillStyle = '#ffffff'; cx.fillRect(0, 0, w, h); cx.drawImage(img, 0, 0, w, h);
+        URL.revokeObjectURL(url);
+        cv.toBlob(blob => { if (!blob) { reject(new Error('Could not shrink the image')); return; } resolve(new File([blob], (file.name || 'photo').replace(/\.[a-z0-9]+$/i, '') + '.jpg', { type: 'image/jpeg' })); }, 'image/jpeg', 0.85);
+      } catch (err) { URL.revokeObjectURL(url); reject(err); }
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Could not read the image')); };
+    img.src = url;
+  });
+}
+function fileBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+    reader.onerror = () => reject(reader.error || new Error('Could not read the file'));
+    reader.readAsDataURL(file);
+  });
+}
+function renderPending() {
+  const tray = $('attachmentTray'); if (!tray) return;
+  tray.replaceChildren();
+  tray.hidden = !state.pending.length;
+  for (const item of state.pending) {
+    const chip = el('span', 'attachment-chip');
+    if (item.kind === 'image' && item.file) { const img = document.createElement('img'); img.alt = ''; img.src = URL.createObjectURL(item.file); chip.append(img); }
+    chip.append(document.createTextNode(item.name + ' \u00b7 ' + (item.kind === 'image' ? (state.modelVision ? 'image' : 'image, pixels not sent') : 'log')));
+    chip.append(button('Remove', () => { state.pending = state.pending.filter(row => row !== item); renderPending(); }));
+    tray.append(chip);
+  }
+}
+async function handleFiles(files) {
+  for (const file of files) {
+    if (state.pending.length >= 4) { toast('Attach at most 4 files.'); break; }
+    const name = file.name || 'attachment';
+    const image = /\.(png|jpe?g|webp)$/i.test(name) || ['image/png', 'image/jpeg', 'image/webp'].includes(file.type);
+    try {
+      if (image) {
+        if (/\.(svg|gif)$/i.test(name)) { toast(name + ' is not a PNG, JPEG, or WebP.'); continue; }
+        let useFile = file, useName = name;
+        if (file.size > 1200000) {
+          if (window.__JANNA_WEB__) { const small = await downscaleImageFile(file).catch(() => null); if (!small) { toast(name + ' could not be shrunk to fit.'); continue; } useFile = small; useName = small.name; }
+          else { toast(name + ' is over 1.2 MB.'); continue; }
+        }
+        if (state.pending.filter(item => item.kind === 'image').length >= 2) { toast('Attach at most 2 images.'); continue; }
+        const data = await fileBase64(useFile);
+        state.pending.push({ kind: 'image', name: useName, data, file: useFile });
+        if (!state.modelVision) toast(name + ' stays on this device. This model has not advertised vision, so its pixels will not be sent.');
+      } else {
+        if (file.size > 180000) { toast(name + ' is over 180,000 characters.'); continue; }
+        const text = await file.text();
+        if (text.includes('\u0000')) { toast(name + ' is not a text file.'); continue; }
+        state.pending.push({ kind: 'log', name, text });
+      }
+    } catch (err) { toast(err.message || 'Could not read ' + name); }
+  }
+  renderPending();
+}
+
+/* ---------- suggestions & modes ----------
+   Only modes Janna can really do. "Create an image" and "Check email and
+   calendar" are omitted (see BUILD-REPORT.md). */
+const MODES = {
+  search: { label: 'Search the web', icon: 'globe', chip: 'Web search', placeholder: 'Search the web.',
+    prompts: ['What\u2019s in the news today?', 'What\u2019s new in AI this week?', 'Find things to do this weekend', 'Compare the latest flagship phones', 'Get a morning brief every day', 'Get a daily AI news digest', 'Get a daily market report'], sendOnTap: true },
+  apps: { label: 'Make a website', icon: 'spark', chip: 'Apps', placeholder: 'Describe what to build...',
+    prompts: ['Landing page', 'Game', 'Kanban board', 'Revenue dashboard', 'Education', 'Portfolio site', 'Event page', 'Booking site'], sendOnTap: false, templatePrefix: 'Build a ' },
+  writing: { label: 'Write or edit', icon: 'edit', chip: 'Writing', placeholder: 'Describe what to write...',
+    prompts: ['Improve your X post', 'Help me write an email', 'Proofread my writing', 'Write a document'], sendOnTap: false },
+  presentation: { label: 'Design a presentation', icon: 'book', chip: 'Presentation', placeholder: 'Describe your presentation...',
+    prompts: ['Outline a presentation about a new product', 'Make slides for a school project', 'Create a pitch deck outline'], sendOnTap: false },
+};
+const MODE_ORDER = ['search', 'apps', 'writing', 'presentation'];
+let suggestionRot = null;
+function suggestRotation() {
+  if (suggestionRot !== null) return suggestionRot;
+  let rot = 0;
+  try { rot = Number(localStorage.getItem('janna-suggest-rot-v1') || '0') || 0; localStorage.setItem('janna-suggest-rot-v1', String(rot + 1)); } catch { /* ignore */ }
+  suggestionRot = rot;
+  return rot;
+}
+function renderSuggestions() {
+  const list = $('suggestList');
+  list.replaceChildren();
+  if (state.isPrivate) { list.hidden = true; return; }
+  list.hidden = false;
+  if (state.settings.show_suggestions === false) { list.hidden = true; return; }
+  if (!state.armedMode) {
+    const rot = suggestRotation();
+    const order = MODE_ORDER.map((_, i) => MODE_ORDER[(rot + i) % MODE_ORDER.length]).slice(0, 3);
+    for (const key of order) {
+      const m = MODES[key];
+      const row = el('button', 'suggest-row');
+      row.type = 'button';
+      row.innerHTML = `<svg><use href="#i-${m.icon}"/></svg><span>${escapeHTML(m.label)}</span>`;
+      row.onclick = () => armMode(key);
+      list.append(row);
+    }
+    return;
+  }
+  const m = MODES[state.armedMode];
+  const back = el('button', 'suggest-row suggest-back');
+  back.type = 'button'; back.textContent = '\u2190 All suggestions';
+  back.onclick = () => disarmMode();
+  list.append(back);
+  for (const p of m.prompts) {
+    const row = el('button', 'suggest-row');
+    row.type = 'button';
+    row.innerHTML = `<svg><use href="#i-${m.icon}"/></svg><span>${escapeHTML(p)}</span>`;
+    row.onclick = () => {
+      if (m.sendOnTap) { $('prompt').value = p; syncSendState(); send(); }
+      else { $('prompt').value = (m.templatePrefix || '') + p + (m.templatePrefix ? ' web app' : ''); autoGrowPrompt(); syncSendState(); $('prompt').focus(); }
+    };
+    list.append(row);
+  }
+}
+function armMode(key) {
+  const m = MODES[key]; if (!m) return;
+  state.armedMode = key;
+  if (key === 'search') {
+    state.armedBeforeResearch = state.settings.research_mode || 'auto';
+    if (state.settings.research_mode !== 'always') persistSettings({ research_mode: 'always' });
+  }
+  renderModeChip();
+  $('prompt').placeholder = m.placeholder;
+  renderSuggestions();
+}
+function disarmMode() {
+  if (state.armedMode === 'search' && state.settings.research_mode === 'always') persistSettings({ research_mode: state.armedBeforeResearch || 'auto' });
+  state.armedMode = null;
+  renderModeChip();
+  $('prompt').placeholder = 'Ask Janna anything\u2026';
+  renderSuggestions();
+}
+function renderModeChip() {
+  const row = $('modeChipRow');
+  row.replaceChildren();
+  if (!state.armedMode) { row.hidden = true; return; }
+  const m = MODES[state.armedMode];
+  const chip = el('button', 'mode-chip');
+  chip.type = 'button';
+  chip.innerHTML = `<span class="chip-x">\u2715</span> ${escapeHTML(m.chip)}`;
+  chip.onclick = () => disarmMode();
+  row.append(chip);
+  row.hidden = false;
+}
+
+/* ---------- composer helpers ---------- */
+function autoGrowPrompt() {
+  const t = $('prompt'); t.style.height = 'auto'; t.style.height = Math.min(160, t.scrollHeight) + 'px';
+}
+function syncSendState() {
+  const c = $('composer'); if (!c) return;
+  const empty = !$('prompt').value.trim();
+  c.classList.toggle('is-empty', empty);
+  $('send').classList.toggle('active', !empty);
+}
+function updateBusy() {
+  const busy = state.busy;
+  $('composer').classList.toggle('is-busy', busy);
+  $('stop').hidden = !busy;
+  $('stop').disabled = state.stopRequested;
+  $('prompt').disabled = false;
+  $('prompt').placeholder = busy ? 'Queue instructions for the next step\u2026' : (state.armedMode ? MODES[state.armedMode].placeholder : 'Ask Janna anything\u2026');
+  $('modelPickerBtn').disabled = busy;
+  if (busy) closeModelPicker();
+  statusBadge();
+}
+function statusBadge() {
+  const ok = !!state.models.length;
+  $('sidebarDot').classList.toggle('offline', !ok);
+  $('sidebarState').textContent = state.busy ? 'Working\u2026' : ok ? 'Cloud \u00b7 Ready' : 'Cloud \u00b7 Offline';
+}
+
+/* ---------- thinking display (matches styles.css .thinking structure) ---------- */
+const think = { el: null, timer: null, start: 0 };
+function thinkingEl() {
+  if (think.el) return think.el;
+  const wrap = $('messages'); if (!wrap) return null;
+  const item = el('div', 'thinking');
+  const head = el('button', 'thinking-head');
+  head.type = 'button';
+  head.innerHTML = '<span class="think-spinner"></span><span class="think-title">Working for 1s</span><span class="think-clock">1s</span><svg class="think-chevron"><use href="#i-chevron"/></svg>';
+  const body = el('div', 'think-body');
+  body.append(el('ul', 'think-steps'));
+  item.append(head, body);
+  head.onclick = () => item.classList.toggle('collapsed');
+  wrap.appendChild(item);
+  think.el = item;
+  return item;
+}
+function startThinking() {
+  const item = thinkingEl();
+  if (!item) return;
+  item.hidden = false;
+  item.classList.remove('collapsed', 'done');
+  item.querySelector('.think-title').textContent = 'Working for 1s';
+  item.querySelector('.think-clock').textContent = '1s';
+  item.querySelector('.think-steps').replaceChildren();
+  think.start = Date.now();
+  clearInterval(think.timer);
+  think.timer = setInterval(() => {
+    const secs = Math.max(1, Math.round((Date.now() - think.start) / 1000));
+    const text = 'Working for ' + fmtDur(secs);
+    item.querySelector('.think-title').textContent = text;
+    item.querySelector('.think-clock').textContent = fmtDur(secs);
+  }, 1000);
+  scrollThreadToBottom();
+}
+function stopThinking() {
+  clearInterval(think.timer);
+  if (think.el) {
+    const secs = fmtDur((Date.now() - think.start) / 1000);
+    think.el.classList.add('done', 'collapsed');
+    think.el.querySelector('.think-title').textContent = 'Thought for ' + secs;
+    think.el.querySelector('.think-clock').textContent = secs;
+  }
+}
+function addProgressStep(text) {
+  const item = thinkingEl();
+  if (!item) return;
+  const steps = item.querySelector('.think-steps');
+  steps.querySelectorAll('li').forEach(li => li.classList.remove('is-current'));
+  const li = el('li', 'is-current', text);
+  steps.append(li);
+  scrollThreadToBottom();
+}
+
+/* ---------- messages ---------- */
+function createMessageNode(message, session) {
+  const role = message.role || 'user';
+  const item = el('div', 'message ' + (role === 'assistant' ? 'assistant' : 'user'));
+  if (role === 'user') {
+    const content = stripStyleDirective(message.content || '');
+    const bubble = el('div', 'user-bubble');
+    bubble.append(document.createTextNode(content));
+    if (message.kind === 'image' && message.data) { const img = document.createElement('img'); img.src = 'data:image/jpeg;base64,' + message.data; img.alt = ''; img.className = 'attachment-preview'; bubble.append(img); }
+    if (message.kind === 'log') bubble.append(el('div', 'muted', (message.name || 'log') + ' \u00b7 ' + (message.content || '').length + ' characters'));
+    if (Array.isArray(message.attached)) for (const a of message.attached) bubble.append(el('div', 'muted', (a.kind === 'image' ? 'Image' : 'File') + ': ' + (a.name || 'file')));
+    item.append(bubble);
+    const actions = el('div', 'message-actions');
+    const editBtn = button('Edit', () => {
+      $('prompt').value = content; autoGrowPrompt(); syncSendState(); $('prompt').focus(); scrollThreadToBottom();
+    });
+    const copyBtn = button('Copy', async () => { toast((await copyCodeText(content)) ? 'Copied' : 'Copy failed'); });
+    actions.append(editBtn, copyBtn);
+    item.append(actions);
+  } else {
+    const content = el('div', 'message-body');
+    item.append(content);
+    renderMarkdown(content, message.content || '');
+    const feedback = getFeedback(session?.id, message.content || '');
+    const actions = el('div', 'message-actions');
+    const copyBtn = button('Copy', async () => { toast((await copyCodeText(message.content || '')) ? 'Copied' : 'Copy failed'); });
+    copyBtn.classList.add('message-action'); copyBtn.innerHTML = '<svg><use href="#i-copy"/></svg>'; copyBtn.title = 'Copy';
+    const like = button('Like', () => { saveFeedback(session?.id, message.content || '', 'up'); like.classList.toggle('voted', getFeedback(session?.id, message.content || '') === 'up'); dislike.classList.remove('voted'); toast('Thanks for the feedback'); });
+    like.classList.add('message-action'); like.innerHTML = '<svg><use href="#i-thumb-up"/></svg>'; like.title = 'Like';
+    const dislike = button('Dislike', () => { saveFeedback(session?.id, message.content || '', 'down'); dislike.classList.toggle('voted', getFeedback(session?.id, message.content || '') === 'down'); like.classList.remove('voted'); toast('Thanks for the feedback'); });
+    dislike.classList.add('message-action'); dislike.innerHTML = '<svg><use href="#i-thumb-down"/></svg>'; dislike.title = 'Dislike';
+    const more = button('More', () => openMessageMenu(message, session, more));
+    more.classList.add('message-action'); more.innerHTML = '<svg><use href="#i-dots"/></svg>'; more.title = 'More actions';
+    const listen = button('Listen', () => msgSpeakToggle(message.content || '', listen));
+    listen.classList.add('message-action'); listen.innerHTML = '<svg><use href="#i-play"/></svg>'; listen.title = 'Listen';
+    actions.append(copyBtn, like, dislike, more, listen);
+    item.append(actions);
+    if (feedback === 'up') like.classList.add('voted');
+    if (feedback === 'down') dislike.classList.add('voted');
+  }
+  return item;
+}
+function followUpChips(prompt, answer) {
+  const lower = String(prompt || '').toLowerCase();
+  const pick = candidates => candidates.filter((v, i, a) => a.indexOf(v) === i).slice(0, 2);
+  if (/summar/i.test(lower)) return pick(['Make it shorter', 'Give me the key points']);
+  if (/code|build|website|app|page|fix/.test(lower)) return pick(['Make it a full page', 'Add a small example']);
+  if (/explain|what (is|are)|how (does|do)/.test(lower)) return pick(['Give me an example', 'Explain it simply']);
+  if (/plan|idea/.test(lower)) return pick(['Make a checklist', 'Add a timeline']);
+  if (/search|news|latest|compare/.test(lower)) return pick(['Tell me more', 'What else is new?']);
+  const words = String(prompt || '').trim();
+  if (!words) return [];
+  return pick(['Tell me more about this', 'Give me an example']);
+}
+function renderFollowUps() {
+  const wrap = $('followUps');
+  wrap.replaceChildren();
+  wrap.hidden = true;
+  if (state.settings.show_suggestions === false || !state.session || state.isPrivate) return;
+  const msgs = state.session.messages || [];
+  const lastUser = [...msgs].reverse().find(m => m.role === 'user');
+  const lastAi = [...msgs].reverse().find(m => m.role === 'assistant');
+  if (!lastUser || !lastAi) return;
+  const chips = followUpChips(lastUser.content, lastAi.content);
+  if (!chips.length) return;
+  for (const c of chips) {
+    const b = button(c, () => { $('prompt').value = c; syncSendState(); send(); });
+    b.classList.add('follow-chip');
+    wrap.append(b);
+  }
+  wrap.hidden = false;
+}
+function renderConversation(session) {
+  think.el = null; clearInterval(think.timer);
+  $('messages').replaceChildren();
+  const empty = !session || !(session.messages || []).length;
+  $('welcome').hidden = !empty;
+  $('messages').hidden = empty;
+  $('composerDock').hidden = empty;
+  const slot = empty ? $('welcomeComposerSlot') : $('composerHome');
+  if (slot) slot.append($('composer'));
+  const title = session?.title || '';
+  $('threadTitle').textContent = title || 'New chat';
+  $('threadTitlePill').hidden = !session || empty;
+  if (session) {
+    for (const msg of session.messages || []) $('messages').append(createMessageNode(msg, session));
+  }
+  renderFollowUps();
+  renderProjects(); renderRecents();
+  scrollThreadToBottom();
+}
+function scrollThreadToBottom() {
+  if (state.settings.auto_scroll === false) return;
+  const t = $('thread');
+  if (t) t.scrollTop = t.scrollHeight;
+}
+
+/* ---------- sessions / sidebar ---------- */
+function findSession(id) { return state.sessions.find(s => s.id === id); }
+function visibleChats() {
+  let list = state.sessions.filter(s => !s.archived);
+  if (state.projectFilter) list = list.filter(s => state.chatProjects[s.id] === state.projectFilter);
+  return list;
+}
+function renderRecents() {
+  const list = $('sessionList'); list.replaceChildren();
+  const chats = visibleChats();
+  const shown = state.showAllChats ? chats : chats.slice(0, 8);
+  for (const s of shown) {
+    const row = el('div', 'side-row');
+    if (state.session && s.id === state.session.id) row.classList.add('active');
+    const label = el('button', 'side-row-label', (s.pinned ? 'Pinned \u00b7 ' : '') + (s.title || 'New chat'));
+    label.onclick = () => openSession(s.id);
+    const more = el('button', 'side-row-menu');
+    more.type = 'button'; more.setAttribute('aria-label', 'Chat actions');
+    more.innerHTML = '<svg><use href="#i-dots"/></svg>';
+    more.onclick = e => { e.stopPropagation(); openChatMenu(s, more); };
+    row.append(label, more);
+    list.append(row);
+  }
+  const moreBtn = $('showMoreChats');
+  moreBtn.hidden = chats.length <= 8;
+  moreBtn.textContent = state.showAllChats ? 'Show less' : 'Show more';
+  if (!chats.length) list.append(el('div', 'empty-state', state.projectFilter ? 'No chats in this project yet.' : 'No chats yet. Start a new chat.'));
+}
+function renderProjects() {
+  const list = $('projectList'); list.replaceChildren();
+  if (!state.localProjects.length) { list.append(el('div', 'empty-state', 'No projects yet.')); return; }
+  for (const p of state.localProjects) {
+    const row = el('div', 'side-row');
+    const count = state.sessions.filter(s => state.chatProjects[s.id] === p.id).length;
+    const label = el('button', 'side-row-label' + (state.projectFilter === p.id ? ' project-filter' : ''), p.name + ' \u00b7 ' + count);
+    label.type = 'button';
+    label.onclick = () => { state.projectFilter = state.projectFilter === p.id ? null : p.id; renderProjects(); renderRecents(); };
+    row.append(label);
+    list.append(row);
+  }
+}
+async function openSession(id) {
+  if (state.busy) return; // the adapter's queue drain also calls this; stay silent
+  closeSidebar();
+  const sess = findSession(id);
+  if (sess && (sess.messages || []).length) { state.session = sess; state.isPrivate = false; syncPrivate(); renderConversation(state.session); return; }
+  try {
+    const data = await api('/api/session/' + encodeURIComponent(id));
+    state.session = data.session || data || null;
+    if (state.session) { const i = state.sessions.findIndex(s => s.id === state.session.id); if (i >= 0) state.sessions[i] = state.session; else state.sessions.unshift(state.session); }
+    state.isPrivate = false; syncPrivate();
+    renderConversation(state.session);
+  } catch (e) { toast(e.message); }
+}
+async function newSession() {
+  if (state.busy) return;
+  try {
+    const data = await api('/api/sessions', { project_id: null });
+    const sess = data.session || data;
+    if (sess && sess.id) { state.session = sess; state.sessions.unshift(state.session); state.isPrivate = false; syncPrivate(); renderConversation(state.session); }
+  } catch (e) { toast(e.message); }
+}
+function newChat() { if (state.busy) { toast('Finish the current answer first.'); return; } closeSidebar(); state.session = null; state.isPrivate = false; syncPrivate(); state.privateThread = []; renderConversation(null); $('prompt').focus(); }
+async function renameChat(session) {
+  const res = await showDialog({ title: 'Rename chat', fields: [{ name: 'name', value: session.title || 'New chat' }], okText: 'Rename' });
+  if (!res || !String(res.name).trim()) return;
+  try { await api('/api/sessions/update', { session_id: session.id, title: String(res.name).trim() }); refreshBootstrap(); } catch (e) { toast(e.message); }
+}
+async function deleteChat(session) {
+  const ok = await confirmDialog('Delete this chat?', 'This chat will be deleted from your history. This can\u2019t be undone.', 'Delete');
+  if (!ok) return;
+  try { await api('/api/sessions/delete', { session_id: session.id }); if (state.session?.id === session.id) { state.session = null; } refreshBootstrap(); } catch (e) { toast(e.message); }
+}
+async function archiveChat(session) {
+  try { await api('/api/sessions/update', { session_id: session.id, archived: true }); if (state.session?.id === session.id) state.session = null; refreshBootstrap(); } catch (e) { toast(e.message); }
+}
+async function pinChat(session) {
+  try { await api('/api/sessions/update', { session_id: session.id, pinned: !session.pinned }); refreshBootstrap(); } catch (e) { toast(e.message); }
+}
+async function shareChat(session) {
+  const lines = ['# ' + (session.title || 'New chat'), ''];
+  for (const m of session.messages || []) lines.push('**' + (m.role === 'assistant' ? 'Janna' : 'You') + ':** ' + stripStyleDirective(m.content || ''), '');
+  const ok = await copyCodeText(lines.join('\n'));
+  toast(ok ? 'Conversation copied as Markdown' : 'Copy failed');
+}
+
+/* ---------- sidebar & header ---------- */
+function openSidebar() { $('sidebar').classList.add('open'); const s = $('mobileScrim'); s.hidden = false; s.classList.add('visible'); }
+function closeSidebar() { $('sidebar').classList.remove('open'); const s = $('mobileScrim'); s.classList.remove('visible'); s.hidden = true; $('accountMenu').hidden = true; }
+function syncPrivate() {
+  const c = $('composer');
+  c.classList.toggle('private-mode', state.isPrivate);
+  $('privateToggle').setAttribute('aria-pressed', String(state.isPrivate));
+  $('welcomeH1').textContent = state.isPrivate ? 'What\u2019s on your mind today?' : 'What\u2019s on the agenda today?';
+  $('privateNote').hidden = !state.isPrivate;
+  if (state.isPrivate) { state.armedMode = null; renderModeChip(); $('prompt').placeholder = 'Ask Janna anything\u2026'; }
+  renderSuggestions();
+}
+function togglePrivate() {
+  state.isPrivate = !state.isPrivate;
+  if (state.isPrivate) { state.session = null; state.privateThread = []; renderConversation(null); toast('Private mode \u2014 this chat won\u2019t be saved.'); }
+  syncPrivate();
+}
+
+/* ---------- menus (context popovers) ---------- */
+let openMenuEl = null;
+let menuOpenedAt = 0;
+function closeMenus() { if (openMenuEl) { openMenuEl.remove(); openMenuEl = null; } }
+function showMenu(anchor, items) {
+  closeMenus();
+  menuOpenedAt = Date.now();
+  const menu = el('div', 'menu-pop');
+  menu.setAttribute('role', 'menu');
+  for (const it of items) {
+    if (it === 'sep') { menu.append(el('div', 'menu-divider')); continue; }
+    if (it.group) { menu.append(el('div', 'menu-group', it.group)); continue; }
+    const b = el('button', it.danger ? 'danger' : '');
+    b.type = 'button';
+    if (it.icon) b.innerHTML = '<svg><use href="#i-' + it.icon + '"/></svg>';
+    b.append(document.createTextNode(it.label));
+    if (it.sub) b.append(el('span', 'menu-sub', it.sub));
+    if (it.disabled) { b.disabled = true; }
+    b.onclick = () => { closeMenus(); it.onClick && it.onClick(); };
+    menu.append(b);
+  }
+  document.body.append(menu);
+  const r = anchor.getBoundingClientRect();
+  const w = menu.offsetWidth || 220;
+  let x = Math.min(r.left, window.innerWidth - w - 8); if (x < 8) x = 8;
+  menu.style.left = x + 'px';
+  menu.style.top = (r.bottom + 6) + 'px';
+  const h = menu.offsetHeight || 200;
+  if (r.bottom + 6 + h > window.innerHeight) menu.style.top = Math.max(8, r.top - h - 6) + 'px';
+  openMenuEl = menu;
+  return menu;
+}
+function openChatMenu(session, anchor) {
+  showMenu(anchor, [
+    { label: session.pinned ? 'Unpin' : 'Pin', onClick: () => pinChat(session) },
+    { label: 'Rename', onClick: () => renameChat(session) },
+    { label: 'Share', onClick: () => shareChat(session) },
+    { label: 'Add to Project', onClick: () => openProjectPicker(session, anchor) },
+    'sep',
+    { label: 'Archive', onClick: () => archiveChat(session) },
+    { label: 'Delete', danger: true, onClick: () => deleteChat(session) },
+  ]);
+}
+function openProjectPicker(session, anchor) {
+  const items = state.localProjects.map(p => ({ label: (state.chatProjects[session.id] === p.id ? '\u2713 ' : '') + p.name, onClick: () => { state.chatProjects[session.id] = p.id; saveChatProjects(); renderProjects(); renderRecents(); toast('Added to ' + p.name); } }));
+  items.push({ label: 'New project\u2026', onClick: () => createProject(session.id) });
+  items.push('sep', { label: 'Remove from project', onClick: () => { delete state.chatProjects[session.id]; saveChatProjects(); renderProjects(); renderRecents(); }, disabled: !state.chatProjects[session.id] });
+  showMenu(anchor, items);
+}
+async function createProject(chatId) {
+  const res = await showDialog({ title: 'New project', text: 'Projects group related chats in your sidebar.', fields: [{ name: 'name', placeholder: 'Project name' }], okText: 'Create' });
+  if (!res || !String(res.name).trim()) return;
+  const p = { id: uid('proj'), name: String(res.name).trim(), created: Math.floor(Date.now() / 1000) };
+  state.localProjects.unshift(p); saveProjects(); renderProjects();
+  if (chatId) { state.chatProjects[chatId] = p.id; saveChatProjects(); renderRecents(); }
+  toast('Project created: ' + p.name);
+}
+function openMessageMenu(message, session, anchor) {
+  const items = [
+    { label: 'Branch in new chat', onClick: () => branchMessage(message) },
+    { label: 'Share', onClick: () => shareChat(session || state.session) },
+    { label: 'Export to PDF', onClick: () => window.print() },
+    { label: 'Copy Conversation ID', onClick: async () => { const id = session?.id || state.session?.id || ''; toast((await copyCodeText(id)) ? 'Conversation ID copied' : 'Copy failed'); } },
+    'sep',
+    { label: 'Send feedback', onClick: () => openFeedback(session?.id || state.session?.id) },
+  ];
+  showMenu(anchor || $('composer'), items);
+}
+async function branchMessage(message) {
+  const text = stripStyleDirective(message.content || '');
+  newChat();
+  $('prompt').value = text; autoGrowPrompt(); syncSendState();
+  toast('Branched into a new chat \u2014 press send when ready.');
+}
+
+/* ---------- right pane (app preview; scripts always off — the shell's
+   iframe sandbox has no allow-scripts, so generated pages preview safely) ---------- */
+function openRightPane() { $('rightPane').hidden = false; $('rightPaneToggle').setAttribute('aria-expanded', 'true'); }
+function closeRightPane() { $('rightPane').hidden = true; $('rightPaneToggle').setAttribute('aria-expanded', 'false'); }
+function previewHtml(code, name = 'Preview') {
+  state.rightPaneCode = code; state.rightPaneName = name;
+  const safe = String(code).replace(/<script[\s\S]*?<\/script>/gi, '');
+  const frame = $('rightPaneFrame');
+  frame.srcdoc = safe;
+  frame.hidden = false;
+  $('rightPaneSourceView').hidden = true;
+  $('rightPaneSourceView').textContent = '';
+  document.querySelector('.right-pane-empty').hidden = true;
+  $('rightPanePreview').hidden = false;
+  $('rightPaneName').textContent = name;
+  openRightPane();
+}
+function clearPreview() {
+  state.rightPaneCode = null; state.rightPaneName = '';
+  $('rightPaneFrame').removeAttribute('srcdoc');
+  $('rightPaneFrame').hidden = false;
+  $('rightPaneSourceView').hidden = true;
+  $('rightPaneSourceView').textContent = '';
+  document.querySelector('.right-pane-empty').hidden = false;
+  $('rightPanePreview').hidden = true;
+  $('rightPaneName').textContent = 'preview.html';
+}
+async function saveCodeToLibrary(code, language) {
+  const name = codeFileName(language);
+  const text = String(code || '');
+  const entry = { id: uid('lib'), name, kind: language === 'html' || language === 'htm' ? 'app' : 'file', kindLabel: language === 'html' || language === 'htm' ? 'App' : 'Code', text, size: text.length, created: Math.floor(Date.now() / 1000) };
+  state.library.unshift(entry); saveLibrary(); renderLibrary();
+  toast('Saved to Library as ' + name);
+}
+
+/* ---------- library ---------- */
+function libraryUsageBytes() {
+  try { return (localStorage.getItem('janna-web-library-v1') || '').length; } catch { return 0; }
+}
+function renderLibraryTabs() {
+  const tabs = $('libraryTabs');
+  tabs.replaceChildren();
+  for (const t of ['All', 'Media', 'Projects', 'Apps', 'Files']) {
+    const b = el('button', 'palette-tab' + (state.libraryTab === t ? ' active' : ''));
+    b.type = 'button'; b.textContent = t; b.dataset.tab = t;
+    b.onclick = () => { state.libraryTab = t; renderLibraryTabs(); renderLibrary(); };
+    tabs.append(b);
+  }
+}
+function renderLibrary() {
+  const list = $('libraryBody'); list.replaceChildren();
+  const q = state.libraryQuery.toLowerCase();
+  let items = state.library.filter(it => !q || (it.name || '').toLowerCase().includes(q));
+  if (state.librarySort === 'name') items = [...items].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  else items = [...items].sort((a, b) => (b.created || 0) - (a.created || 0));
+  if (state.libraryTab === 'Media') items = items.filter(it => it.kind === 'image');
+  else if (state.libraryTab === 'Apps') items = items.filter(it => it.kind === 'app');
+  else if (state.libraryTab === 'Files') items = items.filter(it => it.kind === 'file');
+  else if (state.libraryTab === 'Projects') {
+    for (const p of state.localProjects) {
+      const row = el('div', 'library-item');
+      const main = el('button', 'lib-main');
+      main.type = 'button';
+      main.innerHTML = `<svg><use href="#i-book"/></svg><span class="lib-texts"><strong>${escapeHTML(p.name)}</strong><small>${state.sessions.filter(s => state.chatProjects[s.id] === p.id).length} chats</small></span>`;
+      main.onclick = () => { state.projectFilter = p.id; renderProjects(); renderRecents(); closeLibrary(); toast('Showing chats in ' + p.name); };
+      row.append(main);
+      list.append(row);
+    }
+    if (!state.localProjects.length) {
+      const empty = el('div', 'library-empty');
+      empty.innerHTML = '<strong>No projects yet</strong>Create one from the sidebar.';
+      list.append(empty);
+    }
+    return;
+  }
+  if (!items.length) {
+    const empty = el('div', 'library-empty');
+    empty.innerHTML = '<strong>Your library is empty</strong>Upload a file to keep it here.';
+    list.append(empty);
+    return;
+  }
+  for (const it of items) {
+    const row = el('div', 'library-item');
+    const main = el('button', 'lib-main');
+    main.type = 'button';
+    const icon = it.kind === 'image' ? 'image' : it.kind === 'app' ? 'panel' : 'file';
+    main.innerHTML = `<svg><use href="#i-${icon}"/></svg><span class="lib-texts"><strong>${escapeHTML(it.name)}</strong><small>${escapeHTML(it.kindLabel || it.kind)} \u00b7 ${timeAgo(it.created)}</small></span>`;
+    main.onclick = () => openLibraryItem(it);
+    const del = el('button', 'lib-del');
+    del.type = 'button'; del.setAttribute('aria-label', 'Delete ' + it.name);
+    del.innerHTML = '<svg><use href="#i-close"/></svg>';
+    del.onclick = () => removeLibraryItem(it);
+    row.append(main, del);
+    list.append(row);
+  }
+}
+function openLibraryItem(it) {
+  closeLibrary();
+  if (it.kind === 'app') { previewHtml(it.text || '', it.name); return; }
+  if (it.kind === 'image' && it.data) {
+    const mime = /\.png$/i.test(it.name) ? 'image/png' : /\.webp$/i.test(it.name) ? 'image/webp' : 'image/jpeg';
+    const a = document.createElement('a');
+    a.href = 'data:' + mime + ';base64,' + it.data;
+    a.download = it.name;
+    a.click();
+    toast('Downloading ' + it.name);
+    return;
+  }
+  showDialog({ title: it.name, text: String(it.text || '').slice(0, 2000), okText: 'Close', showCancel: false });
+}
+async function removeLibraryItem(it) {
+  const ok = await confirmDialog('Remove from library?', it.name + ' will be removed from your library.', 'Remove');
+  if (!ok) return;
+  state.library = state.library.filter(row => row !== it); saveLibrary(); renderLibrary();
+}
+function openLibrary() { renderLibraryTabs(); renderLibrary(); $('libraryView').hidden = false; }
+function closeLibrary() { $('libraryView').hidden = true; }
+async function addFilesToLibrary(files) {
+  for (const file of files) {
+    const name = file.name || 'file';
+    const isImage = /\.(png|jpe?g|webp)$/i.test(name);
+    try {
+      if (isImage) {
+        const small = file.size > 1200000 ? await downscaleImageFile(file).catch(() => null) : file;
+        const use = small || file;
+        const data = await fileBase64(use);
+        if (data.length > 280000) { toast(name + ' is too large to keep in the library.'); continue; }
+        state.library.unshift({ id: uid('lib'), name, kind: 'image', kindLabel: 'Image', data, size: data.length, created: Math.floor(Date.now() / 1000) });
+      } else {
+        if (file.size > 180000) { toast(name + ' is too large to keep in the library.'); continue; }
+        const text = await file.text();
+        if (text.includes('\u0000')) { toast(name + ' is not a text file.'); continue; }
+        const kind = /\.html?$/i.test(name) ? 'app' : 'file';
+        state.library.unshift({ id: uid('lib'), name, kind, kindLabel: kind === 'app' ? 'App' : 'File', text, size: text.length, created: Math.floor(Date.now() / 1000) });
+      }
+    } catch (e) { toast(e.message); }
+  }
+  saveLibrary(); renderLibrary();
+  toast('Added to Library');
+}
+
+/* ---------- plus menu ---------- */
+function closePlusMenu() { const m = $('plusMenu'); if (m) m.hidden = true; $('plusBtn').setAttribute('aria-expanded', 'false'); }
+function openPlusMenu() {
+  const m = $('plusMenu'), btn = $('plusBtn');
+  if (!m.hidden) { closePlusMenu(); return; }
+  closeModelPicker();
+  m.replaceChildren();
+  const researchOn = state.settings.research_mode === 'always';
+  const addRow = (icon, label, hint, onClick) => {
+    const b = el('button', 'plus-menu-row');
+    b.type = 'button';
+    b.innerHTML = `<svg><use href="#i-${icon}"/></svg><span>${escapeHTML(label)}</span>${hint ? `<span class="plus-menu-state">${escapeHTML(hint)}</span>` : ''}`;
+    b.onclick = () => { closePlusMenu(); onClick(); };
+    m.append(b);
+  };
+  addRow('upload', 'Upload a file', 'png, jpg, webp, txt, code', () => $('attachment').click());
+  addRow('file', 'Recent', 'Files from your library', () => openLibrary());
+  addRow('book', 'Project', 'Add this chat to a project', () => { if (state.session) openProjectPicker(state.session, btn); else createProject(); });
+  addRow('external', 'Add connector', 'Tavily, GitHub, Figma', () => openToolsPanel());
+  m.append(el('div', 'plus-menu-divider'));
+  const research = el('button', 'plus-menu-row');
+  research.type = 'button';
+  research.innerHTML = `<svg><use href="#i-globe"/></svg><span>Web research</span><span class="plus-menu-state">${researchOn ? 'On \u2014 always' : 'Auto'}</span>`;
+  research.onclick = () => {
+    const next = state.settings.research_mode === 'always' ? 'auto' : 'always';
+    persistSettings({ research_mode: next });
+    closePlusMenu();
+    toast(next === 'always' ? 'Web research always on' : 'Web research back to auto');
+  };
+  m.append(research);
+  m.hidden = false;
+  btn.setAttribute('aria-expanded', 'true');
+}
+
+/* ---------- send / stream / queue / stop ---------- */
+function queueInput() {
+  const text = $('prompt').value.trim();
+  if (!text && !state.pending.length) return;
+  const session = state.session;
+  if (!session) { toast('Wait for the current answer, then send.'); return; }
+  const directive = styleDirective();
+  const sentText = text + (directive ? '\n\n[Response style: ' + directive + ']' : '');
+  api('/api/run/update', { session_id: session.id, text: sentText, attachments: state.pending.map(a => a.kind === 'image' ? { kind: 'image', name: a.name, data: a.data } : { kind: 'log', name: a.name, text: a.text }) })
+    .then(() => {
+      $('prompt').value = ''; autoGrowPrompt(); syncSendState();
+      session.messages = session.messages || [];
+      session.messages.push({ role: 'user', content: sentText });
+      renderConversation(session);
+      toast('Queued \u2014 it will run after this answer.');
+    })
+    .catch(e => toast(e.message));
+}
+async function send() {
+  if (state.busy) { queueInput(); return; }
+  const text = $('prompt').value.trim();
+  if (!text && !state.pending.length) return;
+  closeMenus(); closeModelPicker(); closePlusMenu();
+  const directive = styleDirective();
+  const sentText = text + (directive ? '\n\n[Response style: ' + directive + ']' : '');
+  if (state.isPrivate) { await sendPrivate(text, sentText); return; }
+  if (!state.session) { await newSession(); if (!state.session) return; }
+  const session = state.session;
+  const attachments = state.pending; state.pending = []; renderPending();
+  const userMsg = { role: 'user', content: sentText };
+  if (attachments.length === 1 && attachments[0].kind === 'image') { userMsg.kind = 'image'; userMsg.data = attachments[0].data; userMsg.name = attachments[0].name; }
+  else if (attachments.length === 1 && attachments[0].kind === 'log') { userMsg.kind = 'log'; userMsg.name = attachments[0].name; }
+  else if (attachments.length > 1) userMsg.attached = attachments.map(a => ({ kind: a.kind, name: a.name }));
+  const history = (session.messages || []).slice(-20).map(m => ({ role: m.role, content: stripStyleDirective(m.content || '') }));
+  session.messages = session.messages || [];
+  session.messages.push(userMsg);
+  $('prompt').value = ''; autoGrowPrompt(); syncSendState();
+  renderConversation(session);
+  await streamRun(session, sentText, history, attachments);
+}
+async function sendPrivate(text, sentText) {
+  const attachments = state.pending; state.pending = []; renderPending();
+  const userMsg = { role: 'user', content: sentText };
+  if (attachments.length === 1 && attachments[0].kind === 'image') { userMsg.kind = 'image'; userMsg.data = attachments[0].data; userMsg.name = attachments[0].name; }
+  else if (attachments.length === 1 && attachments[0].kind === 'log') { userMsg.kind = 'log'; userMsg.name = attachments[0].name; }
+  else if (attachments.length > 1) userMsg.attached = attachments.map(a => ({ kind: a.kind, name: a.name }));
+  const history = state.privateThread.slice(-20).map(m => ({ role: m.role, content: stripStyleDirective(m.content || '') }));
+  state.privateThread.push(userMsg);
+  $('prompt').value = ''; autoGrowPrompt(); syncSendState();
+  renderConversation({ id: 'private', title: 'Private chat', messages: state.privateThread });
+  await streamRunPrivate(sentText, history, attachments);
+}
+function streamBody(sessionId, prompt, history, attachments) {
+  return {
+    session_id: sessionId, model: state.model, prompt, messages: history,
+    attachments: attachments.map(a => a.kind === 'image' ? { kind: 'image', name: a.name, data: a.data } : { kind: 'log', name: a.name, text: a.text }),
+  };
+}
+async function streamRun(session, prompt, history, attachments) {
+  return runStream(session, prompt, history, attachments, false);
+}
+async function streamRunPrivate(prompt, history, attachments) {
+  return runStream({ id: uid('private'), title: 'Private chat', messages: state.privateThread }, prompt, history, attachments, true);
+}
+async function runStream(session, prompt, history, attachments, isPrivate) {
+  state.busy = true; state.stopRequested = false; state.stream = '';
+  updateBusy();
+  const streamNode = el('div', 'message assistant streaming');
+  const body = el('div', 'message-body');
+  streamNode.append(body);
+  $('messages').append(streamNode);
+  startThinking();
+  let doneText = '', errorMessage = '';
+  try {
+    const gen = JannaRuns.subscribe(streamBody(session.id, prompt, history, attachments), state.token, (kind, id, msg) => {
+      if (kind === 'connected' && id) state.runId = id;
+      else if (kind === 'reconnecting') addProgressStep('Reconnecting\u2026 ' + (msg || ''));
+    });
+    for await (const ev of gen) {
+      if (ev.run_id) state.runId = ev.run_id;
+      if (ev.type === 'progress') { if (ev.message) addProgressStep(ev.message); }
+      else if (ev.type === 'first_token') stopThinking();
+      else if (ev.type === 'delta') {
+        state.stream += ev.text || '';
+        renderMarkdown(body, state.stream);
+        scrollThreadToBottom();
+      }
+      else if (ev.type === 'done') { doneText = ev.text || state.stream; state.stream = doneText; }
+      else if (ev.type === 'error') errorMessage = ev.message || 'Run failed';
+    }
+  } catch (e) { errorMessage = e.message || 'Run failed'; }
+  stopThinking();
+  state.busy = false; state.runId = null; updateBusy();
+  const finalText = errorMessage ? '\u26a0\ufe0f ' + errorMessage : (doneText || state.stream);
+  streamNode.remove();
+  if (isPrivate) {
+    state.privateThread.push({ role: 'assistant', content: finalText });
+    renderConversation({ id: 'private', title: 'Private chat', messages: state.privateThread });
+    if (!errorMessage && state.settings.voice_output === true) voiceSpeak(finalText);
+    return;
+  }
+  session.messages = session.messages || [];
+  session.messages.push({ role: 'assistant', content: finalText });
+  renderConversation(session);
+  if (errorMessage) toast(errorMessage);
+  else {
+    if (state.settings.voice_output === true) voiceSpeak(finalText);
+    if (state.settings.browser_notifications === true && document.hidden && 'Notification' in window && Notification.permission === 'granted') {
+      try { new Notification('Janna AI', { body: finalText.slice(0, 140) }); } catch { /* ignore */ }
+    }
+  }
+  refreshBootstrap(true);
+  // NOTE: queued follow-ups are drained by the web-adapter itself (it posts
+  // the next queued item to /api/run and calls openSession when it finishes),
+  // so the app must NOT re-send them here — that would run them twice.
+}
+async function stopRun() {
+  if (!state.busy) return;
+  state.stopRequested = true;
+  $('stop').disabled = true;
+  const sid = state.isPrivate ? null : state.session?.id;
+  try {
+    if (sid) await api('/api/stop', { session_id: sid, run_id: state.runId });
+  } catch (e) { toast(e.message); }
+}
+
+/* ---------- command palette ---------- */
+function openPalette() {
+  $('palette').hidden = false;
+  $('paletteInput').value = '';
+  $('paletteInput').focus();
+  renderPalette();
+}
+function closePalette() { $('palette').hidden = true; }
+function renderPalette() {
+  const q = $('paletteInput').value.trim().toLowerCase();
+  const list = $('paletteBody');
+  list.replaceChildren();
+  const tab = state.paletteTab;
+  const addSection = (title, rows) => {
+    if (!rows.length) return;
+    list.append(el('div', 'palette-group', title));
+    for (const r of rows) {
+      const b = el('button', 'palette-item');
+      b.type = 'button';
+      b.innerHTML = `<svg><use href="#i-${r.icon || 'search'}"/></svg><span>${escapeHTML(r.label)}</span>${r.kbd ? `<kbd>${escapeHTML(r.kbd)}</kbd>` : r.meta ? `<span class="palette-item-meta">${escapeHTML(r.meta)}</span>` : ''}`;
+      b.onclick = () => { closePalette(); r.onClick(); };
+      list.append(b);
+    }
+  };
+  if (tab === 'All' || tab === 'Apps') {
+    addSection(tab === 'All' ? 'Actions' : 'Apps', [
+      { label: 'New Chat', kbd: 'Ctrl J', icon: 'plus', onClick: () => newChat() },
+      { label: 'New Project', meta: '', icon: 'book', onClick: () => createProject() },
+      { label: 'Open settings', kbd: 'Ctrl ,', icon: 'settings', onClick: () => openSettings('account') },
+    ].filter(r => !q || r.label.toLowerCase().includes(q)));
+  }
+  if (tab === 'All' || tab === 'Imagine') {
+    addSection('Imagine', [
+      { label: 'Make a website', meta: 'Apps', icon: 'spark', onClick: () => { armMode('apps'); $('prompt').focus(); } },
+      { label: 'Design a presentation', meta: 'Slides', icon: 'book', onClick: () => { armMode('presentation'); $('prompt').focus(); } },
+    ].filter(r => !q || r.label.toLowerCase().includes(q)));
+  }
+  if ((tab === 'All' || tab === 'Files') && !q) {
+    addSection('Files', state.library.slice(0, 5).map(it => ({ label: it.name, meta: it.kindLabel || it.kind, icon: 'file', onClick: () => openLibraryItem(it) })));
+  }
+  if (tab === 'Automations') {
+    list.append(el('div', 'palette-empty', 'Janna has no automations yet.'));
+  }
+  if ((tab === 'All' || tab === 'Files') && q) {
+    addSection('Files', state.library.filter(it => (it.name || '').toLowerCase().includes(q)).map(it => ({ label: it.name, meta: it.kindLabel || it.kind, icon: 'file', onClick: () => openLibraryItem(it) })));
+  }
+  if (tab === 'All') {
+    const chats = visibleChats().filter(s => !q || (s.title || '').toLowerCase().includes(q) || (s.messages || []).some(m => (m.content || '').toLowerCase().includes(q)));
+    addSection('Chats', chats.slice(0, 8).map(s => ({ label: s.title || 'New chat', meta: timeAgo(s.updated), icon: 'search', onClick: () => openSession(s.id) })));
+  }
+  if (!list.childNodes.length) list.append(el('div', 'palette-empty', 'No results for \u201c' + $('paletteInput').value.trim() + '\u201d'));
+}
+function renderPaletteTabs() {
+  const tabs = $('paletteTabs');
+  tabs.replaceChildren();
+  for (const t of ['All', 'Imagine', 'Apps', 'Automations', 'Files']) {
+    const b = el('button', 'palette-tab' + (state.paletteTab === t ? ' active' : ''));
+    b.type = 'button'; b.textContent = t;
+    b.onclick = () => { state.paletteTab = t; renderPaletteTabs(); renderPalette(); };
+    tabs.append(b);
+  }
+}
+
+/* ---------- settings ---------- */
+const SETTINGS_SECTIONS = [
+  { id: 'account', label: 'Account' },
+  { id: 'appearance', label: 'Appearance' },
+  { id: 'behavior', label: 'Behavior' },
+  { id: 'notifications', label: 'Notifications' },
+  { id: 'personality', label: 'Customize' },
+  { id: 'connectors', label: 'Connect Apps' },
+  { id: 'data', label: 'Data Controls' },
+];
+function openSettings(section = 'account') {
+  closeSidebar();
+  const overlay = $('settingsView');
+  overlay.hidden = false;
+  const nav = $('settingsNav'); nav.replaceChildren();
+  for (const s of SETTINGS_SECTIONS) {
+    const b = el('button', 'settings-nav-item' + (s.id === section ? ' active' : ''));
+    b.type = 'button'; b.textContent = s.label;
+    b.onclick = () => renderSettingsBody(s.id);
+    nav.append(b);
+  }
+  $('settingsSearch').value = '';
+  renderSettingsBody(section);
+  try { const u = new URL(location.href); u.searchParams.set('_s', section); history.replaceState(null, '', u); } catch { /* ignore */ }
+}
+function closeSettings() {
+  $('settingsView').hidden = true;
+  try { const u = new URL(location.href); u.searchParams.delete('_s'); history.replaceState(null, '', u); } catch { /* ignore */ }
+}
+function settingsRow({ label, hint = '', control }) {
+  const row = el('div', 'settings-row');
+  const texts = el('div', 'settings-row-texts');
+  texts.append(el('strong', '', label));
+  if (hint) texts.append(el('p', '', hint));
+  row.append(texts, control);
+  return row;
+}
+function settingsSelect(options, value, onChange) {
+  const sel = document.createElement('select');
+  for (const [v, l] of options) { const o = document.createElement('option'); o.value = v; o.textContent = l; sel.append(o); }
+  sel.value = value;
+  sel.onchange = () => onChange(sel.value);
+  return sel;
+}
+function settingsToggle(checked, onChange) {
+  const t = document.createElement('input');
+  t.type = 'checkbox'; t.checked = !!checked;
+  t.setAttribute('aria-label', 'Toggle setting');
+  t.onchange = () => onChange(t.checked);
+  return t;
+}
+function renderSettingsBody(section) {
+  const body = $('settingsBody');
+  body.replaceChildren();
+  document.querySelectorAll('#settingsNav .settings-nav-item').forEach(b => b.classList.toggle('active', b.textContent === (SETTINGS_SECTIONS.find(s => s.id === section)?.label || '')));
+  const h = title => body.append(el('h2', '', title));
+  const applySearch = () => {
+    const q = $('settingsSearch').value.trim().toLowerCase();
+    body.querySelectorAll('.settings-row').forEach(r => { r.hidden = !q || r.textContent.toLowerCase().includes(q); });
+  };
+  if (section === 'account') {
+    h('Account');
+    body.append(settingsRow({ label: 'Workspace', hint: 'Guest workspace \u2014 no account, no sign-in', control: el('span', 'settings-value', 'Guest') }));
+    body.append(settingsRow({ label: 'Plan', hint: 'Janna AI is free. Every model is included.', control: el('span', 'settings-value', 'Free') }));
+    body.append(settingsRow({ label: 'Language', hint: 'Language for answers and voice', control: settingsSelect((state.languages || []).map(l => [l.id, l.name]), state.settings.language || 'en', v => persistSettings({ language: v })) }));
+  } else if (section === 'appearance') {
+    h('Appearance');
+    body.append(settingsRow({ label: 'Theme', hint: 'Light, Dark, or follow your device', control: settingsSelect([['system', 'System'], ['light', 'Light'], ['dark', 'Dark']], state.settings.appearance_mode || 'light', v => persistSettings({ appearance_mode: v })) }));
+    body.append(settingsRow({ label: 'Wrap Long Code Blocks', hint: 'Wrap code lines instead of scrolling sideways', control: settingsToggle(state.settings.wrap_code === true, v => persistSettings({ wrap_code: v })) }));
+    body.append(settingsRow({ label: 'Reduce motion', hint: 'Turn off animations', control: settingsToggle(state.settings.reduce_motion === true, v => persistSettings({ reduce_motion: v })) }));
+    body.append(settingsRow({ label: 'Show suggestions', hint: 'Suggestion rows and follow-up chips', control: settingsToggle(state.settings.show_suggestions !== false, v => persistSettings({ show_suggestions: v })) }));
+  } else if (section === 'behavior') {
+    h('Behavior');
+    body.append(settingsRow({ label: 'Require Ctrl+Enter to Submit', hint: 'Enter inserts a new line instead of sending', control: settingsToggle(state.settings.require_ctrl_enter === true, v => persistSettings({ require_ctrl_enter: v })) }));
+    body.append(settingsRow({ label: 'Auto-Scroll', hint: 'Follow new answers as they stream in', control: settingsToggle(state.settings.auto_scroll !== false, v => persistSettings({ auto_scroll: v })) }));
+  } else if (section === 'notifications') {
+    h('Notifications');
+    body.append(settingsRow({ label: 'Browser Notifications', hint: 'Notify when an answer finishes while the tab is hidden', control: settingsToggle(state.settings.browser_notifications === true, async v => {
+      if (v && 'Notification' in window) {
+        const perm = await Notification.requestPermission().catch(() => 'denied');
+        if (perm !== 'granted') { toast('Browser notifications were not allowed.'); renderSettingsBody('notifications'); return; }
+      }
+      persistSettings({ browser_notifications: v });
+    }) }));
+    body.append(el('p', 'settings-note', 'No email notifications \u2014 Janna has no account or email address to send to.'));
+  } else if (section === 'personality') {
+    h('Customize');
+    const styles = [['Default', 'Default'], ['Concise', 'Concise'], ['Formal', 'Formal'], ['Tutor', 'Tutor'], ['Comprehensive', 'Comprehensive'], ['Custom', 'Custom']];
+    body.append(settingsRow({ label: 'Response style', hint: 'How Janna answers. Applied to each prompt sent to the model.', control: settingsSelect(styles, state.settings.response_style || 'Default', v => { persistSettings({ response_style: v }); renderSettingsBody('personality'); }) }));
+    if ((state.settings.response_style || 'Default') === 'Custom') {
+      const ta = document.createElement('textarea');
+      ta.value = state.settings.custom_style || '';
+      ta.placeholder = 'Describe how Janna should answer\u2026';
+      ta.onchange = () => persistSettings({ custom_style: ta.value });
+      body.append(settingsRow({ label: 'Custom instruction', hint: 'Your own style instruction', control: ta }));
+    }
+  } else if (section === 'connectors') {
+    h('Connect Apps');
+    body.append(el('p', 'settings-note', 'Your apps \u2014 0 connected'));
+    const search = document.createElement('input');
+    search.type = 'search'; search.placeholder = 'Search apps'; search.setAttribute('aria-label', 'Search apps');
+    body.append(search);
+    const list = el('div', 'connectors-list');
+    const rows = [
+      { name: 'GitHub', status: 'Not connected in the web version' },
+      { name: 'Figma', status: 'Not connected in the web version' },
+      { name: 'Tavily (web search)', status: 'No search key saved' },
+    ];
+    const renderRows = () => {
+      list.replaceChildren();
+      const q = search.value.trim().toLowerCase();
+      for (const r of rows.filter(r => !q || r.name.toLowerCase().includes(q))) {
+        const row = el('div', 'connector-row');
+        row.append(el('strong', '', r.name), el('small', '', r.status));
+        list.append(row);
+      }
+      if (!list.childNodes.length) list.append(el('div', 'empty-state', 'No apps match your search.'));
+    };
+    search.oninput = renderRows;
+    renderRows();
+    body.append(list);
+    const addBtn = button('Add a custom connector', () => openToolsPanel());
+    addBtn.classList.add('text-btn');
+    body.append(addBtn);
+    body.append(el('p', 'settings-note', 'The web edition keeps connections local to this browser. GitHub and Figma sign-in are desktop-only features.'));
+  } else if (section === 'data') {
+    h('Data Controls');
+    body.append(settingsRow({ label: 'Personalize With Conversation History', hint: 'Janna remembers facts from your chats to answer better', control: settingsToggle(state.settings.memory_enabled !== false, v => persistSettings({ memory_enabled: v })) }));
+    body.append(settingsRow({ label: 'File Storage', hint: 'Local files in your Library', control: el('span', 'settings-value', Math.round(libraryUsageBytes() / 1024) + ' KB used in this browser') }));
+    const archived = state.sessions.filter(s => s.archived);
+    body.append(settingsRow({ label: 'Deleted Conversations', hint: archived.length ? archived.length + ' archived conversation(s)' : 'No archived conversations', control: button('View', () => showArchived()) }));
+    body.append(settingsRow({ label: 'Delete All Conversations', hint: 'Deletes every chat in your history', control: button('Delete all', async () => {
+      const ok = await confirmDialog('Delete all conversations?', 'Every chat in your history will be deleted. This can\u2019t be undone.', 'Delete all');
+      if (!ok) return;
+      try { await api('/api/sessions/clear'); state.session = null; refreshBootstrap(); renderConversation(null); toast('All conversations deleted.'); } catch (e) { toast(e.message); }
+    }) }));
+    body.append(settingsRow({ label: 'Export Account Data', hint: 'Download your chats, settings and memory as JSON', control: button('Export', async () => {
+      try {
+        const data = await api('/api/profile/export');
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'janna-data.json'; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+        toast('Export downloaded.');
+      } catch (e) { toast(e.message); }
+    }) }));
+    body.append(settingsRow({ label: 'Clear Cache', hint: 'Clears the offline cache and reloads', control: button('Clear cache', async () => {
+      try { const keys = await caches.keys(); await Promise.all(keys.map(k => caches.delete(k))); } catch { /* no cache */ }
+      location.reload();
+    }) }));
+  }
+  $('settingsSearch').oninput = applySearch;
+}
+async function showArchived() {
+  const archived = state.sessions.filter(s => s.archived);
+  if (!archived.length) { toast('No archived conversations.'); return; }
+  const lines = archived.map(s => '\u2022 ' + (s.title || 'New chat')).join('\n');
+  const ok = await showDialog({ title: 'Archived conversations', text: lines + '\n\nRestore the most recent one?', okText: 'Restore latest', cancelText: 'Close' });
+  if (!ok) return;
+  const latest = [...archived].sort((a, b) => (b.updated || 0) - (a.updated || 0))[0];
+  try { await api('/api/sessions/update', { session_id: latest.id, archived: false }); refreshBootstrap(); toast('Restored: ' + (latest.title || 'New chat')); } catch (e) { toast(e.message); }
+}
+
+/* ---------- tools panel (connectors) ---------- */
+async function openToolsPanel() {
+  const res = await showDialog({
+    title: 'Add a custom connector',
+    text: 'Tavily powers web search. GitHub and Figma sign-in are desktop-only on the web edition.',
+    fields: [{ name: 'tavily', placeholder: 'Tavily API key (optional)' }],
+    okText: 'Save', cancelText: 'Close',
+  });
+  if (!res) return;
+  const key = String(res.tavily || '').trim();
+  if (!key) { toast('No key entered.'); return; }
+  try {
+    await api('/api/research/providers', { provider: 'tavily', api_key: key });
+    toast('Tavily key saved.');
+  } catch (e) { toast(e.message); }
+}
+
+/* ---------- account menu (static shell menu), help, feedback ---------- */
+function toggleAccountMenu() {
+  const m = $('accountMenu');
+  m.hidden = !m.hidden;
+}
+function openHelp() {
+  showDialog({
+    title: 'Help \u2014 Janna AI',
+    text: 'Ask Janna anything in the composer. Tap + to attach a file or an image. Use the model picker to switch between the 16 free models. Private mode (header) keeps a chat out of your history. Your chats, projects and library live only in this browser \u2014 nothing is sent anywhere except the model provider when you send a message. Shortcuts: Ctrl+K search, Ctrl+J new chat, Ctrl+, settings.',
+    okText: 'Close', showCancel: false,
+  });
+}
+async function openFeedback(sessionId) {
+  const res = await showDialog({
+    title: 'Send feedback',
+    text: 'Tell us what worked or what went wrong. Feedback is stored only in this browser.',
+    fields: [{ name: 'text', type: 'textarea', placeholder: 'Your feedback\u2026' }],
+    okText: 'Send feedback',
+  });
+  if (!res || !String(res.text).trim()) return;
+  const all = loadJSON('janna-web-feedback-v1', []);
+  all.unshift({ session_id: sessionId || null, text: String(res.text).trim(), created: Math.floor(Date.now() / 1000) });
+  saveJSON('janna-web-feedback-v1', all);
+  toast('Thanks \u2014 feedback saved.');
+}
+function openLegal(kind) {
+  const text = kind === 'terms'
+    ? 'Janna AI is a free chat app. Chats, projects and files are stored only in this browser. When you send a message, the text (and any attached file you chose to send) goes to the selected model provider so it can answer. There is no account, no payment and no tracking.'
+    : 'Privacy: Janna AI has no account system. Your chats stay in this browser unless you export them. Model providers receive the messages you send. Private mode chats are never saved to history. You can delete all conversations or clear the cache from Settings \u2192 Data Controls.';
+  showDialog({ title: kind === 'terms' ? 'Terms of Service' : 'Privacy Policy', text, okText: 'Close', showCancel: false });
+}
+
+/* ---------- bootstrap ---------- */
+let reconnectTimer = null;
+async function initialConnection() {
+  try {
+    const info = await api('/api/remote-info');
+    state.remote = info.remote === true;
+    const saved = (() => { try { return localStorage.getItem('janna-pair-token') || ''; } catch { return ''; } })();
+    if (state.remote) state.token = info.pair_required === true ? saved : 'web';
+    else state.token = 'web';
+    if (state.remote && info.pair_required === true && !state.token) {
+      const res = await showDialog({ title: 'Pair this device', text: 'Enter the pairing code shown on your computer.', fields: [{ name: 'code', placeholder: 'Pairing code' }], okText: 'Pair' });
+      if (!res || !String(res.code).trim()) return;
+      const pair = await api('/api/pair', { code: String(res.code).trim() });
+      state.token = pair.token || ''; saveLocalToken();
+    }
+  } catch { state.token = 'web'; }
+}
+async function refreshBootstrap(keepSession) {
+  try {
+    const b = await api('/api/bootstrap');
+    if (typeof b.token === 'string' && b.token && !state.remote) state.token = b.token;
+    state.projects = b.projects || [];
+    state.sessions = b.sessions || [];
+    state.languages = b.languages || [];
+    if (b.settings) state.settings = b.settings;
+    if (b.model_catalog) state.modelCatalog = b.model_catalog;
+    renderModelOptions(b.models || []);
+    applyTheme();
+    if (state.session) {
+      const fresh = findSession(state.session.id);
+      if (fresh && Array.isArray(fresh.messages)) state.session = fresh;
+      // summaries carry no messages; keep the in-memory session in that case
+    }
+    renderRecents(); renderProjects(); renderLibrary(); renderSuggestions(); syncPrivate();
+    statusBadge();
+  } catch (e) {
+    toast('Could not reach Janna. ' + e.message);
+    statusBadge();
+  }
+}
+function reconnectCheck() {
+  try { refreshBootstrap(true); } catch { /* next cycle */ }
+}
+function initializeWorkspace() {
+  const params = new URLSearchParams(location.search);
+  const open = params.get('s');
+  const settingsSection = params.get('_s');
+  if (settingsSection) openSettings(settingsSection);
+  if (open) openSession(open);
+}
+function bindEvents() {
+  const prompt = $('prompt');
+  prompt.addEventListener('input', () => { autoGrowPrompt(); syncSendState(); });
+  prompt.addEventListener('keydown', e => {
+    const ctrlEnter = state.settings.require_ctrl_enter === true;
+    if (e.key === 'Enter' && !e.shiftKey) {
+      if (ctrlEnter && !(e.ctrlKey || e.metaKey)) return; // insert newline
+      e.preventDefault();
+      send();
+    }
+  });
+  prompt.addEventListener('paste', e => {
+    const files = [...(e.clipboardData?.files || [])];
+    if (files.length) { e.preventDefault(); handleFiles(files); }
+  });
+  $('send').onclick = () => send();
+  $('stop').onclick = () => stopRun();
+  $('plusBtn').onclick = () => openPlusMenu();
+  $('modelPickerBtn').onclick = () => openModelPicker();
+  $('voiceMic').onclick = () => voiceDictate();
+  $('voiceModeBtn').onclick = () => voiceOpen();
+  $('attachment').onchange = e => { handleFiles([...e.target.files]); e.target.value = ''; };
+  $('sidebarToggle').onclick = () => { $('sidebar').classList.contains('open') ? closeSidebar() : openSidebar(); };
+  $('mobileScrim').onclick = () => closeSidebar();
+  $('newChat').onclick = () => newChat();
+  $('chatsPlus').onclick = () => newChat();
+  $('navLibrary').onclick = () => { closeSidebar(); openLibrary(); };
+  $('newProjectBtn').onclick = () => createProject();
+  $('profileOpen').onclick = () => toggleAccountMenu();
+  $('amSettings').onclick = () => { $('accountMenu').hidden = true; openSettings('account'); };
+  $('amHelp').onclick = () => { $('accountMenu').hidden = true; openHelp(); };
+  $('sidebarSettings').onclick = () => openSettings('account');
+  $('projectsHead').onclick = e => { if (e.target.closest('.side-head-dots')) return; $('projectsSection').classList.toggle('collapsed'); };
+  $('chatsHead').onclick = e => { if (e.target.closest('.side-head-dots') || e.target.closest('.side-head-plus')) return; $('chatsSection').classList.toggle('collapsed'); };
+  $('projectsDots').onclick = e => { e.stopPropagation(); showMenu(e.currentTarget, [{ label: 'New project', icon: 'plus', onClick: () => createProject() }]); };
+  $('chatsDots').onclick = e => {
+    e.stopPropagation();
+    showMenu(e.currentTarget, [
+      { label: 'New chat', icon: 'plus', onClick: () => newChat() },
+      { label: 'Show archived', icon: 'archive', onClick: () => showArchived() },
+      'sep',
+      { label: 'Delete all conversations', icon: 'trash', danger: true, onClick: async () => {
+        const ok = await confirmDialog('Delete all conversations?', 'Every chat in your history will be deleted. This can\u2019t be undone.', 'Delete all');
+        if (!ok) return;
+        try { await api('/api/sessions/clear'); state.session = null; refreshBootstrap(); renderConversation(null); toast('All conversations deleted.'); } catch (err) { toast(err.message); }
+      } },
+    ]);
+  };
+  $('showMoreChats').onclick = () => { state.showAllChats = !state.showAllChats; renderRecents(); };
+  $('headerSearch').onclick = () => openPalette();
+  $('privateToggle').onclick = () => togglePrivate();
+  $('rightPaneToggle').onclick = () => { $('rightPane').hidden ? openRightPane() : closeRightPane(); };
+  $('rightPaneHide').onclick = () => closeRightPane();
+  $('rightPaneNewTab').onclick = () => clearPreview();
+  $('appPreviewRow').onclick = () => {
+    if (state.rightPaneCode) { $('rightPanePreview').hidden = false; document.querySelector('.right-pane-empty').hidden = true; }
+    else toast('No preview yet \u2014 generate a page or open a file.');
+  };
+  $('openFileRow').onclick = () => $('previewFileInput').click();
+  $('previewFileInput').onchange = async e => {
+    const file = e.target.files[0]; e.target.value = '';
+    if (!file) return;
+    if (!/\.html?$/i.test(file.name)) { toast('Only .html files can be previewed here.'); return; }
+    previewHtml(await file.text(), file.name);
+  };
+  $('rightPaneCopy').onclick = async () => { if (!state.rightPaneCode) return; toast((await copyCodeText(state.rightPaneCode)) ? 'Preview code copied' : 'Copy failed'); };
+  $('rightPaneDownload').onclick = () => {
+    if (!state.rightPaneCode) return;
+    const blob = new Blob([state.rightPaneCode], { type: 'text/html' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = state.rightPaneName || 'preview.html'; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  };
+  $('rightPaneSource').onclick = () => {
+    if (!state.rightPaneCode) return;
+    const view = $('rightPaneSourceView'), frame = $('rightPaneFrame');
+    if (view.hidden) { view.textContent = state.rightPaneCode; view.hidden = false; frame.hidden = true; }
+    else { view.hidden = true; view.textContent = ''; frame.hidden = false; }
+  };
+  $('libraryClose').onclick = () => closeLibrary();
+  $('libraryUpload').onclick = () => $('libraryFileInput').click();
+  $('libraryFileInput').onchange = e => { addFilesToLibrary([...e.target.files]); e.target.value = ''; };
+  $('librarySearch').oninput = e => { state.libraryQuery = e.target.value; renderLibrary(); };
+  $('libraryViewOptions').onclick = () => {
+    state.librarySort = state.librarySort === 'name' ? 'date' : 'name';
+    renderLibrary();
+    toast(state.librarySort === 'name' ? 'Library sorted by name' : 'Library sorted by newest first');
+  };
+  $('paletteClose').onclick = () => closePalette();
+  $('paletteInput').oninput = () => renderPalette();
+  $('settingsClose').onclick = () => closeSettings();
+  $('termsLink').onclick = () => openLegal('terms');
+  $('privacyLink').onclick = () => openLegal('privacy');
+  $('convMenuBtn').onclick = e => {
+    const s = state.session;
+    if (!s) return;
+    showMenu(e.currentTarget, [
+      { label: 'Share', icon: 'share', onClick: () => shareChat(s) },
+      { label: s.pinned ? 'Unpin' : 'Pin', icon: 'pin', onClick: () => pinChat(s) },
+      { label: 'Rename', icon: 'edit', onClick: () => renameChat(s) },
+      { label: 'Add to Project', icon: 'book', onClick: () => openProjectPicker(s, e.currentTarget) },
+      { label: 'Send Feedback', icon: 'feedback', onClick: () => openFeedback(s.id) },
+      { label: 'Copy Conversation ID', icon: 'copy', onClick: async () => { toast((await copyCodeText(s.id)) ? 'Conversation ID copied' : 'Copy failed'); } },
+      { label: 'Open in new tab', icon: 'external', onClick: () => window.open(location.pathname + '?s=' + encodeURIComponent(s.id), '_blank') },
+      'sep',
+      { label: 'Archive', icon: 'archive', onClick: () => archiveChat(s) },
+      { label: 'Delete', icon: 'trash', danger: true, onClick: () => deleteChat(s) },
+    ]);
+  };
+  $('messages').addEventListener('click', async e => {
+    const actionBtn = e.target.closest('[data-code-action]');
+    if (!actionBtn) return;
+    const body = actionBtn.closest('.message-body');
+    const blocks = codeByBody.get(body) || [];
+    const block = blocks[Number(actionBtn.dataset.codeIndex)];
+    if (!block) return;
+    if (actionBtn.dataset.codeAction === 'copy') toast((await copyCodeText(block.code)) ? 'Code copied' : 'Copy failed');
+    else if (actionBtn.dataset.codeAction === 'preview') previewHtml(block.code, codeFileName(block.language));
+    else if (actionBtn.dataset.codeAction === 'save') saveCodeToLibrary(block.code, block.language);
+  });
+  document.addEventListener('click', e => {
+    // The click that opened a menu bubbles up here in the same task; don't
+    // let it close the menu it just opened.
+    if (openMenuEl && !openMenuEl.contains(e.target) && Date.now() - menuOpenedAt > 50) closeMenus();
+    if (!$('modelPicker').hidden && !e.target.closest('#modelPicker') && !e.target.closest('#modelPickerBtn')) closeModelPicker();
+    if (!$('plusMenu').hidden && !e.target.closest('#plusMenu') && !e.target.closest('#plusBtn')) closePlusMenu();
+    if (!$('accountMenu').hidden && !e.target.closest('#accountMenu') && !e.target.closest('#profileOpen')) $('accountMenu').hidden = true;
+  });
+  document.addEventListener('keydown', e => {
+    const mod = e.ctrlKey || e.metaKey;
+    if (mod && e.key.toLowerCase() === 'k') { e.preventDefault(); $('palette').hidden ? openPalette() : closePalette(); }
+    else if (mod && e.key.toLowerCase() === 'j') { e.preventDefault(); newChat(); }
+    else if (mod && e.key === ',') { e.preventDefault(); $('settingsView').hidden ? openSettings('account') : closeSettings(); }
+    else if (mod && e.key.toLowerCase() === 'o' && !$('rightPane').hidden) { e.preventDefault(); $('previewFileInput').click(); }
+    else if (e.key === 'Escape') { closeMenus(); closeModelPicker(); closePlusMenu(); $('accountMenu').hidden = true; if (!$('palette').hidden) closePalette(); else if (!$('settingsView').hidden) closeSettings(); else if (!$('libraryView').hidden) closeLibrary(); else closeSidebar(); }
+  });
+  window.addEventListener('online', () => reconnectCheck());
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) reconnectCheck(); });
+  window.addEventListener('resize', () => syncDesktopChrome());
+  if (window.matchMedia) matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => applyTheme());
+  reconnectTimer = setInterval(reconnectCheck, 10000);
+}
+document.addEventListener('DOMContentLoaded', async () => {
+  bindEvents();
+  renderPaletteTabs();
+  renderProjects();
+  renderRecents();
+  renderLibrary();
+  renderSuggestions();
+  renderModeChip();
+  syncPrivate();
+  autoGrowPrompt();
+  syncSendState();
+  updateBusy();
+  await initialConnection();
+  await refreshBootstrap();
+  renderConversation(state.session);
+  initializeWorkspace();
+});
