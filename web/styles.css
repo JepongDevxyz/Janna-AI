@@ -415,6 +415,7 @@ body.wrap-code .message-body .code-block pre{white-space:pre-wrap;overflow-wrap:
 /* ---------- Desktop expansion (>=1024px) — UNVERIFIED vs grok.com desktop ---------- */
 @media(min-width:1024px){
   .sidebar{position:static;transform:none;box-shadow:none;border-right:1px solid var(--line)}
+  body.sidebar-hidden .sidebar{display:none}
   .mobile-scrim{display:none!important}
   .welcome h1{font-size:38px}
   .right-pane{width:420px}

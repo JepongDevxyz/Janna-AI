@@ -1675,7 +1675,12 @@ function bindEvents() {
   $('voiceMic').onclick = () => voiceDictate();
   $('voiceModeBtn').onclick = () => voiceOpen();
   $('attachment').onchange = e => { handleFiles([...e.target.files]); e.target.value = ''; };
-  $('sidebarToggle').onclick = () => { $('sidebar').classList.contains('open') ? closeSidebar() : openSidebar(); };
+  $('sidebarToggle').onclick = () => {
+    // Desktop (>=1024px): the sidebar is a static column, so .open has no
+    // visible effect there — collapse it instead. Phone: overlay open/close.
+    if (matchMedia('(min-width:1024px)').matches) { document.body.classList.toggle('sidebar-hidden'); return; }
+    $('sidebar').classList.contains('open') ? closeSidebar() : openSidebar();
+  };
   $('mobileScrim').onclick = () => closeSidebar();
   $('newChat').onclick = () => newChat();
   $('chatsPlus').onclick = () => newChat();
