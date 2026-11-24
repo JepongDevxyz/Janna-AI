@@ -558,7 +558,7 @@ function renderModelOptions(models) {
   syncModelPicker();
   refreshNativeLevels();
 }
-function shortModelLabel(id) { return (modelLabel(id) || id).split(' ').slice(0, 2).join(' '); }
+function shortModelLabel(id) { if (id === 'janna-cloud') return 'Janna'; return (modelLabel(id) || id).split(' ').slice(0, 2).join(' '); }
 function syncModelPicker() {
   const label = $('modelPickerLabel');
   if (label) label.textContent = state.model ? shortModelLabel(state.model) : 'Choose a model';

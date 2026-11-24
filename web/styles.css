@@ -141,6 +141,13 @@ svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.65;strok
 
 /* ---------- Composer ---------- */
 .composer-dock{flex-shrink:0;display:flex;flex-direction:column;align-items:center;padding:0 16px 4px}
+/* The thread composer lives in #composerHome, a column-flex item of the
+   dock. Without a width it sizes to the composer's min-content width
+   (the textarea's intrinsic cols=20 width), which is wider than the
+   phone viewport — the composer stuck out both sides at 390px and
+   360px (Send cut off, + half hidden). Pin the wrapper to the dock. */
+#composerHome{width:100%;max-width:760px;min-width:0}
+.composer{min-width:0}
 .composer-dock .composer{max-width:760px}
 .composer{width:100%;background:var(--panel);border:1px solid var(--line);border-radius:28px;box-shadow:var(--shadow-sm);padding:10px 10px 8px;position:relative}
 .composer.private-mode{border-style:dashed}
