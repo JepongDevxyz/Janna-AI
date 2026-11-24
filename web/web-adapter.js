@@ -63,6 +63,17 @@
     saveSessions(list);
   }
 
+  // Word-safe title: never cut a title mid-word (Grok generates summary
+  // titles; the fallback must at least end on a word boundary).
+  function wordTitle(prompt) {
+    var t = String(prompt || '').replace(/\s+/g, ' ').trim();
+    if (t.length <= 60) return t;
+    var cut = t.slice(0, 60);
+    var lastSpace = cut.lastIndexOf(' ');
+    if (lastSpace > 20) cut = cut.slice(0, lastSpace);
+    return cut;
+  }
+
   function appendExchange(sessionId, prompt, assistantText, errorMessage, activity, attached) {
     var list = loadSessions();
     var s = list.find(function (x) { return x.id === sessionId; });
@@ -71,7 +82,7 @@
     if (prompt) { var um = { role: 'user', content: prompt }; if (Array.isArray(attached) && attached.length) um.attached = attached; s.messages.push(um); }
     if (assistantText) { var am = { role: 'assistant', content: assistantText }; if (activity && activity.steps && activity.steps.length) am.activity = activity; s.messages.push(am); }
     else if (errorMessage) s.messages.push({ role: 'assistant', content: '\u26a0\ufe0f ' + errorMessage });
-    if ((!s.title || s.title === 'New chat') && prompt) s.title = prompt.slice(0, 60);
+    if ((!s.title || s.title === 'New chat') && prompt) s.title = wordTitle(prompt);
     s.updated = Math.floor(Date.now() / 1000);
     saveSessions(list);
   }
@@ -153,15 +164,83 @@
       });
   }
 
+  // --- in-flight runs: nothing is lost on refresh. The exchange is
+  // normally persisted when the terminal frame arrives (tapRunStream below),
+  // but a refresh mid-stream would lose the question AND the partial answer.
+  // So the tap also keeps a small in-flight record (question + partial
+  // reply so far, updated as deltas arrive) in its own key. On boot the
+  // record is merged into the session as a pending exchange, then cleared.
+  // A normal completion clears it too, so it can never duplicate a
+  // finished exchange. ---
+  var INFLIGHT_KEY = 'janna-web-inflight-v1';
+  function saveInflight(sessionId, prompt, text, attached, editIndex) {
+    try {
+      localStorage.setItem(INFLIGHT_KEY, JSON.stringify({ sessionId: sessionId, prompt: prompt, text: text || '', attached: Array.isArray(attached) ? attached : [], editIndex: (typeof editIndex === 'number' ? editIndex : null), at: Date.now() }));
+    } catch { /* full/blocked: in-memory only */ }
+  }
+  function loadInflight() { try { return JSON.parse(localStorage.getItem(INFLIGHT_KEY) || 'null'); } catch { return null; } }
+  function clearInflight() { try { localStorage.removeItem(INFLIGHT_KEY); } catch { /* ignore */ } }
+  function mergeInflight() {
+    var rec = null;
+    try { rec = JSON.parse(localStorage.getItem(INFLIGHT_KEY) || 'null'); } catch { return; }
+    if (!rec || !rec.sessionId || typeof rec.prompt !== 'string') return;
+    try { localStorage.removeItem(INFLIGHT_KEY); } catch { /* ignore */ }
+    var list = loadSessions();
+    var s = list.find(function (x) { return x.id === rec.sessionId; });
+    if (!s) return;
+    s.messages = s.messages || [];
+    var text = String(rec.text || '');
+    // A pending assistant message: the partial reply, marked so the app
+    // can show it as interrupted instead of pretending it finished.
+    var am = { role: 'assistant', content: text, pending: true };
+    if (typeof rec.editIndex === 'number') {
+      var um = s.messages[rec.editIndex];
+      if (!um || um.role !== 'user') return;
+      var next = s.messages[rec.editIndex + 1];
+      var oldResponse = (next && next.role === 'assistant') ? { role: 'assistant', content: next.content } : null;
+      if (!Array.isArray(um.versions)) um.versions = [{ text: um.content, response: oldResponse }];
+      um.versions.push({ text: rec.prompt, response: text ? am : null });
+      um.version = um.versions.length - 1;
+      um.content = rec.prompt;
+      s.messages = s.messages.slice(0, rec.editIndex + 1);
+      s.messages.push(am);
+    } else {
+      // Guard: never duplicate a user message that is already stored
+      // (e.g. the run finished between the last write and this boot).
+      var lastUser = null;
+      for (var i = s.messages.length - 1; i >= 0; i--) if (s.messages[i].role === 'user') { lastUser = s.messages[i]; break; }
+      if (!lastUser || lastUser.content !== rec.prompt) {
+        var um2 = { role: 'user', content: rec.prompt };
+        if (Array.isArray(rec.attached) && rec.attached.length) um2.attached = rec.attached;
+        s.messages.push(um2);
+      }
+      s.messages.push(am);
+    }
+    if ((!s.title || s.title === 'New chat') && rec.prompt) s.title = wordTitle(rec.prompt);
+    s.updated = Math.floor(Date.now() / 1000);
+    saveSessions(list);
+  }
+
   function tapRunStream(response, sessionId, prompt, attached, editIndex) {
     if (!response.body || typeof TransformStream === 'undefined') return response;
     var decoder = new TextDecoder();
     var buffer = '', recorded = false;
     var actSteps = [], actStart = Date.now();
+    var partialText = '', lastWrite = 0;
+    var hasSession = !!findSession(sessionId);
     var recordDone = function (assistantText, errorMessage, act) {
       if (editIndex != null) appendEditExchange(sessionId, editIndex, prompt, assistantText, errorMessage, act, attached);
       else appendExchange(sessionId, prompt, assistantText, errorMessage, act, attached);
     };
+    // The question is safe the moment the run starts — a refresh from here
+    // on keeps at least the question, plus whatever reply arrived so far.
+    // A reconnect starts a fresh tap for the SAME run: never wipe the
+    // partial text the previous tap already saved.
+    if (hasSession) {
+      var prevFlight = loadInflight();
+      if (prevFlight && prevFlight.sessionId === sessionId && prevFlight.prompt === prompt) partialText = String(prevFlight.text || '');
+      else saveInflight(sessionId, prompt, '', attached, editIndex);
+    }
     var tap = new TransformStream({
       transform: function (chunk, controller) {
         try {
@@ -176,9 +255,14 @@
                 var event = JSON.parse(lines[i].slice(5).trim());
                 var p = event.payload || event;
                 if (p.type === 'progress' && p.message) { if (actSteps[actSteps.length - 1] !== p.message) actSteps.push(p.message); }
-                else if (p.type === 'done') { var act = actSteps.length ? { steps: actSteps.slice(0, 12), seconds: Math.max(1, Math.round((Date.now() - actStart) / 1000)) } : null; recordDone(typeof p.text === 'string' ? p.text : '', '', act); recorded = true; if (queueFor(sessionId).length) scheduleDrain(sessionId); }
-                else if (p.type === 'error') { recordDone('', p.message || 'Run failed', null); recorded = true; }
-                else if (p.type === 'recovery') { recordDone('', p.message || 'Outcome unknown', null); recorded = true; }
+                else if (p.type === 'delta' && typeof p.text === 'string' && p.text) {
+                  partialText += p.text;
+                  var now = Date.now();
+                  if (hasSession && now - lastWrite > 400) { lastWrite = now; saveInflight(sessionId, prompt, partialText, attached, editIndex); }
+                }
+                else if (p.type === 'done') { var act = actSteps.length ? { steps: actSteps.slice(0, 12), seconds: Math.max(1, Math.round((Date.now() - actStart) / 1000)) } : null; clearInflight(); recordDone(typeof p.text === 'string' ? p.text : '', '', act); recorded = true; if (queueFor(sessionId).length) scheduleDrain(sessionId); }
+                else if (p.type === 'error') { clearInflight(); recordDone('', p.message || 'Run failed', null); recorded = true; }
+                else if (p.type === 'recovery') { clearInflight(); recordDone('', p.message || 'Outcome unknown', null); recorded = true; }
               } catch { /* partial frame */ }
             }
           }
@@ -342,7 +426,11 @@
       var runBody = {};
       try { runBody = JSON.parse((init && init.body) || '{}'); } catch { /* empty */ }
       var sess = runBody.session_id ? findSession(runBody.session_id) : null;
-      captureMemory(runBody.prompt);
+      // Background calls (follow-up pills, summary titles) are model calls
+      // that must NOT be persisted as chat exchanges and must not be
+      // remembered as user facts — they carry meta-prompts, not her words.
+      var isBackground = runBody.background === true;
+      if (!isBackground) captureMemory(runBody.prompt);
       runBody.context = buildContext(sess, runBody.prompt);
       if (sess && Array.isArray(sess.messages)) {
         var allHist = sess.messages.filter(function (m) { return m && (m.role === 'user' || m.role === 'assistant'); });
@@ -380,6 +468,7 @@
       return shrinkRunImages().then(function () {
         var newInit = Object.assign({}, init, { body: JSON.stringify(runBody) });
         return nativeFetch(input, newInit).then(function (response) {
+          if (isBackground) return response;
           return tapRunStream(response, runBody.session_id, runBody.prompt, (Array.isArray(runBody.attachments) ? runBody.attachments : []).map(function (a) { return { kind: a && a.kind === 'image' ? 'image' : 'file', name: String((a && a.name) || 'file').slice(0, 80) }; }), (typeof runBody.edit_of === 'number' ? runBody.edit_of : null));
         });
       });
@@ -652,6 +741,17 @@
   }
   var kbTries = 0;
   var kbTimer = setInterval(function () { if (injectKnowledge() || ++kbTries > 40) clearInterval(kbTimer); }, 400);
+
+  // --- recovery on boot: merge any interrupted run, then drain any queued
+  // follow-ups that a refresh stranded (the queue used to wait for the next
+  // completed run before it moved at all) ---
+  try { mergeInflight(); } catch { /* never break boot */ }
+  setTimeout(function () {
+    try {
+      var q = loadQueue();
+      Object.keys(q).forEach(function (sid) { if (Array.isArray(q[sid]) && q[sid].length) drainQueue(sid); });
+    } catch { /* ignore */ }
+  }, 1500);
 
   // --- service worker self-heal: when a new shell takes over, reload once
   // so updates actually reach this device in a single visit ---

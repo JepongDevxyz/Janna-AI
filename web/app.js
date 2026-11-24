@@ -37,6 +37,59 @@ const uid = p => p + '-' + Math.random().toString(36).slice(2, 10) + Date.now().
 /* ---------- local storage: projects, chat→project map, library, feedback ---------- */
 function loadJSON(key, fallback) { try { const v = JSON.parse(localStorage.getItem(key) || 'null'); return v ?? fallback; } catch { return fallback; } }
 function saveJSON(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* full/blocked: in-memory only */ } }
+
+/* ---------- composer draft: typed-but-unsent text survives a refresh ----------
+   Drafts are keyed by session ('new' when no chat is open, 'private' in
+   private mode). Saved on input (debounced), restored when the chat opens,
+   cleared the moment the message is sent. Attachments can't persist (File
+   objects), so only the text is kept. */
+const DRAFT_KEY = 'janna-web-draft-v1';
+function draftSessionKey() { return state.isPrivate ? 'private' : (state.session ? state.session.id : 'new'); }
+function saveDraftNow() {
+  try {
+    const drafts = loadJSON(DRAFT_KEY, {});
+    const key = draftSessionKey();
+    const v = $('prompt') ? $('prompt').value : '';
+    if (v.trim()) drafts[key] = v; else delete drafts[key];
+    saveJSON(DRAFT_KEY, drafts);
+  } catch { /* ignore */ }
+}
+let draftTimer = null;
+function saveDraftSoon() { clearTimeout(draftTimer); draftTimer = setTimeout(saveDraftNow, 300); }
+function restoreDraft() {
+  try {
+    const v = loadJSON(DRAFT_KEY, {})[draftSessionKey()] || '';
+    const t = $('prompt');
+    if (t && !t.value && v) { t.value = v; autoGrowPrompt(); syncSendState(); }
+  } catch { /* ignore */ }
+}
+function clearDraft() { try { const d = loadJSON(DRAFT_KEY, {}); delete d[draftSessionKey()]; saveJSON(DRAFT_KEY, d); } catch { /* ignore */ } }
+
+/* ---------- white top toast (Grok's mic-denied card) ----------
+   The dark bottom toast stays for ordinary notices; permission denials get
+   Grok's white top card with an X and auto-dismiss, optionally with an
+   action button (e.g. a Settings link). */
+function topToast(text, action) {
+  const wrap = document.createElement('div');
+  wrap.className = 'top-toast';
+  wrap.setAttribute('role', 'status');
+  const warn = el('span', 'top-toast-warn', '\u26a0\ufe0f');
+  const body = el('span', 'top-toast-text', text);
+  wrap.append(warn, body);
+  if (action && action.label) {
+    const b = el('button', 'top-toast-action', action.label);
+    b.type = 'button';
+    b.onclick = () => { wrap.remove(); action.onClick && action.onClick(); };
+    wrap.append(b);
+  }
+  const x = el('button', 'top-toast-close', '\u2715');
+  x.type = 'button'; x.setAttribute('aria-label', 'Dismiss');
+  x.onclick = () => wrap.remove();
+  wrap.append(x);
+  document.body.append(wrap);
+  setTimeout(() => wrap.remove(), 6000);
+  return wrap;
+}
 state.localProjects = loadJSON('janna-web-projects-v1', []);
 state.chatProjects = loadJSON('janna-web-chat-projects-v1', {});
 state.library = loadJSON('janna-web-library-v1', []);
@@ -145,7 +198,9 @@ function highlightCode(code, lang) {
 function formatMarkdown(value) {
   const source = String(value || '').replace(/\r\n/g, '\n');
   const rows = source.split('\n'), blocks = [], lines = [];
-  const languageLabel = x => ({ js: 'JavaScript', ts: 'TypeScript', jsx: 'React JSX', tsx: 'React TSX', html: 'HTML', css: 'CSS', py: 'Python', cs: 'C#', cpp: 'C++', c: 'C', rs: 'Rust', json: 'JSON', sh: 'Shell' }[x] || x.toUpperCase() || 'Code');
+  const languageLabel = x => ({ js: 'JavaScript', javascript: 'JavaScript', ts: 'TypeScript', typescript: 'TypeScript', jsx: 'React JSX', tsx: 'React TSX', html: 'HTML', css: 'CSS', py: 'Python', python: 'Python', cs: 'C#', cpp: 'C++', c: 'C', rs: 'Rust', rust: 'Rust', go: 'Go', json: 'JSON', sh: 'Shell', bash: 'Shell', shell: 'Shell', sql: 'SQL', php: 'PHP', swift: 'Swift', kotlin: 'Kotlin', yaml: 'YAML', yml: 'YAML', xml: 'XML', svg: 'SVG' }[x] || x.toUpperCase() || 'Code');
+  // Small per-language mark in the code header (Grok shows a language logo).
+  const languageLogo = (x, label) => ({ py: 'Py', python: 'Py', js: 'JS', javascript: 'JS', ts: 'TS', typescript: 'TS', jsx: 'JS', tsx: 'TS', html: '<>', css: '{}', json: '{}', java: 'Ja', go: 'Go', rs: 'Rs', rust: 'Rs', sh: '$_', bash: '$_', sql: 'SQL', cs: 'C#', cpp: 'C+', c: 'C' }[String(x || '').toLowerCase()] || String(label || 'Code').slice(0, 2));
   for (let i = 0; i < rows.length; i++) {
     const m = rows[i].match(/^ {0,3}(`{3,}|~{3,})\s*([^\n]*)$/);
     if (!m) { lines.push(escapeHTML(rows[i])); continue; }
@@ -184,7 +239,7 @@ function formatMarkdown(value) {
       while (lj < lines.length && lines[lj].includes('|') && lines[lj].trim()) { bodyRows.push(splitCells(lines[lj])); lj++; }
       const th = head.map(c => `<th>${inline(c)}</th>`).join('');
       const tb = bodyRows.map(r => '<tr>' + head.map((_, ci) => `<td>${inline(r[ci] || '')}</td>`).join('') + '</tr>').join('');
-      tables.push(`<div class="md-table-wrap"><table class="md-table"><thead><tr>${th}</tr></thead><tbody>${tb}</tbody></table></div>`);
+      tables.push(`<div class="md-table-wrap"><div class="md-table-head"><span>Table</span><button type="button" class="table-copy-btn" data-table-copy title="Copy this table">Copy table</button></div><div class="md-table-scroll"><table class="md-table"><thead><tr>${th}</tr></thead><tbody>${tb}</tbody></table></div></div>`);
       lines.splice(li, lj - li, `\uE002${tables.length - 1}\uE003`);
     }
   }
@@ -202,15 +257,36 @@ function formatMarkdown(value) {
   const html = out.join('').replace(/\uE000(\d+)\uE001/g, (_, id) => {
     const block = blocks[Number(id)]; if (!block) return '';
     const label = languageLabel(block.language);
+    const logo = languageLogo(block.language, label);
     const isHtml = ['html', 'htm'].includes(block.language);
     const extra = isHtml
       ? `<button type="button" class="code-action" data-code-action="preview" data-code-index="${id}" title="Preview this page">Preview</button><button type="button" class="code-action" data-code-action="save" data-code-index="${id}" title="Save to Library">Save</button>`
       : '';
-    return `<section class="code-block" data-code-index="${id}"><div class="code-block-header"><span class="code-language">${escapeHTML(label)}</span><span class="code-block-actions"><button type="button" class="code-action" data-code-action="copy" data-code-index="${id}" title="Copy this code">Copy</button>${extra}</span></div><pre tabindex="0"><code>${highlightCode(block.code, block.language)}</code></pre></section>`;
+    return `<section class="code-block" data-code-index="${id}"><div class="code-block-header"><span class="code-logo">${escapeHTML(logo)}</span><span class="code-language">${escapeHTML(label)}</span><span class="code-block-actions"><button type="button" class="code-action" data-code-action="copy" data-code-index="${id}" title="Copy this code">Copy</button>${extra}</span></div><pre tabindex="0"><code>${highlightCode(block.code, block.language)}</code></pre></section>`;
   }).replace(/\uE002(\d+)\uE003/g, (_, id) => tables[Number(id)] || '');
   return { html, blocks };
 }
-function renderMarkdown(body, value) { const result = formatMarkdown(value); body.innerHTML = result.html; codeByBody.set(body, result.blocks); return result; }
+function tableToText(table) {
+  const rows = [];
+  table.querySelectorAll('tr').forEach(tr => {
+    const cells = [];
+    tr.querySelectorAll('th,td').forEach(td => cells.push(td.textContent.trim()));
+    rows.push(cells.join('\t'));
+  });
+  return rows.join('\n');
+}
+function renderMarkdown(body, value) {
+  const result = formatMarkdown(value);
+  body.innerHTML = result.html;
+  codeByBody.set(body, result.blocks);
+  body.querySelectorAll('[data-table-copy]').forEach(btn => {
+    btn.onclick = async () => {
+      const t = btn.closest('.md-table-wrap')?.querySelector('table');
+      toast((await copyCodeText(t ? tableToText(t) : '')) ? 'Table copied' : 'Copy failed');
+    };
+  });
+  return result;
+}
 function codeFileName(language) {
   const extension = ({ html: 'html', htm: 'html', js: 'js', mjs: 'mjs', jsx: 'jsx', ts: 'ts', tsx: 'tsx', css: 'css', json: 'json', py: 'py', python: 'py', cs: 'cs', cpp: 'cpp', c: 'c', rs: 'rs', go: 'go', sh: 'sh' }[language] || 'txt');
   return 'janna-code.' + extension;
@@ -248,6 +324,22 @@ function voiceSpeak(text) {
   if (!cleaned.trim()) return;
   try { window.speechSynthesis.cancel(); const utter = applyVoicePersona(new SpeechSynthesisUtterance(cleaned)); utter.lang = speechTag(cleaned); window.speechSynthesis.speak(utter); } catch { /* unavailable */ }
 }
+/* Read aloud from the message menu (Grok's More → Read aloud): speaks on
+   demand, even when the read-replies-aloud setting is off. */
+function speakNow(text) {
+  if (!('speechSynthesis' in window)) { toast('Read aloud is not available in this browser.'); return; }
+  const cleaned = voiceClean(text);
+  if (!cleaned) return;
+  try { window.speechSynthesis.cancel(); const u = applyVoicePersona(new SpeechSynthesisUtterance(cleaned.slice(0, 1700))); u.lang = speechTag(cleaned); window.speechSynthesis.speak(u); } catch { /* unavailable */ }
+}
+/* Dictation Refinement (Grok's Behavior setting): 'Tidy up' lightly cleans
+   dictated text (collapse spaces, capitalise the first letter); 'Verbatim'
+   keeps exactly what the speech service heard. */
+function tidyDictation(text) {
+  const t = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!t) return t;
+  return t.charAt(0).toUpperCase() + t.slice(1);
+}
 function voiceDictate() {
   const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!Rec) return toast('Microphone dictation is not available in this browser. You can still type.');
@@ -256,8 +348,20 @@ function voiceDictate() {
   recognition.lang = speechTag();
   recognition.interimResults = true; recognition.continuous = false; recognition.maxAlternatives = 1;
   const previous = $('prompt').value; let transcript = '';
-  recognition.onresult = e => { transcript = Array.from(e.results).map(r => r[0].transcript).join(' '); $('prompt').value = (previous + ' ' + transcript).trim(); autoGrowPrompt(); syncSendState(); };
-  recognition.onerror = e => toast('Voice transcription: ' + String(e.error || 'unavailable') + '. Some browsers require network access.');
+  recognition.onresult = e => {
+    transcript = Array.from(e.results).map(r => r[0].transcript).join(' ');
+    if (state.settings.dictation_refinement !== 'verbatim') transcript = tidyDictation(transcript);
+    $('prompt').value = (previous + ' ' + transcript).trim(); autoGrowPrompt(); syncSendState(); saveDraftSoon();
+  };
+  recognition.onerror = e => {
+    if (String(e.error || '') === 'not-allowed') {
+      // Grok: a white top toast, plus a second one linking to dictation settings.
+      topToast('Microphone access denied. Check your browser settings.');
+      topToast('Customize how much your dictation is cleaned up in settings.', { label: 'Settings', onClick: () => openSettings('voice') });
+      return;
+    }
+    toast('Voice transcription: ' + String(e.error || 'unavailable') + '. Some browsers require network access.');
+  };
   recognition.onend = () => { state.voiceListening = false; $('voiceMic').classList.remove('listening'); $('voiceMic').setAttribute('aria-pressed', 'false'); $('prompt').focus(); };
   try { recognition.start(); state.voiceListening = true; $('voiceMic').classList.add('listening'); $('voiceMic').setAttribute('aria-pressed', 'true'); }
   catch (e) { toast('Microphone could not start: ' + e.message); }
@@ -387,6 +491,23 @@ async function voiceLoadMics() {
     sel.onchange = () => persistSettings({ voice_mic_label: sel.value });
   }
 }
+function voiceLoadMicsInto(sel) {
+  if (!sel) return;
+  (async () => {
+    let devices = [];
+    try { if (navigator.mediaDevices?.enumerateDevices) devices = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'audioinput'); } catch { /* ignore */ }
+    sel.replaceChildren();
+    if (devices.length) {
+      devices.forEach((d, i) => { const o = document.createElement('option'); o.value = d.deviceId; o.textContent = d.label || 'Microphone ' + (i + 1); sel.append(o); });
+      sel.value = state.settings.voice_mic_device || devices[0].deviceId;
+      sel.onchange = () => persistSettings({ voice_mic_device: sel.value, voice_mic_label: sel.options[sel.selectedIndex]?.textContent || '' });
+    } else {
+      for (const label of ['Microphone', 'Speakerphone', 'Headset earpiece']) { const o = document.createElement('option'); o.value = label; o.textContent = label; sel.append(o); }
+      sel.value = state.settings.voice_mic_label || 'Microphone';
+      sel.onchange = () => persistSettings({ voice_mic_label: sel.value });
+    }
+  })();
+}
 function voiceToggleSheet(open) {
   const sheet = document.getElementById('voiceSheet'); if (!sheet) return;
   const willOpen = open !== undefined ? open : sheet.hidden;
@@ -498,7 +619,28 @@ function voiceToggleMute() {
   if (voiceTalk.muted) { clearTimeout(voiceTalk.chunkTimer); try { voiceTalk.recog?.stop(); } catch { /* ignore */ } try { window.speechSynthesis.cancel(); } catch { /* ignore */ } voiceSetPhase('idle', 'Mic is muted \u2014 tap the mic to talk again.'); }
   else { voiceTalk.stopped = false; voiceListen(); }
 }
-function voiceOpen() {
+async function voiceOpen() {
+  // Grok: a denied mic shows a white top toast and does NOT open a voice
+  // screen — so ask for the mic BEFORE opening the overlay.
+  if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+    const micId = state.settings.voice_mic_device || '';
+    const constraints = micId ? { audio: { deviceId: { exact: micId } } } : { audio: true };
+    const probe = async c => {
+      const stream = await navigator.mediaDevices.getUserMedia(c);
+      stream.getTracks().forEach(t => { try { t.stop(); } catch { /* ignore */ } });
+      return true;
+    };
+    try { await probe(constraints); }
+    catch (err) {
+      if (err && err.name === 'OverconstrainedError') {
+        try { await probe({ audio: true }); }
+        catch (err2) {
+          if (err2 && err2.name !== 'NotFoundError') { topToast('Microphone access denied. Check your browser settings.'); return; }
+        }
+      } else if (err && err.name === 'NotAllowedError') { topToast('Microphone access denied. Check your browser settings.'); return; }
+      else if (err && err.name !== 'NotFoundError') { topToast('Microphone access denied. Check your browser settings.'); return; }
+    }
+  }
   voiceOverlay();
   syncVoiceNameLabel();
   voiceTalk.active = true; voiceTalk.muted = false; voiceTalk.quiet = 0; voiceTalk.errStrikes = 0; voiceTalk.stopped = false;
@@ -506,22 +648,7 @@ function voiceOpen() {
   document.body.classList.add('voice-open');
   const btn = document.getElementById('voiceMuteBtn'); if (btn) btn.classList.remove('muted');
   voiceTalk.langOverride = ''; voiceTalk.langRetried = false;
-  if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-    voiceSetPhase('idle', 'One moment \u2014 asking for microphone permission\u2026');
-    const micId = state.settings.voice_mic_device || '';
-    const constraints = micId ? { audio: { deviceId: { exact: micId } } } : { audio: true };
-    const ask = c => navigator.mediaDevices.getUserMedia(c).then(stream => {
-      stream.getTracks().forEach(t => { try { t.stop(); } catch { /* ignore */ } });
-      if (voiceTalk.active && !voiceTalk.muted) voiceListen();
-    });
-    ask(constraints).catch(err => {
-      if (!voiceTalk.active) return;
-      if (err && err.name === 'OverconstrainedError') { ask({ audio: true }).catch(() => {}); return; }
-      if (err && err.name === 'NotFoundError') { voiceListen(); return; }
-      voiceTalk.stopped = true;
-      voiceSetPhase('idle', 'The microphone wasn\u2019t allowed. To fix it: tap the lock icon in the address bar \u2192 Permissions \u2192 Microphone \u2192 Allow, then close and reopen this.');
-    });
-  } else voiceListen();
+  voiceListen();
 }
 function voiceClose() {
   voiceTalk.active = false;
@@ -589,12 +716,14 @@ function openModelPicker() {
     for (const row of rows) {
       const item = el('button', 'model-picker-item');
       item.type = 'button'; item.setAttribute('role', 'radio'); item.setAttribute('aria-checked', String(row.id === state.model));
+      const icon = el('span', 'mp-icon');
+      icon.innerHTML = '<svg><use href="#i-' + (row.id === 'janna-cloud' ? 'spark' : row.id.startsWith('apinex-') ? 'bolt' : 'globe') + '"/></svg>';
       const radio = el('span', 'radio');
       const texts = el('div', 'mp-texts');
       texts.append(el('strong', '', row.label));
       const note = row.note || (row.vision ? 'Can see images' : '');
       if (note) texts.append(el('small', '', note + (row.vision ? ' · Sees images' : '')));
-      item.append(radio, texts);
+      item.append(icon, radio, texts);
       if (row.id === state.model) { const c = el('span', 'mp-check'); c.innerHTML = '<svg><use href="#i-check"/></svg>'; item.append(c); }
       item.onclick = () => chooseModel(row.id);
       p.append(item);
@@ -816,15 +945,16 @@ function startThinking() {
   if (!item) return;
   item.hidden = false;
   item.classList.remove('collapsed', 'done');
-  item.querySelector('.think-title').textContent = 'Working for 1s';
+  // Grok: "Planning next moves" first, then the live "Working for Ns" timer.
+  think.planned = false;
+  item.querySelector('.think-title').textContent = 'Planning next moves';
   item.querySelector('.think-clock').textContent = '1s';
   item.querySelector('.think-steps').replaceChildren();
   think.start = Date.now();
   clearInterval(think.timer);
   think.timer = setInterval(() => {
     const secs = Math.max(1, Math.round((Date.now() - think.start) / 1000));
-    const text = 'Working for ' + fmtDur(secs);
-    item.querySelector('.think-title').textContent = text;
+    if (think.planned) item.querySelector('.think-title').textContent = 'Working for ' + fmtDur(secs);
     item.querySelector('.think-clock').textContent = fmtDur(secs);
   }, 1000);
   scrollThreadToBottom();
@@ -841,8 +971,13 @@ function stopThinking() {
 function addProgressStep(text) {
   const item = thinkingEl();
   if (!item) return;
+  // Grok shows ONE short step line at a time: the old step fades, the
+  // current one is black. Never a long checklist.
+  think.planned = true;
+  item.querySelector('.think-title').textContent = 'Working for ' + fmtDur(Math.max(1, Math.round((Date.now() - think.start) / 1000)));
   const steps = item.querySelector('.think-steps');
-  steps.querySelectorAll('li').forEach(li => li.classList.remove('is-current'));
+  steps.querySelectorAll('li').forEach(li => { li.classList.remove('is-current'); li.classList.add('fading'); });
+  while (steps.children.length > 1) steps.removeChild(steps.firstChild);
   const li = el('li', 'is-current', text);
   steps.append(li);
   scrollThreadToBottom();
@@ -860,8 +995,14 @@ function createMessageNode(message, session) {
     if (message.kind === 'log') bubble.append(el('div', 'muted', (message.name || 'log') + ' \u00b7 ' + (message.content || '').length + ' characters'));
     if (Array.isArray(message.attached)) for (const a of message.attached) bubble.append(el('div', 'muted', (a.kind === 'image' ? 'Image' : 'File') + ': ' + (a.name || 'file')));
     item.append(bubble);
-    // Grok: no persistent Edit/Copy pills under your bubble — tap the bubble
-    // to edit it inline. The pager below appears only on edited messages.
+    // Grok shows Edit/Copy actions under your bubble (tap still edits too).
+    const uActions = el('div', 'message-actions user-actions');
+    const uEdit = button('Edit', () => { if (!state.busy) startEdit(item, message, session); });
+    uEdit.classList.add('message-action-text'); uEdit.innerHTML = '<svg><use href="#i-edit"/></svg><span>Edit</span>';
+    const uCopy = button('Copy', async () => { toast((await copyCodeText(currentVersionText(message))) ? 'Copied' : 'Copy failed'); });
+    uCopy.classList.add('message-action-text'); uCopy.innerHTML = '<svg><use href="#i-copy"/></svg><span>Copy</span>';
+    uActions.append(uEdit, uCopy);
+    item.append(uActions);
     bubble.onclick = () => { if (!state.busy) startEdit(item, message, session); };
     if (Array.isArray(message.versions) && message.versions.length > 1) {
       const pager = el('div', 'version-pager');
@@ -889,6 +1030,9 @@ function createMessageNode(message, session) {
     more.classList.add('message-action'); more.innerHTML = '<svg><use href="#i-dots"/></svg>'; more.title = 'More actions';
     actions.append(copyBtn, like, dislike, more);
     item.append(actions);
+    // A reply cut short by a refresh keeps its partial text, marked as
+    // interrupted — it is never silently presented as finished.
+    if (message.pending) item.append(el('div', 'muted interrupted-note', 'Interrupted \u2014 this reply stopped here. Send a follow-up to continue.'));
     if (feedback === 'up') like.classList.add('voted');
     if (feedback === 'down') dislike.classList.add('voted');
   }
@@ -985,11 +1129,86 @@ async function switchVersion(message, session, i) {
   renderConversation(session);
   try { await api('/api/sessions/update', { session_id: session.id, messages: list }); } catch { /* switch still shows locally */ }
 }
-function renderFollowUps() {
-  // Grok shows no follow-up chips under an answer; keep the wrap hidden.
+/* ---------- follow-up pills (Grok: two model-generated pills under each
+   reply; tap one to send it) ---------- */
+function renderFollowUps(session) {
   const wrap = $('followUps');
   wrap.replaceChildren();
   wrap.hidden = true;
+  if (!session || state.settings.show_suggestions === false) return;
+  const msgs = session.messages || [];
+  let lastAm = null;
+  for (let i = msgs.length - 1; i >= 0; i--) if (msgs[i].role === 'assistant') { lastAm = msgs[i]; break; }
+  const items = lastAm && Array.isArray(lastAm.followups) ? lastAm.followups.filter(Boolean).slice(0, 2) : [];
+  if (!items.length) return;
+  items.forEach((text, i) => {
+    const chip = el('button', 'follow-chip' + (i === 0 ? ' primary' : ''));
+    chip.type = 'button';
+    chip.innerHTML = (i === 0 ? '<span class="follow-play">\u25b6</span>' : '') + escapeHTML(text);
+    chip.onclick = () => {
+      if (state.busy) { toast('Finish the current answer first.'); return; }
+      $('prompt').value = text; autoGrowPrompt(); syncSendState(); send();
+    };
+    wrap.append(chip);
+  });
+  wrap.hidden = false;
+}
+/* Background model calls (follow-ups + summary titles) go through /api/run
+   with background:true so the adapter does NOT persist them as exchanges.
+   If the call fails, nothing renders — never a fake suggestion or title. */
+async function generateFollowUps(session, am) {
+  try {
+    if (!session || !am || state.settings.show_suggestions === false) return;
+    const lastUser = (session.messages || []).filter(m => m.role === 'user').slice(-1)[0];
+    const q = stripStyleDirective(lastUser ? (lastUser.content || '') : '');
+    const a = stripStyleDirective(am.content || '');
+    if (!q || !a || a.startsWith('\u26a0\ufe0f')) return;
+    const body = { session_id: session.id, model: state.model, background: true, prompt: 'Based on this exchange, suggest 2 short follow-up questions the user might ask next. Reply with only the 2 questions, one per line, no numbering, no quotes.\n\nUser: ' + q.slice(0, 500) + '\nAssistant: ' + a.slice(0, 1500), messages: [] };
+    let text = '';
+    for await (const ev of JannaRuns.subscribe(body, state.token)) {
+      if (ev.type === 'delta') text += ev.text || '';
+      else if (ev.type === 'done') text = ev.text || text;
+    }
+    const items = text.split('\n').map(s => s.replace(/^[\s*\-\d.)\]]+/, '').replace(/^["'\u201c\u201d]+|["'\u201c\u201d]+$/g, '').trim()).filter(s => s.length > 3 && s.length < 140).slice(0, 2);
+    if (!items.length) return;
+    am.followups = items;
+    renderFollowUps(session);
+    try { await api('/api/sessions/update', { session_id: session.id, messages: session.messages }); } catch { /* pills still show locally */ }
+  } catch { /* no pills on failure */ }
+}
+async function requestTitle(session, firstPrompt) {
+  try {
+    if (!session || !firstPrompt) return;
+    const stored = findSession(session.id);
+    const current = stored ? (stored.title || '') : '';
+    // Only replace the fallback title — never overwrite a title she set.
+    if (current && current !== 'New chat' && current !== wordSafeTitle(firstPrompt)) return;
+    const body = { session_id: session.id, model: state.model, background: true, prompt: 'Give a very short title (max 6 words) for this conversation. Reply with only the title, no quotes, no trailing punctuation.\n\nFirst message: ' + firstPrompt.slice(0, 300), messages: [] };
+    let text = '';
+    for await (const ev of JannaRuns.subscribe(body, state.token)) {
+      if (ev.type === 'delta') text += ev.text || '';
+      else if (ev.type === 'done') text = ev.text || text;
+    }
+    const title = wordSafeTitle(text.split('\n')[0].replace(/^["'\u201c\u201d]+|["'\u201c\u201d]+$/g, '').trim());
+    if (!title || title.length < 2) return;
+    try {
+      await api('/api/sessions/update', { session_id: session.id, title });
+      // The adapter updated storage, not the in-memory list — sync both so
+      // the header and sidebar show the new title right away.
+      if (state.session && state.session.id === session.id) state.session.title = title;
+      const idx = state.sessions.findIndex(s => s.id === session.id);
+      if (idx >= 0) state.sessions[idx].title = title;
+      $('threadTitle').textContent = title;
+      renderRecents();
+    } catch { /* fallback title stays */ }
+  } catch { /* fallback title stays */ }
+}
+function wordSafeTitle(text) {
+  const t = String(text || '').replace(/\s+/g, ' ').trim();
+  if (t.length <= 60) return t;
+  const cut = t.slice(0, 60);
+  const lastSpace = cut.lastIndexOf(' ');
+  return lastSpace > 20 ? cut.slice(0, lastSpace) : cut;
 }
 function renderConversation(session) {
   think.el = null; clearInterval(think.timer);
@@ -1006,14 +1225,24 @@ function renderConversation(session) {
   if (session) {
     for (const msg of session.messages || []) $('messages').append(createMessageNode(msg, session));
   }
-  renderFollowUps();
+  renderFollowUps(session);
   renderProjects(); renderRecents();
+  restoreDraft();
+  updateJump();
   scrollThreadToBottom();
 }
 function scrollThreadToBottom() {
   if (state.settings.auto_scroll === false) return;
   const t = $('thread');
   if (t) t.scrollTop = t.scrollHeight;
+}
+/* Scroll-to-bottom button (Grok: a circular button centered above the
+   composer, shown only while the thread is scrolled up). */
+function updateJump() {
+  const t = $('thread'), btn = $('jumpLatest');
+  if (!t || !btn) return;
+  const far = t.scrollHeight - t.scrollTop - t.clientHeight > 120;
+  btn.hidden = !(far && !$('messages').hidden);
 }
 
 /* ---------- sessions / sidebar ---------- */
@@ -1026,7 +1255,7 @@ function visibleChats() {
 function renderRecents() {
   const list = $('sessionList'); list.replaceChildren();
   const chats = visibleChats();
-  const shown = state.showAllChats ? chats : chats.slice(0, 8);
+  const shown = state.showAllChats ? chats : chats.slice(0, 5);
   for (const s of shown) {
     const row = el('div', 'side-row');
     if (state.session && s.id === state.session.id) row.classList.add('active');
@@ -1040,7 +1269,7 @@ function renderRecents() {
     list.append(row);
   }
   const moreBtn = $('showMoreChats');
-  moreBtn.hidden = chats.length <= 8;
+  moreBtn.hidden = chats.length <= 5;
   moreBtn.textContent = state.showAllChats ? 'Show less' : 'Show more';
   if (!chats.length) list.append(el('div', 'empty-state', state.projectFilter ? 'No chats in this project yet.' : 'No chats yet. Start a new chat.'));
 }
@@ -1059,6 +1288,7 @@ function renderProjects() {
 }
 async function openSession(id) {
   if (state.busy) return; // the adapter's queue drain also calls this; stay silent
+  saveDraftNow(); // keep the draft of the chat we're leaving
   closeSidebar();
   const sess = findSession(id);
   if (sess && (sess.messages || []).length) { state.session = sess; state.isPrivate = false; syncPrivate(); renderConversation(state.session); return; }
@@ -1078,7 +1308,7 @@ async function newSession() {
     if (sess && sess.id) { state.session = sess; state.sessions.unshift(state.session); state.isPrivate = false; syncPrivate(); renderConversation(state.session); }
   } catch (e) { toast(e.message); }
 }
-function newChat() { if (state.busy) { toast('Finish the current answer first.'); return; } closeSidebar(); state.session = null; state.isPrivate = false; syncPrivate(); state.privateThread = []; renderConversation(null); $('prompt').focus(); }
+function newChat() { if (state.busy) { toast('Finish the current answer first.'); return; } saveDraftNow(); closeSidebar(); state.session = null; state.isPrivate = false; syncPrivate(); state.privateThread = []; renderConversation(null); $('prompt').focus(); }
 async function renameChat(session) {
   const res = await showDialog({ title: 'Rename chat', fields: [{ name: 'name', value: session.title || 'New chat' }], okText: 'Rename' });
   if (!res || !String(res.name).trim()) return;
@@ -1154,10 +1384,13 @@ function showMenu(anchor, items) {
 }
 function openChatMenu(session, anchor) {
   showMenu(anchor, [
+    { label: 'Share', onClick: () => shareChat(session) },
     { label: session.pinned ? 'Unpin' : 'Pin', onClick: () => pinChat(session) },
     { label: 'Rename', onClick: () => renameChat(session) },
-    { label: 'Share', onClick: () => shareChat(session) },
     { label: 'Add to Project', onClick: () => openProjectPicker(session, anchor) },
+    { label: 'Send Feedback', onClick: () => openFeedback(session.id) },
+    { label: 'Copy Conversation ID', onClick: async () => { toast((await copyCodeText(session.id)) ? 'Conversation ID copied' : 'Copy failed'); } },
+    { label: 'Open in new tab', onClick: () => window.open(location.pathname + '?s=' + encodeURIComponent(session.id), '_blank') },
     'sep',
     { label: 'Archive', onClick: () => archiveChat(session) },
     { label: 'Delete', danger: true, onClick: () => deleteChat(session) },
@@ -1178,13 +1411,19 @@ async function createProject(chatId) {
   toast('Project created: ' + p.name);
 }
 function openMessageMenu(message, session, anchor) {
+  const s = session || state.session;
+  const when = s && s.updated ? new Date(s.updated * 1000) : new Date();
+  const timeLabel = 'Today ' + when.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   const items = [
+    { group: timeLabel },
     { label: 'Branch in new chat', onClick: () => branchMessage(message) },
-    { label: 'Share', onClick: () => shareChat(session || state.session) },
+    { label: 'Share', onClick: () => shareChat(s) },
+    { label: 'Read aloud', onClick: () => speakNow(message.content || '') },
     { label: 'Export to PDF', onClick: () => window.print() },
-    { label: 'Copy Conversation ID', onClick: async () => { const id = session?.id || state.session?.id || ''; toast((await copyCodeText(id)) ? 'Conversation ID copied' : 'Copy failed'); } },
+    { label: 'Report message', onClick: () => openFeedback(s?.id, 'report') },
     'sep',
-    { label: 'Send feedback', onClick: () => openFeedback(session?.id || state.session?.id) },
+    { label: 'Copy Conversation ID', onClick: async () => { const id = s?.id || ''; toast((await copyCodeText(id)) ? 'Conversation ID copied' : 'Copy failed'); } },
+    { label: 'Send feedback', onClick: () => openFeedback(s?.id) },
   ];
   showMenu(anchor || $('composer'), items);
 }
@@ -1337,12 +1576,14 @@ async function addFilesToLibrary(files) {
 }
 
 /* ---------- plus menu ---------- */
-function closePlusMenu() { const m = $('plusMenu'); if (m) m.hidden = true; $('plusBtn').setAttribute('aria-expanded', 'false'); }
+function closePlusMenu() { const m = $('plusMenu'); if (m) m.hidden = true; $('plusBtn').setAttribute('aria-expanded', 'false'); const sc = $('plusScrim'); if (sc) sc.hidden = true; }
 function openPlusMenu() {
   const m = $('plusMenu'), btn = $('plusBtn');
   if (!m.hidden) { closePlusMenu(); return; }
   closeModelPicker();
   m.replaceChildren();
+  // Grok's "+" menu is a bottom sheet with a drag handle on mobile.
+  m.append(el('div', 'plus-menu-handle'));
   const researchOn = state.settings.research_mode === 'always';
   const addRow = (icon, label, hint, onClick) => {
     const b = el('button', 'plus-menu-row');
@@ -1352,8 +1593,27 @@ function openPlusMenu() {
     m.append(b);
   };
   addRow('upload', 'Upload a file', 'png, jpg, webp, txt, code', () => $('attachment').click());
-  addRow('file', 'Recent', 'Files from your library', () => openLibrary());
-  addRow('book', 'Project', 'Add this chat to a project', () => { if (state.session) openProjectPicker(state.session, btn); else createProject(); });
+  // Files submenu (Grok): your Library files inline, or "No files yet".
+  const filesSub = el('div', 'plus-menu-sub'); filesSub.hidden = true;
+  const filesRow = el('button', 'plus-menu-row');
+  filesRow.type = 'button';
+  filesRow.innerHTML = `<svg><use href="#i-file"/></svg><span>Files</span><span class="plus-menu-state">${state.library.length ? state.library.length + ' in Library' : 'No files yet'}</span>`;
+  filesRow.onclick = () => {
+    if (filesSub.hidden) {
+      filesSub.replaceChildren();
+      if (!state.library.length) filesSub.append(el('div', 'plus-menu-empty', 'No files yet'));
+      else for (const f of state.library.slice(0, 8)) {
+        const b = el('button', 'plus-menu-row');
+        b.type = 'button';
+        b.innerHTML = `<svg><use href="#i-file"/></svg><span>${escapeHTML(f.name || 'file')}</span>`;
+        b.onclick = () => { closePlusMenu(); openLibraryItem(f); };
+        filesSub.append(b);
+      }
+    }
+    filesSub.hidden = !filesSub.hidden;
+  };
+  m.append(filesRow, filesSub);
+  addRow('book', 'Projects', 'Add this chat to a project', () => { if (state.session) openProjectPicker(state.session, btn); else createProject(); });
   addRow('external', 'Add connector', 'Tavily, GitHub, Figma', () => openToolsPanel());
   m.append(el('div', 'plus-menu-divider'));
   const research = el('button', 'plus-menu-row');
@@ -1368,6 +1628,8 @@ function openPlusMenu() {
   m.append(research);
   m.hidden = false;
   btn.setAttribute('aria-expanded', 'true');
+  // Dim the page behind the sheet on mobile (Grok dims it too).
+  if (matchMedia('(max-width:700px)').matches) { const sc = $('plusScrim'); if (sc) sc.hidden = false; }
 }
 
 /* ---------- send / stream / queue / stop ---------- */
@@ -1380,6 +1642,7 @@ function queueInput() {
   const sentText = text + (directive ? '\n\n[Response style: ' + directive + ']' : '');
   api('/api/run/update', { session_id: session.id, text: sentText, attachments: state.pending.map(a => a.kind === 'image' ? { kind: 'image', name: a.name, data: a.data } : { kind: 'log', name: a.name, text: a.text }) })
     .then(() => {
+      clearDraft();
       $('prompt').value = ''; autoGrowPrompt(); syncSendState();
       session.messages = session.messages || [];
       session.messages.push({ role: 'user', content: sentText });
@@ -1392,12 +1655,14 @@ async function send() {
   if (state.busy) { queueInput(); return; }
   const text = $('prompt').value.trim();
   if (!text && !state.pending.length) return;
+  clearDraft();
   closeMenus(); closeModelPicker(); closePlusMenu();
   const directive = styleDirective();
   const sentText = text + (directive ? '\n\n[Response style: ' + directive + ']' : '');
   if (state.isPrivate) { await sendPrivate(text, sentText); return; }
   if (!state.session) { await newSession(); if (!state.session) return; }
   const session = state.session;
+  const isFirst = !(session.messages || []).length;
   const attachments = state.pending; state.pending = []; renderPending();
   const userMsg = { role: 'user', content: sentText };
   if (attachments.length === 1 && attachments[0].kind === 'image') { userMsg.kind = 'image'; userMsg.data = attachments[0].data; userMsg.name = attachments[0].name; }
@@ -1409,8 +1674,12 @@ async function send() {
   $('prompt').value = ''; autoGrowPrompt(); syncSendState();
   renderConversation(session);
   await streamRun(session, sentText, history, attachments);
+  // Summary title (Grok generates one): ask the model 1.5s after the first
+  // message so the real title lands while the reply is still streaming.
+  if (isFirst) setTimeout(() => requestTitle(session, text), 1500);
 }
 async function sendPrivate(text, sentText) {
+  clearDraft();
   const attachments = state.pending; state.pending = []; renderPending();
   const userMsg = { role: 'user', content: sentText };
   if (attachments.length === 1 && attachments[0].kind === 'image') { userMsg.kind = 'image'; userMsg.data = attachments[0].data; userMsg.name = attachments[0].name; }
@@ -1488,6 +1757,9 @@ async function runStream(session, prompt, history, attachments, isPrivate, edit)
     if (state.settings.browser_notifications === true && document.hidden && 'Notification' in window && Notification.permission === 'granted') {
       try { new Notification('Janna AI', { body: finalText.slice(0, 140) }); } catch { /* ignore */ }
     }
+    // Follow-up pills (Grok): ask the model for two next questions in the
+    // background; they render under the reply and survive a refresh.
+    generateFollowUps(session, am);
   }
   refreshBootstrap(true);
   // The adapter titles a chat from its first prompt in storage; the
@@ -1576,6 +1848,7 @@ const SETTINGS_SECTIONS = [
   { id: 'account', label: 'Account' },
   { id: 'appearance', label: 'Appearance' },
   { id: 'behavior', label: 'Behavior' },
+  { id: 'voice', label: 'Voice' },
   { id: 'notifications', label: 'Notifications' },
   { id: 'personality', label: 'Customize' },
   { id: 'connectors', label: 'Connect Apps' },
@@ -1646,6 +1919,25 @@ function renderSettingsBody(section) {
     h('Behavior');
     body.append(settingsRow({ label: 'Require Ctrl+Enter to Submit', hint: 'Enter inserts a new line instead of sending', control: settingsToggle(state.settings.require_ctrl_enter === true, v => persistSettings({ require_ctrl_enter: v })) }));
     body.append(settingsRow({ label: 'Auto-Scroll', hint: 'Follow new answers as they stream in', control: settingsToggle(state.settings.auto_scroll !== false, v => persistSettings({ auto_scroll: v })) }));
+  } else if (section === 'voice') {
+    h('Voice');
+    body.append(settingsRow({ label: 'Voice', hint: 'The voice Janna speaks with', control: settingsSelect(VOICE_PERSONAS.map(p => [p.id, p.name + ' \u2014 ' + p.desc]), state.settings.voice_name || 'ara', async v => { await persistSettings({ voice_name: v }); syncVoiceNameLabel(); }) }));
+    body.append(settingsRow({ label: 'Speed', hint: 'How fast Janna speaks', control: settingsSelect(VOICE_SPEEDS.map(s => [s[0], s[0]]), state.settings.voice_speed || 'Normal', v => persistSettings({ voice_speed: v })) }));
+    body.append(settingsRow({ label: 'Personality', hint: 'How Janna speaks in voice mode', control: settingsSelect(VOICE_PERSONALITIES.map(p => [p[0], p[0]]).concat([['Custom', 'Custom\u2026']]), state.settings.voice_personality || 'Assistant', async v => {
+      if (v === 'Custom') {
+        const res = await showDialog({ title: 'Custom personality', text: 'How should Janna speak in voice mode?', fields: [{ name: 'text', value: state.settings.voice_personality_custom || '', placeholder: 'e.g. Speak like a pirate, but kindly' }], okText: 'Save' });
+        if (!res || !String(res.text || '').trim()) { renderSettingsBody('voice'); return; }
+        await persistSettings({ voice_personality: 'Custom', voice_personality_custom: String(res.text).trim() });
+      } else await persistSettings({ voice_personality: v });
+      syncVoiceNameLabel();
+    }) }));
+    body.append(settingsRow({ label: 'Dictation Refinement', hint: 'Clean up dictated text before it is sent', control: settingsSelect([['tidy', 'Tidy up'], ['verbatim', 'Verbatim']], state.settings.dictation_refinement || 'tidy', v => persistSettings({ dictation_refinement: v })) }));
+    const micSel = document.createElement('select');
+    const micFb = document.createElement('option'); micFb.value = 'Microphone'; micFb.textContent = 'Microphone'; micSel.append(micFb);
+    micSel.onchange = () => persistSettings({ voice_mic_label: micSel.value });
+    body.append(settingsRow({ label: 'Microphone', hint: 'Microphone used for voice mode and dictation', control: micSel }));
+    voiceLoadMicsInto(micSel);
+    body.append(el('p', 'settings-note', 'Changes apply from Janna\u2019s next reply, even during a call.'));
   } else if (section === 'notifications') {
     h('Notifications');
     body.append(settingsRow({ label: 'Browser Notifications', hint: 'Notify when an answer finishes while the tab is hidden', control: settingsToggle(state.settings.browser_notifications === true, async v => {
@@ -1715,6 +2007,8 @@ function renderSettingsBody(section) {
         toast('Export downloaded.');
       } catch (e) { toast(e.message); }
     }) }));
+    body.append(settingsRow({ label: 'Terms of Service', hint: 'How Janna AI works and what it stores', control: button('View', () => openLegal('terms')) }));
+    body.append(settingsRow({ label: 'Privacy Policy', hint: 'Where your chats live and who sees them', control: button('View', () => openLegal('privacy')) }));
     body.append(settingsRow({ label: 'Clear Cache', hint: 'Clears the offline cache and reloads', control: button('Clear cache', async () => {
       try { const keys = await caches.keys(); await Promise.all(keys.map(k => caches.delete(k))); } catch { /* no cache */ }
       location.reload();
@@ -1761,18 +2055,19 @@ function openHelp() {
     okText: 'Close', showCancel: false,
   });
 }
-async function openFeedback(sessionId) {
+async function openFeedback(sessionId, kind) {
+  const isReport = kind === 'report';
   const res = await showDialog({
-    title: 'Send feedback',
-    text: 'Tell us what worked or what went wrong. Feedback is stored only in this browser.',
-    fields: [{ name: 'text', type: 'textarea', placeholder: 'Your feedback\u2026' }],
-    okText: 'Send feedback',
+    title: isReport ? 'Report message' : 'Send feedback',
+    text: isReport ? 'Tell us what is wrong with this message. Reports are stored only in this browser.' : 'Tell us what worked or what went wrong. Feedback is stored only in this browser.',
+    fields: [{ name: 'text', type: 'textarea', placeholder: isReport ? 'What is wrong with this message\u2026' : 'Your feedback\u2026' }],
+    okText: isReport ? 'Report message' : 'Send feedback',
   });
   if (!res || !String(res.text).trim()) return;
   const all = loadJSON('janna-web-feedback-v1', []);
-  all.unshift({ session_id: sessionId || null, text: String(res.text).trim(), created: Math.floor(Date.now() / 1000) });
+  all.unshift({ session_id: sessionId || null, kind: isReport ? 'report' : 'feedback', text: String(res.text).trim(), created: Math.floor(Date.now() / 1000) });
   saveJSON('janna-web-feedback-v1', all);
-  toast('Thanks \u2014 feedback saved.');
+  toast(isReport ? 'Thanks \u2014 report saved.' : 'Thanks \u2014 feedback saved.');
 }
 function openLegal(kind) {
   const text = kind === 'terms'
@@ -1833,7 +2128,7 @@ function initializeWorkspace() {
 }
 function bindEvents() {
   const prompt = $('prompt');
-  prompt.addEventListener('input', () => { autoGrowPrompt(); syncSendState(); });
+  prompt.addEventListener('input', () => { autoGrowPrompt(); syncSendState(); saveDraftSoon(); });
   prompt.addEventListener('keydown', e => {
     const ctrlEnter = state.settings.require_ctrl_enter === true;
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -1848,6 +2143,8 @@ function bindEvents() {
   });
   $('send').onclick = () => send();
   $('stop').onclick = () => stopRun();
+  $('thread').addEventListener('scroll', updateJump, { passive: true });
+  $('jumpLatest').onclick = () => { const t = $('thread'); if (t) t.scrollTop = t.scrollHeight; };
   $('plusBtn').onclick = () => openPlusMenu();
   $('modelPickerBtn').onclick = () => openModelPicker();
   $('voiceMic').onclick = () => voiceDictate();
@@ -1860,6 +2157,7 @@ function bindEvents() {
     $('sidebar').classList.contains('open') ? closeSidebar() : openSidebar();
   };
   $('mobileScrim').onclick = () => closeSidebar();
+  $('plusScrim').onclick = () => closePlusMenu();
   $('newChat').onclick = () => newChat();
   $('chatsPlus').onclick = () => newChat();
   $('navLibrary').onclick = () => { closeSidebar(); openLibrary(); };

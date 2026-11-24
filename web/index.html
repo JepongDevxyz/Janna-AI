@@ -114,6 +114,7 @@
           <div id="followUps" class="follow-ups" hidden></div>
           <div id="composerHome"></div>
         </div>
+        <button id="jumpLatest" class="jump-latest" type="button" title="Scroll to bottom" aria-label="Scroll to bottom" hidden><svg><use href="#i-chevron"/></svg></button>
         <p class="ai-disclaimer">Janna AI can make mistakes. Check important info.</p>
 
         <div class="composer" id="composer">
@@ -122,15 +123,18 @@
           <div class="composer-row">
             <button class="composer-plus" id="plusBtn" type="button" title="Add files, skills, and connectors" aria-haspopup="true" aria-expanded="false"><svg><use href="#i-plus"/></svg></button>
             <textarea id="prompt" rows="1" placeholder="Ask anything&hellip;" aria-label="Ask anything"></textarea>
-            <button type="button" id="modelPickerBtn" class="model-picker-btn" aria-haspopup="true" aria-expanded="false" title="Choose model"><span id="modelPickerLabel">Janna</span><svg><use href="#i-chevron"/></svg></button>
-            <button class="icon-button composer-mic" id="voiceMic" type="button" title="Dictate a message" aria-label="Dictate a message" aria-pressed="false"><svg><use href="#i-mic"/></svg></button>
-            <button id="voiceModeBtn" class="voice-mode-btn" type="button" title="Talk to Janna" aria-label="Talk to Janna by voice"><svg><use href="#i-wave"/></svg></button>
-            <button id="send" class="send-button" type="button" title="Send" aria-label="Send"><svg><use href="#i-send"/></svg></button>
-            <button id="stop" class="send-button stop-button" type="button" title="Stop" aria-label="Stop" hidden><svg><use href="#i-stop"/></svg></button>
+            <div class="composer-controls">
+              <button type="button" id="modelPickerBtn" class="model-picker-btn" aria-haspopup="true" aria-expanded="false" title="Choose model"><span id="modelPickerLabel">Janna</span><svg><use href="#i-chevron"/></svg></button>
+              <button class="icon-button composer-mic" id="voiceMic" type="button" title="Dictate a message" aria-label="Dictate a message" aria-pressed="false"><svg><use href="#i-mic"/></svg></button>
+              <button id="voiceModeBtn" class="voice-mode-btn" type="button" title="Talk to Janna" aria-label="Talk to Janna by voice"><svg><use href="#i-wave"/></svg></button>
+              <button id="send" class="send-button" type="button" title="Send" aria-label="Send"><svg><use href="#i-send"/></svg></button>
+              <button id="stop" class="send-button stop-button" type="button" title="Stop" aria-label="Stop" hidden><svg><use href="#i-stop"/></svg></button>
+            </div>
           </div>
           <div id="modelPicker" class="model-picker" hidden></div>
           <div id="plusMenu" class="plus-menu" hidden></div>
         </div>
+        <div id="plusScrim" class="plus-scrim" hidden></div>
       </section>
     </main>
 

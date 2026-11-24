@@ -63,7 +63,7 @@
   }
   async function* subscribe(options,token,onConnection=()=>{},runId=null){
     const cursor=new RunCursor(options.session_id,runId);
-    const body={...options,request_id:options.request_id||crypto.randomUUID()};
+    const body={...options,request_id:options.request_id||(crypto.randomUUID ? crypto.randomUUID() : 'req-' + Math.random().toString(36).slice(2) + Date.now().toString(36))};
     let failures=0;
     while(!cursor.terminal){
       let reader, timer, reconnecting=false;
