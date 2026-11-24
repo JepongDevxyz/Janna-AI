@@ -923,7 +923,23 @@ function startEdit(item, message, session) {
   const row = el('div', 'edit-actions');
   const cancel = button('Cancel', () => renderConversation(session));
   const copy = button('Copy', async () => { toast((await copyCodeText(ta.value)) ? 'Copied' : 'Copy failed'); });
-  const sendBtn = button('Send', () => finishEdit(message, session, ta.value));
+  const sendBtn = button('Send', async () => {
+    // Editing an earlier message forks the thread: everything after it is
+    // replaced by the new answer (Grok's branch behaviour). Never do that
+    // silently — ask first, and keep the editor open if she says no.
+    const text = ta.value.trim();
+    if (!text || text === currentVersionText(message)) { renderConversation(session); return; }
+    const list = session.messages || [];
+    const idx = list.indexOf(message);
+    // Only later *user* turns are at risk: the edited message's own answer
+    // is always regenerated, so editing the last user message asks nothing.
+    const after = idx >= 0 ? list.slice(idx + 1).filter(m => m.role === 'user').length : 0;
+    if (after > 0) {
+      const ok = await confirmDialog('Edit this message?', `There ${after === 1 ? 'is 1 more exchange' : `are ${after} more exchanges`} after this one. Editing will remove ${after === 1 ? 'it' : 'them'} and start a new answer from here.`, 'Edit anyway');
+      if (!ok) return;
+    }
+    finishEdit(message, session, ta.value);
+  });
   cancel.classList.add('edit-pill'); copy.classList.add('edit-pill'); sendBtn.classList.add('edit-pill', 'edit-send');
   row.append(cancel, copy, sendBtn);
   area.append(row);
@@ -1952,7 +1968,7 @@ function bindEvents() {
     else if (mod && e.key.toLowerCase() === 'j') { e.preventDefault(); newChat(); }
     else if (mod && e.key === ',') { e.preventDefault(); $('settingsView').hidden ? openSettings('account') : closeSettings(); }
     else if (mod && e.key.toLowerCase() === 'o' && !$('rightPane').hidden) { e.preventDefault(); $('previewFileInput').click(); }
-    else if (e.key === 'Escape') { closeMenus(); closeModelPicker(); closePlusMenu(); $('accountMenu').hidden = true; if (!$('palette').hidden) closePalette(); else if (!$('settingsView').hidden) closeSettings(); else if (!$('libraryView').hidden) closeLibrary(); else closeSidebar(); }
+    else if (e.key === 'Escape') { const sheet = document.getElementById('voiceSheet'); if (sheet && !sheet.hidden) { voiceToggleSheet(false); return; } if (document.getElementById('voiceOverlay')) { voiceClose(); return; } closeMenus(); closeModelPicker(); closePlusMenu(); $('accountMenu').hidden = true; if (!$('palette').hidden) closePalette(); else if (!$('settingsView').hidden) closeSettings(); else if (!$('libraryView').hidden) closeLibrary(); else closeSidebar(); }
   });
   window.addEventListener('online', () => reconnectCheck());
   document.addEventListener('visibilitychange', () => { if (!document.hidden) reconnectCheck(); });
