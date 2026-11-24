@@ -124,10 +124,10 @@ svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.65;strok
 /* ---------- Chat view / welcome ---------- */
 .chat-view{display:flex;flex:1;min-height:0;flex-direction:column}
 .thread{flex:1;min-height:0;overflow:auto;scrollbar-width:thin;scrollbar-color:var(--line) transparent}
-.welcome{max-width:760px;width:calc(100% - 48px);margin:0 auto;padding:clamp(56px,20vh,180px) 0 24px}
+.welcome{max-width:760px;width:calc(100% - 48px);margin:0 auto;padding:clamp(56px,20vh,180px) 0 24px;display:flex;flex-direction:column;min-height:100%}
 .welcome h1{font-size:35px;line-height:1.15;font-weight:400;letter-spacing:-1.2px;text-align:center;margin:0 0 28px}
 .welcome-composer-slot{margin-bottom:18px}
-.welcome-foot{text-align:center;font-size:13px;color:var(--muted);margin:26px 0 0}
+.welcome-foot{text-align:center;font-size:13px;color:var(--muted);margin:auto -12px 0;padding-top:26px}
 .private-note{text-align:center;font-size:13px;color:var(--muted);margin:16px 0 0}
 .ai-disclaimer{text-align:center;font-size:11px;color:var(--faded);margin:6px 0 0;padding:0 16px 10px;flex-shrink:0}
 
@@ -507,12 +507,13 @@ body.wrap-code .message-body .code-block pre{white-space:pre-wrap;overflow-wrap:
   .topbar{height:56px;padding:0 8px}
   .top-search span{display:none}
   .welcome{padding-top:clamp(48px,calc(29.4vh - 56px),200px)}
-  .welcome h1{font-size:28px;font-weight:500;letter-spacing:-.7px;margin-bottom:22px}
+  .welcome h1{font-size:28px;font-weight:500;letter-spacing:-.7px;margin-bottom:22px;text-wrap:balance;line-height:1.21}
+  .welcome-foot{font-size:12px}
   .welcome-composer-slot{margin-bottom:12px}
   .suggest-list{gap:0}
   .suggest-row{padding:13px 14px 13px 47px}
   .suggest-row svg{display:none}
-  .composer{border-radius:29px;padding:8px 8px 6px}
+  .composer{border-radius:29px;padding:10px 8px 8px}
   .composer textarea{font-size:15px}
   .composer-plus,.voice-mode-btn,.send-button{width:32px;height:32px}
   /* Typing: Send becomes Grok's big solid-blue circle (~48px). */
@@ -521,8 +522,8 @@ body.wrap-code .message-body .code-block pre{white-space:pre-wrap;overflow-wrap:
   /* "+" menu becomes a bottom sheet with a drag handle (Grok). */
   .plus-menu{position:fixed;left:0;right:0;bottom:0;top:auto;max-height:70vh;border-radius:20px 20px 0 0;padding:8px 16px 28px;z-index:80}
   .plus-menu-handle{display:block;width:40px;height:4px;border-radius:2px;background:var(--line);margin:4px auto 10px}
-  .model-picker-btn{max-width:80px}
-  .model-picker-btn span{max-width:68px}
+  .model-picker-btn{max-width:112px}
+  .model-picker-btn span{max-width:96px}
   .settings-layout{flex-direction:column}
   .settings-nav{width:100%;position:static;flex-direction:row;flex-wrap:wrap}
   .settings-nav-group{width:100%}

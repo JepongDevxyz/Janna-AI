@@ -2,7 +2,8 @@
 /* Janna AI — Grok-style shell (fresh reset, 2026-11-24).
    Reuses the existing API contract exactly: /api/bootstrap, /api/models,
    /api/run (SSE via JannaRuns), /api/sessions*, /api/settings, /api/stop,
-   /api/reasoning/:model, /api/profile/export, /api/memory.
+   /api/profile/export, /api/memory. (Vision comes from the /api/models
+   catalog, not /api/reasoning/:model — that route 404s live.)
    The backend api/[...slug].js is unchanged.
    No Luna anywhere in this file. No fake Grok data: every control below has
    a real handler, and anything the web backend cannot do is omitted (see
@@ -685,7 +686,10 @@ function renderModelOptions(models) {
   syncModelPicker();
   refreshNativeLevels();
 }
-function shortModelLabel(id) { if (id === 'janna-cloud') return 'Janna'; return (modelLabel(id) || id).split(' ').slice(0, 2).join(' '); }
+/* Short picker labels: distinct for every model (the old first-two-words
+   rule made DeepSeek V4 Flash and DeepSeek V4 Pro both "DeepSeek V4"). */
+const SHORT_MODEL_LABELS = { 'janna-cloud': 'Janna', 'apinex-gemini-3.8-flash': 'Gemini 3.8', 'apinex-gpt-6-luna': 'GPT-6 Luna', 'apinex-kimi-k3': 'Kimi K3', 'apinex-muse-spark-1.3': 'Muse Spark', 'apinex-deepseek-v4-flash': 'DeepSeek V4', 'apinex-deepseek-v4-pro': 'DeepSeek Pro', 'apinex-deepseek-v4.1-flash': 'DeepSeek 4.1', 'apinex-gemini-4-hydrogen': 'Gemini 4', 'apinex-glm-5.3': 'GLM 5.3', 'apinex-glm-5.3-flash': 'GLM Flash', 'apinex-hy4': 'HY4', 'apinex-hy4-flash': 'HY4 Flash', 'apinex-mimo-v2.6-pro': 'MiMo V2.6', 'apinex-minimax-m3.1-flash': 'MiniMax M3', 'apinex-qwen-3.8-max': 'Qwen 3.8' };
+function shortModelLabel(id) { return SHORT_MODEL_LABELS[id] || (modelLabel(id) || id).split(' ').slice(0, 2).join(' '); }
 function syncModelPicker() {
   const label = $('modelPickerLabel');
   if (label) label.textContent = state.model ? shortModelLabel(state.model) : 'Choose a model';
@@ -693,8 +697,12 @@ function syncModelPicker() {
 async function refreshNativeLevels() {
   state.modelVision = false;
   if (!state.model) return;
-  try { const r = await api('/api/reasoning/' + encodeURIComponent(state.model)); state.modelVision = r.vision === true; }
-  catch { /* vision unknown: treat as no vision */ }
+  // Vision comes from the /api/models catalog (already loaded) — the old
+  // /api/reasoning/:model call 404s live (Vercel only routes single-segment
+  // /api paths to the catch-all), so it always reported "no vision" and
+  // every image attach warned its pixels would not be sent.
+  const row = state.modelCatalog.find(m => m.id === state.model);
+  state.modelVision = !!(row && row.vision);
   renderPending();
 }
 function chooseModel(id) {
@@ -943,6 +951,7 @@ function thinkingEl() {
 function startThinking() {
   const item = thinkingEl();
   if (!item) return;
+  think.doneSecs = 0;
   item.hidden = false;
   item.classList.remove('collapsed', 'done');
   // Grok: "Planning next moves" first, then the live "Working for Ns" timer.
@@ -961,8 +970,9 @@ function startThinking() {
 }
 function stopThinking() {
   clearInterval(think.timer);
+  think.doneSecs = Math.max(1, Math.round((Date.now() - think.start) / 1000));
   if (think.el) {
-    const secs = fmtDur((Date.now() - think.start) / 1000);
+    const secs = fmtDur(think.doneSecs);
     think.el.classList.add('done', 'collapsed');
     think.el.querySelector('.think-title').textContent = 'Thought for ' + secs;
     think.el.querySelector('.think-clock').textContent = secs;
@@ -1224,6 +1234,24 @@ function renderConversation(session) {
   $('threadTitlePill').hidden = !session || empty;
   if (session) {
     for (const msg of session.messages || []) $('messages').append(createMessageNode(msg, session));
+  }
+  // Grok keeps "Thought for Ns" under a finished reply — renderConversation
+  // used to wipe it (the thinking div lives in #messages, and this function
+  // replaces all children). Restore it from the last assistant message's
+  // stored duration, right before that reply, so it survives re-renders
+  // and reloads.
+  const _msgs = session?.messages || [];
+  let _lastIdx = -1;
+  for (let i = _msgs.length - 1; i >= 0; i--) if (_msgs[i].role === 'assistant' && _msgs[i].thinkSecs) { _lastIdx = i; break; }
+  if (_lastIdx >= 0) {
+    const item = thinkingEl();
+    item.hidden = false;
+    item.classList.add('done', 'collapsed');
+    item.querySelector('.think-title').textContent = 'Thought for ' + fmtDur(_msgs[_lastIdx].thinkSecs);
+    item.querySelector('.think-clock').textContent = fmtDur(_msgs[_lastIdx].thinkSecs);
+    item.querySelector('.think-steps').replaceChildren();
+    const kids = $('messages').children;
+    if (kids[_lastIdx]) $('messages').insertBefore(item, kids[_lastIdx]);
   }
   renderFollowUps(session);
   renderProjects(); renderRecents();
@@ -1740,6 +1768,7 @@ async function runStream(session, prompt, history, attachments, isPrivate, edit)
   streamNode.remove();
   if (isPrivate) {
     const am = { role: 'assistant', content: finalText };
+    if (think.doneSecs) am.thinkSecs = think.doneSecs;
     state.privateThread.push(am);
     if (edit && edit.msg && Array.isArray(edit.msg.versions)) edit.msg.versions[edit.msg.version].response = am;
     renderConversation({ id: 'private', title: 'Private chat', messages: state.privateThread });
@@ -1748,9 +1777,13 @@ async function runStream(session, prompt, history, attachments, isPrivate, edit)
   }
   session.messages = session.messages || [];
   const am = { role: 'assistant', content: finalText };
+  if (think.doneSecs) am.thinkSecs = think.doneSecs;
   session.messages.push(am);
   if (edit && edit.msg && Array.isArray(edit.msg.versions)) edit.msg.versions[edit.msg.version].response = am;
   renderConversation(session);
+  // Persist the thinking duration with the message (like follow-ups): the
+  // adapter's stream tap saved the exchange before the duration was known.
+  if (am.thinkSecs) { try { await api('/api/sessions/update', { session_id: session.id, messages: session.messages }); } catch { /* line still shows locally */ } }
   if (errorMessage) toast(errorMessage);
   else {
     if (state.settings.voice_output === true) voiceSpeak(finalText);
