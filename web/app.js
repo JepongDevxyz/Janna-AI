@@ -402,43 +402,6 @@ function voiceSetPhase(phase, caption) {
 function voiceClean(text) {
   return String(text || '').replace(/```[\s\S]*?```/g, ' [code block omitted] ').replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/[<>{}*_#~`>]/g, '').replace(/\s+/g, ' ').trim().slice(0, 1700);
 }
-const msgSpeech = { btn: null, timer: null, queue: [] };
-function msgSpeakClean(text) {
-  return String(text || '').replace(/```[\s\S]*?```/g, ' [code block omitted] ').replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/[<>{}*_#~`>]/g, '').replace(/\s+/g, ' ').trim();
-}
-function msgSpeakStop() {
-  clearTimeout(msgSpeech.timer);
-  try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch { /* ignore */ }
-  if (msgSpeech.btn) { msgSpeech.btn.innerHTML = '<svg><use href="#i-play"/></svg>'; msgSpeech.btn.title = 'Listen'; msgSpeech.btn = null; }
-  msgSpeech.queue = [];
-}
-function msgSpeakToggle(text, btn) {
-  if (msgSpeech.btn === btn) { msgSpeakStop(); return; }
-  msgSpeakStop();
-  const synth = window.speechSynthesis;
-  if (!synth) { toast('Voice is not available in this browser'); return; }
-  const clean = msgSpeakClean(text);
-  if (!clean) { toast('Nothing to read here'); return; }
-  const raw = clean.match(/[^.!?…]+[.!?…]*\s*/g) || [clean];
-  const chunks = [];
-  for (const piece0 of raw) { let piece = piece0.trim(); while (piece.length > 180) { chunks.push(piece.slice(0, 180)); piece = piece.slice(180); } if (piece) chunks.push(piece); }
-  msgSpeech.btn = btn; msgSpeech.queue = chunks;
-  btn.innerHTML = '<svg><use href="#i-stop"/></svg>'; btn.title = 'Stop';
-  const step = () => {
-    if (msgSpeech.btn !== btn) return;
-    const part = msgSpeech.queue.shift();
-    if (part == null) { msgSpeakStop(); return; }
-    const u = new SpeechSynthesisUtterance(part);
-    try { u.lang = speechTag(); } catch { /* ignore */ }
-    applyVoicePersona(u);
-    let advanced = false;
-    const advance = () => { if (advanced) return; advanced = true; clearTimeout(msgSpeech.timer); step(); };
-    u.onend = advance; u.onerror = advance;
-    msgSpeech.timer = setTimeout(advance, Math.max(5000, part.length * 110 + 3000));
-    try { synth.speak(u); } catch { advance(); }
-  };
-  step();
-}
 function voiceTalkSpeak(text) {
   const clean = voiceClean(text);
   if (!clean || !('speechSynthesis' in window)) { voiceSetPhase('idle', 'My answer is in the chat \u2014 voice isn\u2019t available here.'); return; }
@@ -536,7 +499,6 @@ function voiceToggleMute() {
   else { voiceTalk.stopped = false; voiceListen(); }
 }
 function voiceOpen() {
-  msgSpeakStop();
   voiceOverlay();
   syncVoiceNameLabel();
   voiceTalk.active = true; voiceTalk.muted = false; voiceTalk.quiet = 0; voiceTalk.errStrikes = 0; voiceTalk.stopped = false;
@@ -925,9 +887,7 @@ function createMessageNode(message, session) {
     dislike.classList.add('message-action'); dislike.innerHTML = '<svg><use href="#i-thumb-down"/></svg>'; dislike.title = 'Dislike';
     const more = button('More', () => openMessageMenu(message, session, more));
     more.classList.add('message-action'); more.innerHTML = '<svg><use href="#i-dots"/></svg>'; more.title = 'More actions';
-    const listen = button('Listen', () => msgSpeakToggle(message.content || '', listen));
-    listen.classList.add('message-action'); listen.innerHTML = '<svg><use href="#i-play"/></svg>'; listen.title = 'Listen';
-    actions.append(copyBtn, like, dislike, more, listen);
+    actions.append(copyBtn, like, dislike, more);
     item.append(actions);
     if (feedback === 'up') like.classList.add('voted');
     if (feedback === 'down') dislike.classList.add('voted');
