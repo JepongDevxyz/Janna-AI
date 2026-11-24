@@ -446,7 +446,7 @@ function voiceClose() {
 
 /* ---------- theme ---------- */
 function applyTheme() {
-  const mode = state.settings.appearance_mode || 'light';
+  const mode = state.settings.appearance_mode || 'system';
   const dark = mode === 'dark' || (mode === 'system' && window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches);
   document.body.dataset.theme = dark ? 'dark' : 'light';
   document.body.classList.toggle('wrap-code', state.settings.wrap_code === true);
@@ -470,9 +470,10 @@ function renderModelOptions(models) {
   syncModelPicker();
   refreshNativeLevels();
 }
+function shortModelLabel(id) { return (modelLabel(id) || id).split(' ').slice(0, 2).join(' '); }
 function syncModelPicker() {
   const label = $('modelPickerLabel');
-  if (label) label.textContent = state.model ? modelLabel(state.model) : 'Choose a model';
+  if (label) label.textContent = state.model ? shortModelLabel(state.model) : 'Choose a model';
 }
 async function refreshNativeLevels() {
   state.modelVision = false;
@@ -614,7 +615,10 @@ function renderSuggestions() {
   if (state.settings.show_suggestions === false) { list.hidden = true; return; }
   if (!state.armedMode) {
     const rot = suggestRotation();
-    const order = MODE_ORDER.map((_, i) => MODE_ORDER[(rot + i) % MODE_ORDER.length]).slice(0, 3);
+    // Grok keeps slot 1 fixed ("Create an image"); Janna can't do that, so
+    // slot 1 is fixed on "Search the web" and slots 2-3 rotate the rest.
+    const rest = MODE_ORDER.filter(k => k !== 'search');
+    const order = ['search', rest[rot % rest.length], rest[(rot + 1) % rest.length]];
     for (const key of order) {
       const m = MODES[key];
       const row = el('button', 'suggest-row');
@@ -656,7 +660,7 @@ function disarmMode() {
   if (state.armedMode === 'search' && state.settings.research_mode === 'always') persistSettings({ research_mode: state.armedBeforeResearch || 'auto' });
   state.armedMode = null;
   renderModeChip();
-  $('prompt').placeholder = 'Ask Janna anything\u2026';
+  $('prompt').placeholder = 'Ask anything\u2026';
   renderSuggestions();
 }
 function renderModeChip() {
@@ -688,7 +692,7 @@ function updateBusy() {
   $('stop').hidden = !busy;
   $('stop').disabled = state.stopRequested;
   $('prompt').disabled = false;
-  $('prompt').placeholder = busy ? 'Queue instructions for the next step\u2026' : (state.armedMode ? MODES[state.armedMode].placeholder : 'Ask Janna anything\u2026');
+  $('prompt').placeholder = busy ? 'Queue instructions for the next step\u2026' : (state.armedMode ? MODES[state.armedMode].placeholder : 'Ask anything\u2026');
   $('modelPickerBtn').disabled = busy;
   if (busy) closeModelPicker();
   statusBadge();
@@ -945,7 +949,7 @@ function syncPrivate() {
   $('privateToggle').setAttribute('aria-pressed', String(state.isPrivate));
   $('welcomeH1').textContent = state.isPrivate ? 'What\u2019s on your mind today?' : 'What\u2019s on the agenda today?';
   $('privateNote').hidden = !state.isPrivate;
-  if (state.isPrivate) { state.armedMode = null; renderModeChip(); $('prompt').placeholder = 'Ask Janna anything\u2026'; }
+  if (state.isPrivate) { state.armedMode = null; renderModeChip(); $('prompt').placeholder = 'Ask anything\u2026'; }
   renderSuggestions();
 }
 function togglePrivate() {
@@ -1460,7 +1464,7 @@ function renderSettingsBody(section) {
     body.append(settingsRow({ label: 'Language', hint: 'Language for answers and voice', control: settingsSelect((state.languages || []).map(l => [l.id, l.name]), state.settings.language || 'en', v => persistSettings({ language: v })) }));
   } else if (section === 'appearance') {
     h('Appearance');
-    body.append(settingsRow({ label: 'Theme', hint: 'Light, Dark, or follow your device', control: settingsSelect([['system', 'System'], ['light', 'Light'], ['dark', 'Dark']], state.settings.appearance_mode || 'light', v => persistSettings({ appearance_mode: v })) }));
+    body.append(settingsRow({ label: 'Theme', hint: 'Light, Dark, or follow your device', control: settingsSelect([['system', 'System'], ['light', 'Light'], ['dark', 'Dark']], state.settings.appearance_mode || 'system', v => persistSettings({ appearance_mode: v })) }));
     body.append(settingsRow({ label: 'Wrap Long Code Blocks', hint: 'Wrap code lines instead of scrolling sideways', control: settingsToggle(state.settings.wrap_code === true, v => persistSettings({ wrap_code: v })) }));
     body.append(settingsRow({ label: 'Reduce motion', hint: 'Turn off animations', control: settingsToggle(state.settings.reduce_motion === true, v => persistSettings({ reduce_motion: v })) }));
     body.append(settingsRow({ label: 'Show suggestions', hint: 'Suggestion rows and follow-up chips', control: settingsToggle(state.settings.show_suggestions !== false, v => persistSettings({ show_suggestions: v })) }));

@@ -15,6 +15,11 @@
     if (saved && /^[a-z]{2,16}$/.test(saved.theme) && /^#[\da-f]{6}$/i.test(saved.color) && ['light','dark'].includes(saved.scheme)) {
       document.body.dataset.theme = saved.theme;
       paint(saved.color, saved.scheme);
+    } else if (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches) {
+      // No saved choice: follow the device (Grok's System default) so a dark
+      // phone paints dark before the app boots instead of flashing light.
+      document.body.dataset.theme = 'dark';
+      paint('#161618', 'dark');
     }
   } catch { /* Appearance storage is optional, including private browsing. */ }
   window.syncPhoneChrome = () => {
