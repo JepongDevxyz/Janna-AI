@@ -125,13 +125,11 @@
       var last = msgs[msgs.length - 1];
       return { title: x.title || 'New chat', when: x.updated ? new Date(x.updated * 1000).toISOString().slice(0, 10) : '', first: firstUser ? clipText(firstUser.content, 130) : '', last: last ? clipText(last.content, 130) : '' };
     });
-    var lunaPets = 0;
-    try { var lj = JSON.parse(localStorage.getItem('janna-luna-v1') || '{}'); if (lj && typeof lj.pets === 'number') lunaPets = lj.pets; } catch (e) { /* ignore */ }
     var st = loadSettings();
     var kbVault = loadVault();
     var kbGraph = buildGraph();
     var kbCtx = loadCtxFile();
-    return { facts: memoryOn() ? loadMemory().map(function (f) { return f.text; }) : [], chats: sessions.length, messages: totalMsgs, others: others, currentTitle: current ? (current.title || 'New chat') : 'New chat', theme: st.theme || 'rose', lunaPets: lunaPets, vault: { count: kbVault.length, titles: kbVault.slice(0, 40).map(function (n) { return n.title || 'Untitled'; }), matched: matchedNotes(promptText) }, contextFile: kbCtx, graph: { topics: kbGraph.topics } };
+    return { facts: memoryOn() ? loadMemory().map(function (f) { return f.text; }) : [], chats: sessions.length, messages: totalMsgs, others: others, currentTitle: current ? (current.title || 'New chat') : 'New chat', theme: st.appearance_mode || 'system', vault: { count: kbVault.length, titles: kbVault.slice(0, 40).map(function (n) { return n.title || 'Untitled'; }), matched: matchedNotes(promptText) }, contextFile: kbCtx, graph: { topics: kbGraph.topics } };
   }
 
   // --- queued follow-up messages (the app's "queue for the next step") ---
