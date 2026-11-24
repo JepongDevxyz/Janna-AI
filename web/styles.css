@@ -215,8 +215,21 @@ svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.65;strok
 .messages{max-width:760px;margin:0 auto;padding:24px 20px 32px;width:100%}
 .message{margin-bottom:36px;min-width:0}
 .message.user{display:flex;flex-direction:column;align-items:flex-end}
-.user-bubble{max-width:85%;border-radius:20px;background:var(--bubble);padding:13px 16px;white-space:pre-wrap;line-height:1.55;color:var(--ink);overflow-wrap:anywhere}
+.user-bubble{max-width:85%;border-radius:20px;background:var(--bubble);padding:13px 16px;white-space:pre-wrap;line-height:1.55;color:var(--ink);overflow-wrap:anywhere;cursor:pointer}
 .user-bubble img.attachment-preview{max-width:100%;border-radius:12px;margin-top:8px;display:block}
+/* Grok-style inline edit: tap a user bubble, edit in place, Cancel/Send. */
+.edit-area{width:100%;max-width:85%;margin-left:auto;display:flex;flex-direction:column;gap:8px}
+.edit-area textarea{width:100%;border:1px solid var(--line);background:var(--panel);border-radius:16px;padding:12px 14px;font-size:16px;line-height:1.55;resize:none;outline:0;color:var(--ink)}
+.edit-area textarea:focus{border-color:var(--accent)}
+.edit-actions{display:flex;gap:8px;justify-content:flex-end}
+.edit-pill{border:1px solid var(--line);background:var(--panel);border-radius:999px;padding:8px 16px;font-size:14px;color:var(--ink)}
+.edit-pill:hover{background:var(--hover)}
+.edit-pill.edit-send{background:var(--ink);color:var(--panel);border-color:var(--ink);font-weight:600}
+/* Message-version pager: "< 2 / 2 >", Grok puts it beside the bubble. */
+.version-pager{display:flex;align-items:center;gap:6px;justify-content:flex-end;color:var(--muted);font-size:13px;margin-top:6px}
+.version-pager button{border:0;background:transparent;color:var(--muted);font-size:15px;padding:2px 8px;border-radius:8px}
+.version-pager button:hover:not(:disabled){background:var(--hover);color:var(--ink)}
+.version-pager button:disabled{opacity:.4}
 .message-actions{display:flex;align-items:center;gap:2px;margin-top:6px}
 .message.user .message-actions{justify-content:flex-end}
 .message-action{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border:0;border-radius:50%;background:transparent;color:var(--muted)}

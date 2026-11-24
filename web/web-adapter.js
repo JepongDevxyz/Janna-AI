@@ -38,6 +38,31 @@
 
   function findSession(id) { return loadSessions().find(function (s) { return s.id === id; }); }
 
+  function appendEditExchange(sessionId, editIndex, prompt, assistantText, errorMessage, activity, attached) {
+    var list = loadSessions();
+    var s = list.find(function (x) { return x.id === sessionId; });
+    if (!s) return;
+    s.messages = s.messages || [];
+    var um = s.messages[editIndex];
+    if (!um || um.role !== 'user') { appendExchange(sessionId, prompt, assistantText, errorMessage, activity, attached); return; }
+    var oldResponse = null;
+    var next = s.messages[editIndex + 1];
+    if (next && next.role === 'assistant') oldResponse = { role: 'assistant', content: next.content };
+    if (!Array.isArray(um.versions)) um.versions = [{ text: um.content, response: oldResponse }];
+    var resp = null;
+    if (assistantText) resp = { role: 'assistant', content: assistantText };
+    else if (errorMessage) resp = { role: 'assistant', content: '\u26a0\ufe0f ' + errorMessage };
+    if (resp && activity && activity.steps && activity.steps.length) resp.activity = activity;
+    um.versions.push({ text: prompt, response: resp });
+    um.version = um.versions.length - 1;
+    um.content = prompt;
+    if (Array.isArray(attached) && attached.length) um.attached = attached;
+    s.messages = s.messages.slice(0, editIndex + 1);
+    if (resp) s.messages.push(resp);
+    s.updated = Math.floor(Date.now() / 1000);
+    saveSessions(list);
+  }
+
   function appendExchange(sessionId, prompt, assistantText, errorMessage, activity, attached) {
     var list = loadSessions();
     var s = list.find(function (x) { return x.id === sessionId; });
@@ -128,11 +153,15 @@
       });
   }
 
-  function tapRunStream(response, sessionId, prompt, attached) {
+  function tapRunStream(response, sessionId, prompt, attached, editIndex) {
     if (!response.body || typeof TransformStream === 'undefined') return response;
     var decoder = new TextDecoder();
     var buffer = '', recorded = false;
     var actSteps = [], actStart = Date.now();
+    var recordDone = function (assistantText, errorMessage, act) {
+      if (editIndex != null) appendEditExchange(sessionId, editIndex, prompt, assistantText, errorMessage, act, attached);
+      else appendExchange(sessionId, prompt, assistantText, errorMessage, act, attached);
+    };
     var tap = new TransformStream({
       transform: function (chunk, controller) {
         try {
@@ -147,9 +176,9 @@
                 var event = JSON.parse(lines[i].slice(5).trim());
                 var p = event.payload || event;
                 if (p.type === 'progress' && p.message) { if (actSteps[actSteps.length - 1] !== p.message) actSteps.push(p.message); }
-                else if (p.type === 'done') { var act = actSteps.length ? { steps: actSteps.slice(0, 12), seconds: Math.max(1, Math.round((Date.now() - actStart) / 1000)) } : null; appendExchange(sessionId, prompt, typeof p.text === 'string' ? p.text : '', '', act, attached); recorded = true; if (queueFor(sessionId).length) scheduleDrain(sessionId); }
-                else if (p.type === 'error') { appendExchange(sessionId, prompt, '', p.message || 'Run failed', null, attached); recorded = true; }
-                else if (p.type === 'recovery') { appendExchange(sessionId, prompt, '', p.message || 'Outcome unknown', null, attached); recorded = true; }
+                else if (p.type === 'done') { var act = actSteps.length ? { steps: actSteps.slice(0, 12), seconds: Math.max(1, Math.round((Date.now() - actStart) / 1000)) } : null; recordDone(typeof p.text === 'string' ? p.text : '', '', act); recorded = true; if (queueFor(sessionId).length) scheduleDrain(sessionId); }
+                else if (p.type === 'error') { recordDone('', p.message || 'Run failed', null); recorded = true; }
+                else if (p.type === 'recovery') { recordDone('', p.message || 'Outcome unknown', null); recorded = true; }
               } catch { /* partial frame */ }
             }
           }
@@ -196,6 +225,10 @@
       if (typeof upd.title === 'string' && upd.title.trim()) us.title = upd.title.trim().slice(0, 120);
       if (typeof upd.pinned === 'boolean') us.pinned = upd.pinned;
       if (typeof upd.archived === 'boolean') us.archived = upd.archived;
+      // Version switches persist the whole message list (versions live on
+      // the user message; the following assistant message is the current
+      // version's response).
+      if (Array.isArray(upd.messages)) us.messages = upd.messages;
       saveSessions(ulist);
       return Promise.resolve(jsonResponse(summary(us)));
     }
@@ -311,8 +344,13 @@
       var sess = runBody.session_id ? findSession(runBody.session_id) : null;
       captureMemory(runBody.prompt);
       runBody.context = buildContext(sess, runBody.prompt);
-      if (sess && Array.isArray(sess.messages))
-        runBody.messages = sess.messages.filter(function (m) { return m && (m.role === 'user' || m.role === 'assistant'); }).map(function (m) { return { role: m.role, content: m.content }; });
+      if (sess && Array.isArray(sess.messages)) {
+        var allHist = sess.messages.filter(function (m) { return m && (m.role === 'user' || m.role === 'assistant'); });
+        // An edit re-runs from that message: history stops before it, so the
+        // model never sees the old wording or the old answer.
+        if (typeof runBody.edit_of === 'number') allHist = allHist.slice(0, runBody.edit_of);
+        runBody.messages = allHist.map(function (m) { return { role: m.role, content: m.content }; });
+      }
         if (sess && sess.purpose === 'luna') runBody.companion = 'luna';
       var shrinkRunImages = function () {
         var list = Array.isArray(runBody.attachments) ? runBody.attachments : [];
@@ -342,7 +380,7 @@
       return shrinkRunImages().then(function () {
         var newInit = Object.assign({}, init, { body: JSON.stringify(runBody) });
         return nativeFetch(input, newInit).then(function (response) {
-          return tapRunStream(response, runBody.session_id, runBody.prompt, (Array.isArray(runBody.attachments) ? runBody.attachments : []).map(function (a) { return { kind: a && a.kind === 'image' ? 'image' : 'file', name: String((a && a.name) || 'file').slice(0, 80) }; }));
+          return tapRunStream(response, runBody.session_id, runBody.prompt, (Array.isArray(runBody.attachments) ? runBody.attachments : []).map(function (a) { return { kind: a && a.kind === 'image' ? 'image' : 'file', name: String((a && a.name) || 'file').slice(0, 80) }; }), (typeof runBody.edit_of === 'number' ? runBody.edit_of : null));
         });
       });
     }

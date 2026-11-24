@@ -556,6 +556,7 @@ function renderPending() {
     chip.append(button('Remove', () => { state.pending = state.pending.filter(row => row !== item); renderPending(); }));
     tray.append(chip);
   }
+  syncSendState();
 }
 async function handleFiles(files) {
   for (const file of files) {
@@ -682,7 +683,9 @@ function autoGrowPrompt() {
 }
 function syncSendState() {
   const c = $('composer'); if (!c) return;
-  const empty = !$('prompt').value.trim();
+  // Send shows when there is text OR an attachment (Grok: Send only appears
+  // once there is something to send); empty means waveform only.
+  const empty = !$('prompt').value.trim() && !state.pending.length;
   c.classList.toggle('is-empty', empty);
   $('send').classList.toggle('active', !empty);
 }
@@ -762,20 +765,26 @@ function createMessageNode(message, session) {
   const role = message.role || 'user';
   const item = el('div', 'message ' + (role === 'assistant' ? 'assistant' : 'user'));
   if (role === 'user') {
-    const content = stripStyleDirective(message.content || '');
+    const content = stripStyleDirective(currentVersionText(message));
     const bubble = el('div', 'user-bubble');
     bubble.append(document.createTextNode(content));
     if (message.kind === 'image' && message.data) { const img = document.createElement('img'); img.src = 'data:image/jpeg;base64,' + message.data; img.alt = ''; img.className = 'attachment-preview'; bubble.append(img); }
     if (message.kind === 'log') bubble.append(el('div', 'muted', (message.name || 'log') + ' \u00b7 ' + (message.content || '').length + ' characters'));
     if (Array.isArray(message.attached)) for (const a of message.attached) bubble.append(el('div', 'muted', (a.kind === 'image' ? 'Image' : 'File') + ': ' + (a.name || 'file')));
     item.append(bubble);
-    const actions = el('div', 'message-actions');
-    const editBtn = button('Edit', () => {
-      $('prompt').value = content; autoGrowPrompt(); syncSendState(); $('prompt').focus(); scrollThreadToBottom();
-    });
-    const copyBtn = button('Copy', async () => { toast((await copyCodeText(content)) ? 'Copied' : 'Copy failed'); });
-    actions.append(editBtn, copyBtn);
-    item.append(actions);
+    // Grok: no persistent Edit/Copy pills under your bubble — tap the bubble
+    // to edit it inline. The pager below appears only on edited messages.
+    bubble.onclick = () => { if (!state.busy) startEdit(item, message, session); };
+    if (Array.isArray(message.versions) && message.versions.length > 1) {
+      const pager = el('div', 'version-pager');
+      const prev = button('\u2039', () => switchVersion(message, session, (message.version || 0) - 1));
+      const label = el('span', '', ((message.version || 0) + 1) + ' / ' + message.versions.length);
+      const next = button('\u203a', () => switchVersion(message, session, (message.version || 0) + 1));
+      prev.disabled = (message.version || 0) <= 0;
+      next.disabled = (message.version || 0) >= message.versions.length - 1;
+      pager.append(prev, label, next);
+      item.append(pager);
+    }
   } else {
     const content = el('div', 'message-body');
     item.append(content);
@@ -799,35 +808,86 @@ function createMessageNode(message, session) {
   }
   return item;
 }
-function followUpChips(prompt, answer) {
-  const lower = String(prompt || '').toLowerCase();
-  const pick = candidates => candidates.filter((v, i, a) => a.indexOf(v) === i).slice(0, 2);
-  if (/summar/i.test(lower)) return pick(['Make it shorter', 'Give me the key points']);
-  if (/code|build|website|app|page|fix/.test(lower)) return pick(['Make it a full page', 'Add a small example']);
-  if (/explain|what (is|are)|how (does|do)/.test(lower)) return pick(['Give me an example', 'Explain it simply']);
-  if (/plan|idea/.test(lower)) return pick(['Make a checklist', 'Add a timeline']);
-  if (/search|news|latest|compare/.test(lower)) return pick(['Tell me more', 'What else is new?']);
-  const words = String(prompt || '').trim();
-  if (!words) return [];
-  return pick(['Tell me more about this', 'Give me an example']);
+/* ---------- message versions: Grok-style inline edit ---------- */
+function currentVersionText(msg) {
+  if (Array.isArray(msg.versions) && msg.versions.length) {
+    const i = Math.max(0, Math.min(msg.version || 0, msg.versions.length - 1));
+    return msg.versions[i].text;
+  }
+  return msg.content || '';
+}
+function messageAttachments(message) {
+  if (message.kind === 'image' && message.data) return [{ kind: 'image', name: message.name || 'image', data: message.data }];
+  if (message.kind === 'log') return [{ kind: 'log', name: message.name || 'log', text: message.content || '' }];
+  if (Array.isArray(message.attached)) return message.attached.map(a => ({ kind: a.kind, name: a.name }));
+  return [];
+}
+function autoGrowEdit(ta) { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 240) + 'px'; }
+function startEdit(item, message, session) {
+  if (state.busy) { toast('Finish the current answer first.'); return; }
+  if (item.querySelector('.edit-area')) return;
+  const bubble = item.querySelector('.user-bubble');
+  const pager = item.querySelector('.version-pager');
+  if (bubble) bubble.hidden = true;
+  if (pager) pager.hidden = true;
+  const area = el('div', 'edit-area');
+  const ta = document.createElement('textarea');
+  ta.value = currentVersionText(message); ta.rows = 1; ta.setAttribute('aria-label', 'Edit message');
+  area.append(ta);
+  const row = el('div', 'edit-actions');
+  const cancel = button('Cancel', () => renderConversation(session));
+  const copy = button('Copy', async () => { toast((await copyCodeText(ta.value)) ? 'Copied' : 'Copy failed'); });
+  const sendBtn = button('Send', () => finishEdit(message, session, ta.value));
+  cancel.classList.add('edit-pill'); copy.classList.add('edit-pill'); sendBtn.classList.add('edit-pill', 'edit-send');
+  row.append(cancel, copy, sendBtn);
+  area.append(row);
+  item.append(area);
+  autoGrowEdit(ta);
+  ta.addEventListener('input', () => autoGrowEdit(ta));
+  ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length);
+}
+async function finishEdit(message, session, newText) {
+  const text = String(newText || '').trim();
+  renderConversation(session); // exit edit mode first
+  if (!text || text === currentVersionText(message)) return;
+  if (state.busy) return;
+  const list = session.messages || [];
+  const idx = list.indexOf(message);
+  if (idx < 0) return;
+  // v1 is the original text + the reply that followed it; the edit becomes
+  // the next version. Everything after the edited message is replaced by
+  // the new answer, like Grok's < 2 / 2 > flow.
+  if (!Array.isArray(message.versions)) {
+    const next = list[idx + 1];
+    message.versions = [{ text: message.content || '', response: (next && next.role === 'assistant') ? next : null }];
+    message.version = 0;
+  }
+  message.versions.push({ text, response: null });
+  message.version = message.versions.length - 1;
+  message.content = text;
+  list.splice(idx + 1);
+  renderConversation(session);
+  const history = list.slice(0, idx).map(m => ({ role: m.role, content: stripStyleDirective(currentVersionText(m) || '') }));
+  await runStream(session, text, history, messageAttachments(message), state.isPrivate, { msg: message, index: idx });
+}
+async function switchVersion(message, session, i) {
+  if (!Array.isArray(message.versions)) return;
+  const n = Math.max(0, Math.min(message.versions.length - 1, i));
+  if (n === (message.version || 0)) return;
+  message.version = n;
+  message.content = message.versions[n].text;
+  const list = session.messages || [];
+  const idx = list.indexOf(message);
+  const next = list[idx + 1];
+  if (next && next.role === 'assistant' && message.versions[n].response) next.content = message.versions[n].response.content || '';
+  renderConversation(session);
+  try { await api('/api/sessions/update', { session_id: session.id, messages: list }); } catch { /* switch still shows locally */ }
 }
 function renderFollowUps() {
+  // Grok shows no follow-up chips under an answer; keep the wrap hidden.
   const wrap = $('followUps');
   wrap.replaceChildren();
   wrap.hidden = true;
-  if (state.settings.show_suggestions === false || !state.session || state.isPrivate) return;
-  const msgs = state.session.messages || [];
-  const lastUser = [...msgs].reverse().find(m => m.role === 'user');
-  const lastAi = [...msgs].reverse().find(m => m.role === 'assistant');
-  if (!lastUser || !lastAi) return;
-  const chips = followUpChips(lastUser.content, lastAi.content);
-  if (!chips.length) return;
-  for (const c of chips) {
-    const b = button(c, () => { $('prompt').value = c; syncSendState(); send(); });
-    b.classList.add('follow-chip');
-    wrap.append(b);
-  }
-  wrap.hidden = false;
 }
 function renderConversation(session) {
   think.el = null; clearInterval(think.timer);
@@ -838,7 +898,7 @@ function renderConversation(session) {
   $('composerDock').hidden = empty;
   const slot = empty ? $('welcomeComposerSlot') : $('composerHome');
   if (slot) slot.append($('composer'));
-  const title = session?.title || '';
+  const title = (session && findSession(session.id)?.title) || session?.title || '';
   $('threadTitle').textContent = title || 'New chat';
   $('threadTitlePill').hidden = !session || empty;
   if (session) {
@@ -1260,11 +1320,15 @@ async function sendPrivate(text, sentText) {
   renderConversation({ id: 'private', title: 'Private chat', messages: state.privateThread });
   await streamRunPrivate(sentText, history, attachments);
 }
-function streamBody(sessionId, prompt, history, attachments) {
-  return {
+function streamBody(sessionId, prompt, history, attachments, edit) {
+  const body = {
     session_id: sessionId, model: state.model, prompt, messages: history,
     attachments: attachments.map(a => a.kind === 'image' ? { kind: 'image', name: a.name, data: a.data } : { kind: 'log', name: a.name, text: a.text }),
   };
+  // An edit re-runs from that message: the adapter versions the stored
+  // message instead of appending a duplicate one.
+  if (edit && typeof edit.index === 'number') body.edit_of = edit.index;
+  return body;
 }
 async function streamRun(session, prompt, history, attachments) {
   return runStream(session, prompt, history, attachments, false);
@@ -1272,7 +1336,7 @@ async function streamRun(session, prompt, history, attachments) {
 async function streamRunPrivate(prompt, history, attachments) {
   return runStream({ id: uid('private'), title: 'Private chat', messages: state.privateThread }, prompt, history, attachments, true);
 }
-async function runStream(session, prompt, history, attachments, isPrivate) {
+async function runStream(session, prompt, history, attachments, isPrivate, edit) {
   state.busy = true; state.stopRequested = false; state.stream = '';
   updateBusy();
   const streamNode = el('div', 'message assistant streaming');
@@ -1282,7 +1346,7 @@ async function runStream(session, prompt, history, attachments, isPrivate) {
   startThinking();
   let doneText = '', errorMessage = '';
   try {
-    const gen = JannaRuns.subscribe(streamBody(session.id, prompt, history, attachments), state.token, (kind, id, msg) => {
+    const gen = JannaRuns.subscribe(streamBody(session.id, prompt, history, attachments, edit), state.token, (kind, id, msg) => {
       if (kind === 'connected' && id) state.runId = id;
       else if (kind === 'reconnecting') addProgressStep('Reconnecting\u2026 ' + (msg || ''));
     });
@@ -1304,13 +1368,17 @@ async function runStream(session, prompt, history, attachments, isPrivate) {
   const finalText = errorMessage ? '\u26a0\ufe0f ' + errorMessage : (doneText || state.stream);
   streamNode.remove();
   if (isPrivate) {
-    state.privateThread.push({ role: 'assistant', content: finalText });
+    const am = { role: 'assistant', content: finalText };
+    state.privateThread.push(am);
+    if (edit && edit.msg && Array.isArray(edit.msg.versions)) edit.msg.versions[edit.msg.version].response = am;
     renderConversation({ id: 'private', title: 'Private chat', messages: state.privateThread });
     if (!errorMessage && state.settings.voice_output === true) voiceSpeak(finalText);
     return;
   }
   session.messages = session.messages || [];
-  session.messages.push({ role: 'assistant', content: finalText });
+  const am = { role: 'assistant', content: finalText };
+  session.messages.push(am);
+  if (edit && edit.msg && Array.isArray(edit.msg.versions)) edit.msg.versions[edit.msg.version].response = am;
   renderConversation(session);
   if (errorMessage) toast(errorMessage);
   else {
@@ -1320,6 +1388,10 @@ async function runStream(session, prompt, history, attachments, isPrivate) {
     }
   }
   refreshBootstrap(true);
+  // The adapter titles a chat from its first prompt in storage; the
+  // in-memory session keeps 'New chat' until this sync runs.
+  const freshTitle = state.session && findSession(state.session.id);
+  if (freshTitle && freshTitle.title) { state.session.title = freshTitle.title; $('threadTitle').textContent = freshTitle.title; }
   // NOTE: queued follow-ups are drained by the web-adapter itself (it posts
   // the next queued item to /api/run and calls openSession when it finishes),
   // so the app must NOT re-send them here — that would run them twice.
