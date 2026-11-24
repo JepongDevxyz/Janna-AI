@@ -232,7 +232,7 @@ function styleDirective() {
   if (style === 'Custom') { const c = String(state.settings.custom_style || '').trim(); return c ? 'Follow this response style: ' + c : ''; }
   return STYLE_DIRECTIVES[style] || '';
 }
-const stripStyleDirective = text => String(text || '').replace(/\n\n\[Response style:[^\]]*\]\s*$/, '');
+const stripStyleDirective = text => String(text || '').replace(/(\n\n\[Response style:[^\]]*\])+\s*$/, '');
 
 /* ---------- voice: dictation + voice conversation mode ---------- */
 function speechTag(sample = '') {
@@ -246,7 +246,7 @@ function voiceSpeak(text) {
   if (state.settings.voice_output !== true || !('speechSynthesis' in window)) return;
   const cleaned = String(text || '').replace(/```[\s\S]*?```/g, ' [code block omitted] ').replace(/[<>{}*_#]/g, '').slice(0, 1700);
   if (!cleaned.trim()) return;
-  try { window.speechSynthesis.cancel(); const utter = new SpeechSynthesisUtterance(cleaned); utter.lang = speechTag(cleaned); utter.rate = 1.07; window.speechSynthesis.speak(utter); } catch { /* unavailable */ }
+  try { window.speechSynthesis.cancel(); const utter = applyVoicePersona(new SpeechSynthesisUtterance(cleaned)); utter.lang = speechTag(cleaned); window.speechSynthesis.speak(utter); } catch { /* unavailable */ }
 }
 function voiceDictate() {
   const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -262,18 +262,136 @@ function voiceDictate() {
   try { recognition.start(); state.voiceListening = true; $('voiceMic').classList.add('listening'); $('voiceMic').setAttribute('aria-pressed', 'true'); }
   catch (e) { toast('Microphone could not start: ' + e.message); }
 }
+/* Grok-style voice picker: the voice list, personality, speed and mic from
+   the voice screen's bottom sheet. Personas shape the spoken voice (pitch
+   + rate on the device TTS); personality shapes how answers are spoken. */
+const VOICE_PERSONAS = [
+  { id: 'ara', name: 'Ara', desc: 'Warm and friendly.', pitch: 1.1, rate: 1.0 },
+  { id: 'eve', name: 'Eve', desc: 'Energetic and upbeat.', pitch: 1.2, rate: 1.1 },
+  { id: 'leo', name: 'Leo', desc: 'Authoritative and strong.', pitch: 0.8, rate: 0.95 },
+  { id: 'rex', name: 'Rex', desc: 'Confident and clear.', pitch: 0.9, rate: 1.0 },
+  { id: 'sal', name: 'Sal', desc: 'Smooth and balanced.', pitch: 1.0, rate: 1.0 },
+  { id: 'gork', name: 'Gork', desc: 'Lazy.', tag: '18+', pitch: 0.7, rate: 0.9 },
+  { id: 'cosmo', name: 'Cosmo', desc: 'Bright, curious, and easy to follow.', pitch: 1.25, rate: 1.1 },
+  { id: 'celeste', name: 'Celeste', desc: 'Compassionate, confident, and easygoing.', pitch: 1.05, rate: 1.0 },
+  { id: 'neil', name: 'Neil', desc: 'Warm, thoughtful, and wise.', pitch: 0.85, rate: 0.95 },
+  { id: 'atlas', name: 'Atlas', desc: 'Confident, commanding, and reassuring.', pitch: 0.8, rate: 0.95 },
+  { id: 'aurora', name: 'Aurora', desc: 'Serene, steady, and radiant.', pitch: 1.15, rate: 0.95 },
+  { id: 'liora', name: 'Liora', desc: 'Calm, grounded, and luminous.', pitch: 1.1, rate: 0.9 },
+];
+const VOICE_PERSONALITIES = [
+  ['Assistant', ''], ['Storyteller', 'Tell it like a story.'],
+  ['Kids Story Time', 'Explain it like a bedtime story for a young child, using simple words.'],
+  ['Kids Trivia Game', 'Turn your answer into a fun trivia game for kids.'],
+  ['Meditation', 'Speak calmly and slowly, like a guided meditation.'],
+  ['Conspiracy', 'Answer with a playful conspiracy-theory spin.'],
+];
+const VOICE_SPEEDS = [['0.5x', 0.5], ['0.75x', 0.75], ['0.9x', 0.9], ['Normal', 1], ['1.1x', 1.1], ['1.25x', 1.25], ['1.5x', 1.5], ['2x', 2]];
+function voicePersona() { return VOICE_PERSONAS.find(p => p.id === (state.settings.voice_name || 'ara')) || VOICE_PERSONAS[0]; }
+function voiceSpeedRate() { const row = VOICE_SPEEDS.find(s => s[0] === (state.settings.voice_speed || 'Normal')); return row ? row[1] : 1; }
+function applyVoicePersona(u) {
+  const p = voicePersona();
+  try { u.pitch = p.pitch; } catch { /* ignore */ }
+  try { u.rate = Math.min(2, Math.max(0.5, p.rate * voiceSpeedRate())); } catch { /* ignore */ }
+  return u;
+}
+function voicePersonalityDirective() {
+  const key = state.settings.voice_personality || 'Assistant';
+  if (key === 'Custom') { const c = String(state.settings.voice_personality_custom || '').trim(); return c || ''; }
+  const row = VOICE_PERSONALITIES.find(p => p[0] === key);
+  return row ? row[1] : '';
+}
 const voiceTalk = { active: false, phase: 'idle', muted: false, recog: null, watch: null, restart: null, quiet: 0, errStrikes: 0, errKind: '', chunkTimer: null, langOverride: '', langRetried: false, stopped: false };
 function voiceOverlay() {
   let ov = document.getElementById('voiceOverlay');
   if (ov) return ov;
   ov = document.createElement('div');
   ov.className = 'voice-overlay'; ov.id = 'voiceOverlay'; ov.dataset.phase = 'idle';
-  ov.innerHTML = '<button class="voice-orb" id="voiceOrb" type="button" aria-label="Voice orb"><i></i><i></i><i></i><i></i><i></i></button><div class="voice-caption" id="voiceCaption">I\u2019m listening\u2026</div><div class="voice-sub">Just talk to Janna \u2014 she\u2019ll answer out loud.</div><div class="voice-controls"><button class="voice-ctl" id="voiceMuteBtn" type="button" title="Mute microphone" aria-label="Mute microphone"><svg><use href="#i-mic"/></svg></button><button class="voice-ctl close" id="voiceCloseBtn" type="button" title="End voice chat" aria-label="End voice chat"><svg><use href="#i-close"/></svg></button></div>';
+  ov.innerHTML = '<div class="voice-top"><button class="voice-orb" id="voiceOrb" type="button" aria-label="Voice orb"></button><div class="voice-status"><div class="voice-caption" id="voiceCaption">I\u2019m listening\u2026</div><div class="voice-sub" id="voiceSub">Just talk to Janna \u2014 she\u2019ll answer out loud.</div></div></div>'
+    + '<div class="voice-bar"><button class="voice-plus" id="voicePlusBtn" type="button" title="Back to typing" aria-label="Back to typing"><svg><use href="#i-plus"/></svg></button><button class="voice-name" id="voiceNameBtn" type="button"><span id="voiceNameLabel">Ara \u00b7 Assistant</span><svg><use href="#i-chevron"/></svg></button><span class="voice-bars" id="voiceBars"><i></i><i></i><i></i><i></i></span><button class="voice-ctl" id="voiceMuteBtn" type="button" title="Mute microphone" aria-label="Mute microphone"><svg><use href="#i-mic"/></svg></button><button class="voice-ctl stop" id="voiceCloseBtn" type="button" title="End voice chat" aria-label="End voice chat"><svg><use href="#i-stop"/></svg></button></div>';
   document.body.appendChild(ov);
   ov.querySelector('#voiceCloseBtn').onclick = () => voiceClose();
   ov.querySelector('#voiceMuteBtn').onclick = () => voiceToggleMute();
   ov.querySelector('#voiceOrb').onclick = () => voiceOrbTap();
+  ov.querySelector('#voicePlusBtn').onclick = () => { voiceClose(); $('prompt').focus(); };
+  ov.querySelector('#voiceNameBtn').onclick = () => voiceToggleSheet();
+  ov.addEventListener('click', e => {
+    if (e.target.closest('button') || e.target.closest('#voiceSheet')) return;
+    voiceToggleSheet(false);
+  });
+  voiceBuildSheet(ov);
+  syncVoiceNameLabel();
   return ov;
+}
+function syncVoiceNameLabel() {
+  const label = document.getElementById('voiceNameLabel'); if (!label) return;
+  label.textContent = voicePersona().name + ' \u00b7 ' + (state.settings.voice_personality || 'Assistant');
+}
+function voiceBuildSheet(ov) {
+  const sheet = document.createElement('div');
+  sheet.className = 'voice-sheet'; sheet.id = 'voiceSheet'; sheet.hidden = true;
+  const handle = el('div', 'voice-sheet-handle');
+  const title = el('div', 'voice-sheet-title', 'Voice');
+  const list = el('div', 'voice-list'); list.id = 'voiceList';
+  sheet.append(handle, title, list);
+  const mkRow = (labelText, control) => {
+    const row = el('div', 'voice-sheet-row');
+    row.append(el('span', '', labelText), control);
+    sheet.append(row);
+  };
+  const persSel = settingsSelect(VOICE_PERSONALITIES.map(p => [p[0], p[0]]).concat([['Custom', 'Custom\u2026']]), state.settings.voice_personality || 'Assistant', async v => {
+    if (v === 'Custom') {
+      const res = await showDialog({ title: 'Custom personality', text: 'How should Janna speak in voice mode?', fields: [{ name: 'text', value: state.settings.voice_personality_custom || '', placeholder: 'e.g. Speak like a pirate, but kindly' }], okText: 'Save' });
+      if (!res || !String(res.text || '').trim()) { persSel.value = state.settings.voice_personality || 'Assistant'; return; }
+      persistSettings({ voice_personality: 'Custom', voice_personality_custom: String(res.text).trim() });
+    } else await persistSettings({ voice_personality: v });
+    syncVoiceNameLabel();
+  });
+  persSel.id = 'voicePersonalitySel';
+  mkRow('Personality', persSel);
+  const speedSel = settingsSelect(VOICE_SPEEDS.map(s => [s[0], s[0]]), state.settings.voice_speed || 'Normal', v => persistSettings({ voice_speed: v }));
+  speedSel.id = 'voiceSpeedSel';
+  mkRow('Speed', speedSel);
+  const micSel = document.createElement('select'); micSel.id = 'voiceMicSel';
+  const fallback = document.createElement('option'); fallback.value = 'Microphone'; fallback.textContent = 'Microphone'; micSel.append(fallback);
+  micSel.onchange = () => persistSettings({ voice_mic_label: micSel.value });
+  mkRow('Microphone', micSel);
+  ov.append(sheet);
+}
+function renderVoiceList() {
+  const list = document.getElementById('voiceList'); if (!list) return;
+  list.replaceChildren();
+  const current = state.settings.voice_name || 'ara';
+  for (const p of VOICE_PERSONAS) {
+    const row = el('button', 'voice-row' + (p.id === current ? ' selected' : ''));
+    row.type = 'button';
+    const texts = el('div', 'voice-row-texts');
+    texts.append(el('div', 'voice-row-name', p.name + (p.tag ? ' ' + p.tag : '')), el('div', 'voice-row-desc', p.desc));
+    row.append(texts, el('span', 'voice-check', p.id === current ? '\u2713' : ''));
+    row.onclick = async () => { await persistSettings({ voice_name: p.id }); syncVoiceNameLabel(); renderVoiceList(); };
+    list.append(row);
+  }
+}
+async function voiceLoadMics() {
+  const sel = document.getElementById('voiceMicSel'); if (!sel) return;
+  let devices = [];
+  try { if (navigator.mediaDevices?.enumerateDevices) devices = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'audioinput'); } catch { /* ignore */ }
+  sel.replaceChildren();
+  if (devices.length) {
+    devices.forEach((d, i) => { const o = document.createElement('option'); o.value = d.deviceId; o.textContent = d.label || 'Microphone ' + (i + 1); sel.append(o); });
+    sel.value = state.settings.voice_mic_device || devices[0].deviceId;
+    sel.onchange = () => persistSettings({ voice_mic_device: sel.value, voice_mic_label: sel.options[sel.selectedIndex]?.textContent || '' });
+  } else {
+    for (const label of ['Microphone', 'Speakerphone', 'Headset earpiece']) { const o = document.createElement('option'); o.value = label; o.textContent = label; sel.append(o); }
+    sel.value = state.settings.voice_mic_label || 'Microphone';
+    sel.onchange = () => persistSettings({ voice_mic_label: sel.value });
+  }
+}
+function voiceToggleSheet(open) {
+  const sheet = document.getElementById('voiceSheet'); if (!sheet) return;
+  const willOpen = open !== undefined ? open : sheet.hidden;
+  sheet.hidden = !willOpen;
+  if (willOpen) { renderVoiceList(); voiceLoadMics(); }
 }
 function voiceSetPhase(phase, caption) {
   voiceTalk.phase = phase;
@@ -312,6 +430,7 @@ function msgSpeakToggle(text, btn) {
     if (part == null) { msgSpeakStop(); return; }
     const u = new SpeechSynthesisUtterance(part);
     try { u.lang = speechTag(); } catch { /* ignore */ }
+    applyVoicePersona(u);
     let advanced = false;
     const advance = () => { if (advanced) return; advanced = true; clearTimeout(msgSpeech.timer); step(); };
     u.onend = advance; u.onerror = advance;
@@ -336,8 +455,8 @@ function voiceTalkSpeak(text) {
     if (!voiceTalk.active || voiceTalk.muted) return;
     if (idx >= queue.length) { voiceListen(); return; }
     const piece = queue[idx++];
-    const utter = new SpeechSynthesisUtterance(piece);
-    utter.lang = speechTag(piece); utter.rate = 1.05;
+    const utter = applyVoicePersona(new SpeechSynthesisUtterance(piece));
+    utter.lang = speechTag(piece);
     let advanced = false;
     const advance = () => { if (advanced) return; advanced = true; step(); };
     utter.onend = advance; utter.onerror = advance;
@@ -368,7 +487,9 @@ function voiceWatchReply(beforeCount) {
 function voiceSubmit(text) {
   const before = document.querySelectorAll('.message.assistant').length;
   voiceSetPhase('thinking', '\u201c' + text + '\u201d');
-  $('prompt').value = text; syncSendState();
+  const dir = voicePersonalityDirective();
+  $('prompt').value = dir ? text + '\n\n[Response style: ' + dir + ']' : text;
+  syncSendState();
   send();
   voiceWatchReply(before);
 }
@@ -417,6 +538,7 @@ function voiceToggleMute() {
 function voiceOpen() {
   msgSpeakStop();
   voiceOverlay();
+  syncVoiceNameLabel();
   voiceTalk.active = true; voiceTalk.muted = false; voiceTalk.quiet = 0; voiceTalk.errStrikes = 0; voiceTalk.stopped = false;
   try { const synth = window.speechSynthesis; if (synth) { synth.getVoices(); const prime = new SpeechSynthesisUtterance(' '); prime.volume = 0; synth.speak(prime); } } catch { /* ignore */ }
   document.body.classList.add('voice-open');
@@ -424,11 +546,15 @@ function voiceOpen() {
   voiceTalk.langOverride = ''; voiceTalk.langRetried = false;
   if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
     voiceSetPhase('idle', 'One moment \u2014 asking for microphone permission\u2026');
-    navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+    const micId = state.settings.voice_mic_device || '';
+    const constraints = micId ? { audio: { deviceId: { exact: micId } } } : { audio: true };
+    const ask = c => navigator.mediaDevices.getUserMedia(c).then(stream => {
       stream.getTracks().forEach(t => { try { t.stop(); } catch { /* ignore */ } });
       if (voiceTalk.active && !voiceTalk.muted) voiceListen();
-    }).catch(err => {
+    });
+    ask(constraints).catch(err => {
       if (!voiceTalk.active) return;
+      if (err && err.name === 'OverconstrainedError') { ask({ audio: true }).catch(() => {}); return; }
       if (err && err.name === 'NotFoundError') { voiceListen(); return; }
       voiceTalk.stopped = true;
       voiceSetPhase('idle', 'The microphone wasn\u2019t allowed. To fix it: tap the lock icon in the address bar \u2192 Permissions \u2192 Microphone \u2192 Allow, then close and reopen this.');

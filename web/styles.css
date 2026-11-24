@@ -405,22 +405,48 @@ body.wrap-code .message-body .code-block pre{white-space:pre-wrap;overflow-wrap:
 .toast{position:fixed;z-index:90;left:50%;transform:translateX(-50%);bottom:24px;max-width:min(560px,92vw);padding:11px 17px;background:var(--ink);color:var(--panel);box-shadow:var(--shadow);border-radius:12px;font-size:13px;line-height:1.5}
 
 /* ---------- Voice mode ---------- */
-.voice-overlay{position:fixed;inset:0;z-index:75;background:var(--paper);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;padding:24px;text-align:center}
-.voice-orb{width:96px;height:96px;border-radius:50%;border:0;background:var(--ink);display:flex;align-items:center;justify-content:center;gap:3px;cursor:pointer}
-.voice-orb i{width:4px;background:var(--panel);border-radius:2px;height:16px}
-.voice-overlay[data-phase='listening'] .voice-orb i{animation:voicebars 1s ease-in-out infinite}
-.voice-overlay[data-phase='listening'] .voice-orb i:nth-child(2){animation-delay:.12s}
-.voice-overlay[data-phase='listening'] .voice-orb i:nth-child(3){animation-delay:.24s}
-.voice-overlay[data-phase='listening'] .voice-orb i:nth-child(4){animation-delay:.36s}
-.voice-overlay[data-phase='listening'] .voice-orb i:nth-child(5){animation-delay:.48s}
-@keyframes voicebars{0%,100%{height:12px}50%{height:34px}}
+.voice-overlay{position:fixed;inset:0;z-index:75;background:var(--paper);display:flex;flex-direction:column;justify-content:flex-end;align-items:stretch}
+.voice-top{display:flex;align-items:center;gap:18px;padding:0 28px;margin-bottom:32px}
+.voice-orb{flex-shrink:0;width:72px;height:72px;border-radius:50%;border:0;background-color:var(--ink);background-image:radial-gradient(var(--panel) 1.6px,transparent 1.8px);background-size:11px 11px;background-position:center;cursor:pointer}
+.voice-overlay[data-phase='listening'] .voice-orb{animation:voicepulse 1.6s ease-in-out infinite}
+.voice-overlay[data-phase='speaking'] .voice-orb{animation:voicepulse 1.1s ease-in-out infinite}
+@keyframes voicepulse{0%,100%{box-shadow:0 0 0 0 rgba(128,128,128,.16);transform:scale(1)}50%{box-shadow:0 0 0 16px rgba(128,128,128,0);transform:scale(1.05)}}
+.voice-status{min-width:0}
 .voice-caption{font-size:18px;line-height:1.5;max-width:420px}
-.voice-sub{font-size:13px;color:var(--muted)}
+.voice-sub{font-size:13px;color:var(--muted);margin-top:2px}
+.voice-bar{flex-shrink:0;display:flex;align-items:center;gap:6px;margin:0 16px 16px;background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:8px 10px;box-shadow:var(--shadow-sm)}
+.voice-plus{flex-shrink:0;width:34px;height:34px;border:0;border-radius:50%;background:var(--chip);color:var(--ink);display:inline-flex;align-items:center;justify-content:center}
+.voice-plus svg{width:17px;height:17px}
+.voice-name{flex:1;min-width:0;display:flex;align-items:center;gap:4px;border:0;background:transparent;color:var(--ink);font-size:15px;font-weight:600;padding:8px 4px;text-align:left}
+.voice-name span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.voice-name svg{flex-shrink:0;width:14px;height:14px;color:var(--muted)}
+.voice-bars{flex-shrink:0;display:inline-flex;align-items:center;gap:2px;height:20px}
+.voice-bars i{width:3px;background:var(--accent);border-radius:2px;height:8px}
+.voice-overlay[data-phase='listening'] .voice-bars i,.voice-overlay[data-phase='speaking'] .voice-bars i{animation:voicebars 1s ease-in-out infinite}
+.voice-bars i:nth-child(2){animation-delay:.12s}
+.voice-bars i:nth-child(3){animation-delay:.24s}
+.voice-bars i:nth-child(4){animation-delay:.36s}
+@keyframes voicebars{0%,100%{height:7px}50%{height:18px}}
 .voice-controls{display:flex;gap:10px;margin-top:8px}
-.voice-ctl{width:48px;height:48px;border-radius:50%;border:1px solid var(--line);background:var(--panel);color:var(--ink);display:inline-flex;align-items:center;justify-content:center}
+.voice-ctl{flex-shrink:0;width:40px;height:40px;border-radius:50%;border:1px solid var(--line);background:var(--panel);color:var(--ink);display:inline-flex;align-items:center;justify-content:center}
 .voice-ctl:hover{background:var(--hover)}
 .voice-ctl.muted{background:var(--ink);color:var(--panel)}
+.voice-ctl.stop{background:#fff;color:#111;border-color:#fff}
+.voice-ctl.stop svg{width:14px;height:14px}
+.voice-ctl svg{width:17px;height:17px}
 #voiceMic.listening{color:var(--accent);background:var(--chip)}
+/* Voice settings bottom sheet (Grok's Voice / Personality / Speed / Mic). */
+.voice-sheet{position:fixed;left:0;right:0;bottom:0;z-index:80;max-height:78vh;overflow-y:auto;background:var(--panel);border-top:1px solid var(--line);border-radius:20px 20px 0 0;padding:8px 20px 28px;box-shadow:0 -8px 30px rgba(0,0,0,.25)}
+.voice-sheet-handle{width:40px;height:4px;border-radius:2px;background:var(--line);margin:4px auto 12px}
+.voice-sheet-title{font-size:15px;font-weight:600;margin-bottom:10px}
+.voice-list{display:flex;flex-direction:column}
+.voice-row{display:flex;align-items:center;gap:12px;width:100%;padding:10px 2px;border:0;border-bottom:1px solid var(--line);background:transparent;color:var(--ink);text-align:left}
+.voice-row-texts{flex:1;min-width:0}
+.voice-row-name{font-size:15px}
+.voice-row-desc{font-size:13px;color:var(--muted);margin-top:1px}
+.voice-check{width:20px;text-align:right;color:var(--ink);font-size:16px}
+.voice-sheet-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 2px;border-bottom:1px solid var(--line);font-size:15px}
+.voice-sheet-row select{max-width:200px;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:999px;padding:8px 12px;font-size:14px}
 
 /* ---------- Jump to latest ---------- */
 .jump-latest{position:absolute;right:24px;bottom:150px;border:1px solid var(--line);border-radius:999px;padding:9px 15px;background:var(--panel);color:var(--ink);z-index:5;box-shadow:var(--shadow-sm);font-size:13px}
@@ -441,8 +467,8 @@ body.wrap-code .message-body .code-block pre{white-space:pre-wrap;overflow-wrap:
   .top-search span{display:none}
   .welcome{padding-top:clamp(48px,17vh,120px)}
   .welcome h1{font-size:29px;letter-spacing:-.7px;margin-bottom:22px}
-  .composer{border-radius:24px}
-  .model-picker-btn{max-width:104px}
+  .composer{border-radius:24px;padding:8px 8px 6px}
+  .model-picker-btn{max-width:88px}
   .model-picker-btn span{max-width:76px}
   .settings-layout{flex-direction:column}
   .settings-nav{width:100%;position:static;flex-direction:row;flex-wrap:wrap}
