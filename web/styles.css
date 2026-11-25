@@ -34,6 +34,11 @@ button,input,select,textarea{font:inherit;color:inherit}
 button{cursor:pointer}
 button:disabled{cursor:not-allowed;opacity:.55}
 button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+/* No blue tap flash on phones: Chrome paints -webkit-tap-highlight-color
+   (holo blue) over any tapped button — the blue square in her screenshot
+   was that flash, not the button's own color. Kill it everywhere; the
+   :active rules below keep a grey press feedback instead. */
+button{-webkit-tap-highlight-color:transparent}
 .symbols{position:absolute;width:0;height:0;overflow:hidden}
 svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.65;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
 [hidden]{display:none!important}
@@ -162,9 +167,15 @@ svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.65;strok
 .composer:not(.is-empty) .composer-row{flex-wrap:wrap}
 .composer:not(.is-empty) .composer-controls{flex-basis:100%;justify-content:space-between}
 .composer-plus{flex-shrink:0;width:34px;height:34px;border:0;border-radius:50%;background:var(--chip);color:var(--ink);display:inline-flex;align-items:center;justify-content:center;margin-bottom:1px}
-.composer-plus:hover{background:var(--hover)}
+.composer-plus:hover,.composer-plus:active{background:var(--hover)}
 .composer-plus svg{width:17px;height:17px}
 .composer textarea{flex:1;min-width:0;border:0;outline:0;resize:none;background:transparent;color:var(--ink);font-size:16px;line-height:1.45;padding:8px 6px;max-height:160px}
+/* Empty composer: the placeholder ("Ask anything…") must stay on ONE line
+   like Grok's — with a long model label ("Gemini 4") the narrow textarea
+   wrapped it to two lines and the second line was clipped. nowrap only
+   while empty; once the user types, .is-empty drops and text wraps
+   normally again. */
+.composer.is-empty textarea{white-space:nowrap;overflow:hidden}
 .composer textarea::placeholder{color:var(--faded)}
 .model-picker-btn{flex-shrink:0;display:flex;align-items:center;gap:3px;max-width:150px;border:0;background:transparent;color:var(--ink);font-size:13px;font-weight:600;padding:8px 4px;margin-bottom:2px;border-radius:8px}
 .model-picker-btn:hover{background:var(--hover)}
@@ -172,7 +183,7 @@ svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.65;strok
 .model-picker-btn svg{width:14px;height:14px;color:var(--muted)}
 .composer-mic{flex-shrink:0;margin-bottom:1px}
 .voice-mode-btn{flex-shrink:0;width:34px;height:34px;border:0;border-radius:50%;background:var(--chip);color:var(--accent);display:inline-flex;align-items:center;justify-content:center;margin-bottom:1px}
-.voice-mode-btn:hover{background:var(--hover)}
+.voice-mode-btn:hover,.voice-mode-btn:active{background:var(--hover)}
 .voice-mode-btn svg{width:17px;height:17px}
 .send-button{flex-shrink:0;border:0;background:var(--chip);color:var(--muted);display:flex;align-items:center;justify-content:center;border-radius:50%;width:34px;height:34px;margin-bottom:1px}
 .send-button svg{width:19px;height:19px;stroke-width:2}
