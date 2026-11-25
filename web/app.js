@@ -17,7 +17,7 @@ const state = {
   stopRequested: false, stream: '', events: [],
   pending: [], isPrivate: false, privateThread: [],
   armedMode: null, armedBeforeResearch: 'auto', showAllChats: false,
-  projectFilter: null, localProjects: [], chatProjects: {}, library: [],
+  projectFilter: null, localProjects: [], chatProjects: {}, library: [], customSkills: [], unread: {},
   voiceRecognizer: null, voiceListening: false, paletteTab: 'All',
   libraryTab: 'All', libraryQuery: '', librarySort: 'date', rightPaneCode: null, rightPaneName: '',
 };
@@ -95,9 +95,13 @@ function topToast(text, action) {
 state.localProjects = loadJSON('janna-web-projects-v1', []);
 state.chatProjects = loadJSON('janna-web-chat-projects-v1', {});
 state.library = loadJSON('janna-web-library-v1', []);
+state.customSkills = loadJSON('janna-web-skills-v1', []);
+state.unread = loadJSON('janna-web-unread-v1', {});
 const saveProjects = () => saveJSON('janna-web-projects-v1', state.localProjects);
 const saveChatProjects = () => saveJSON('janna-web-chat-projects-v1', state.chatProjects);
 const saveLibrary = () => saveJSON('janna-web-library-v1', state.library);
+const saveCustomSkills = () => saveJSON('janna-web-skills-v1', state.customSkills);
+const saveUnread = () => saveJSON('janna-web-unread-v1', state.unread);
 
 /* ---------- local message feedback (real, local-only) ----------
    The adapter exposes no feedback API, so thumbs up/down are stored in
@@ -734,8 +738,8 @@ function openModelPicker() {
       const radio = el('span', 'radio');
       const texts = el('div', 'mp-texts');
       texts.append(el('strong', '', row.label));
-      const note = row.note || (row.vision ? 'Can see images' : '');
-      if (note) texts.append(el('small', '', note + (row.vision ? ' · Sees images' : '')));
+      const note = row.note || (row.vision ? 'Sees images' : '');
+      if (note) texts.append(el('small', '', note));
       item.append(icon, radio, texts);
       if (row.id === state.model) { const c = el('span', 'mp-check'); c.innerHTML = '<svg><use href="#i-check"/></svg>'; item.append(c); }
       item.onclick = () => chooseModel(row.id);
@@ -830,6 +834,49 @@ const MODES = {
     prompts: ['Outline a presentation about a new product', 'Make slides for a school project', 'Create a pitch deck outline'], sendOnTap: false },
 };
 const MODE_ORDER = ['search', 'apps', 'writing', 'presentation'];
+/* Topic prompts that rotate with the modes (Grok's pool, 2026-11-25
+   re-study). Tapping one sends it as a question. */
+const TOPIC_SUGGESTIONS = [
+  { label: 'Explore Python type hints', icon: 'spark' },
+  { label: 'Compare TypeScript and Python', icon: 'edit' },
+  { label: 'What\u2019s in the news today?', icon: 'globe' },
+  { label: 'What\u2019s new in AI this week?', icon: 'globe' },
+  { label: 'Find things to do this weekend', icon: 'spark' },
+  { label: 'Compare the latest flagship phones', icon: 'globe' },
+];
+/* Built-in file skills (Grok's Skills section, 2026-11-25 re-study).
+   Tapping one puts a "Create a …" prompt in the composer — real, no fake. */
+const FILE_SKILLS = [
+  ['docx', 'Word document', 'Create, read, and edit Word documents (.docx)'],
+  ['pdf', 'PDF', 'Create, merge, split, and extract from PDFs'],
+  ['pptx', 'PowerPoint', 'Create, read, and edit PowerPoint presentations (.pptx)'],
+  ['xlsx', 'Spreadsheet', 'Create, read, and edit spreadsheet files (.xlsx, .csv)'],
+];
+function armFileSkill(kind, label) {
+  $('prompt').value = 'Create a ' + label + ' (' + kind + '): ';
+  autoGrowPrompt(); syncSendState(); $('prompt').focus();
+}
+async function addCustomSkill() {
+  const res = await showDialog({ title: 'New skill', text: 'Teach Janna a repeatable task. Tapping it in the + menu puts its instruction in the composer.', fields: [{ name: 'name', placeholder: 'Skill name' }, { name: 'instruction', placeholder: 'What should Janna do? e.g. Summarize this in three bullet points' }], okText: 'Save' });
+  if (!res || !String(res.name || '').trim() || !String(res.instruction || '').trim()) return;
+  state.customSkills.unshift({ id: uid('skill'), name: String(res.name).trim(), instruction: String(res.instruction).trim() });
+  saveCustomSkills(); renderSettingsBody('skills');
+  toast('Skill saved: ' + String(res.name).trim());
+}
+/* Automations catalog (Grok's Automations section, 2026-11-25 re-study).
+   Listed for browsing; Janna cannot run them yet — Add says so honestly. */
+const AUTOMATIONS = [
+  { cat: 'Featured', items: [
+    { name: 'Custom', desc: 'Create your own automation from scratch' },
+    { name: 'Morning Brief' }, { name: 'Daily Stock Tracker' }, { name: 'AI News Digest' },
+    { name: 'Daily Planner' }, { name: 'Weekly Review' },
+  ] },
+  { cat: 'News', items: [{ name: 'X Trends Digest' }] },
+  { cat: 'Productivity', items: [{ name: 'Email Auto-Responder' }, { name: 'Task Extractor' }] },
+  { cat: 'Finance', items: [{ name: 'Earnings Calendar' }, { name: 'Portfolio News Scan' }] },
+  { cat: 'Research', items: [{ name: 'Competitor Watch' }, { name: 'Paper Watch' }, { name: 'Weekend Deep Dive' }] },
+  { cat: 'Lifestyle', items: [{ name: 'Workout Coach' }, { name: 'Meal Planner' }, { name: 'Language Practice' }] },
+];
 let suggestionRot = null;
 function suggestRotation() {
   if (suggestionRot !== null) return suggestionRot;
@@ -846,17 +893,25 @@ function renderSuggestions() {
   if (state.settings.show_suggestions === false) { list.hidden = true; return; }
   if (!state.armedMode) {
     const rot = suggestRotation();
-    // Grok keeps slot 1 fixed ("Create an image"); Janna can't do that, so
-    // slot 1 is fixed on "Search the web" and slots 2-3 rotate the rest.
-    const rest = MODE_ORDER.filter(k => k !== 'search');
-    const order = ['search', rest[rot % rest.length], rest[(rot + 1) % rest.length]];
-    for (const key of order) {
-      const m = MODES[key];
-      const row = el('button', 'suggest-row');
-      row.type = 'button';
-      row.innerHTML = `<svg><use href="#i-${m.icon}"/></svg><span>${escapeHTML(m.label)}</span>`;
-      row.onclick = () => armMode(key);
-      list.append(row);
+    // Grok rotates ALL THREE rows per load (2026-11-25 re-study) from a
+    // pool of modes and topic prompts — no slot is fixed.
+    const pool = MODE_ORDER.map(k => ({ mode: k })).concat(TOPIC_SUGGESTIONS.map(t => ({ topic: t })));
+    for (let i = 0; i < 3; i++) {
+      const pick = pool[(rot + i) % pool.length];
+      if (pick.mode) {
+        const m = MODES[pick.mode];
+        const row = el('button', 'suggest-row');
+        row.type = 'button';
+        row.innerHTML = `<svg><use href="#i-${m.icon}"/></svg><span>${escapeHTML(m.label)}</span>`;
+        row.onclick = () => armMode(pick.mode);
+        list.append(row);
+      } else {
+        const row = el('button', 'suggest-row');
+        row.type = 'button';
+        row.innerHTML = `<svg><use href="#i-${pick.topic.icon}"/></svg><span>${escapeHTML(pick.topic.label)}</span>`;
+        row.onclick = () => { $('prompt').value = pick.topic.label; syncSendState(); send(); };
+        list.append(row);
+      }
     }
     return;
   }
@@ -1157,6 +1212,9 @@ function renderFollowUps(session) {
   const msgs = session.messages || [];
   let lastAm = null;
   for (let i = msgs.length - 1; i >= 0; i--) if (msgs[i].role === 'assistant') { lastAm = msgs[i]; break; }
+  // Pills belong to the just-finished reply only: once a newer user
+  // message exists after it, they are gone (Grok, 2026-11-25 re-study).
+  if (lastAm && msgs[msgs.length - 1] !== lastAm) return;
   const items = lastAm && Array.isArray(lastAm.followups) ? lastAm.followups.filter(Boolean).slice(0, 2) : [];
   if (!items.length) return;
   items.forEach((text, i) => {
@@ -1189,9 +1247,10 @@ async function generateFollowUps(session, am) {
     }
     const items = text.split('\n').map(s => s.replace(/^[\s*\-\d.)\]]+/, '').replace(/^["'\u201c\u201d]+|["'\u201c\u201d]+$/g, '').trim()).filter(s => s.length > 3 && s.length < 140).slice(0, 2);
     if (!items.length) return;
+    // Grok shows the pills only right after the reply (2026-11-25
+    // re-study) — they are NOT saved, so a reopened thread has none.
     am.followups = items;
     renderFollowUps(session);
-    try { await api('/api/sessions/update', { session_id: session.id, messages: session.messages }); } catch { /* pills still show locally */ }
   } catch { /* no pills on failure */ }
 }
 async function requestTitle(session, firstPrompt) {
@@ -1295,12 +1354,13 @@ function renderRecents() {
   for (const s of shown) {
     const row = el('div', 'side-row');
     if (state.session && s.id === state.session.id) row.classList.add('active');
+    if (state.unread[s.id]) row.classList.add('unread');
     const label = el('button', 'side-row-label', (s.pinned ? 'Pinned \u00b7 ' : '') + (s.title || 'New chat'));
     label.onclick = () => openSession(s.id);
     const more = el('button', 'side-row-menu');
     more.type = 'button'; more.setAttribute('aria-label', 'Chat actions');
     more.innerHTML = '<svg><use href="#i-dots"/></svg>';
-    more.onclick = e => { e.stopPropagation(); openChatMenu(s, more); };
+    more.onclick = e => { e.stopPropagation(); openRowMenu(s, more); };
     row.append(label, more);
     list.append(row);
   }
@@ -1325,6 +1385,7 @@ function renderProjects() {
 async function openSession(id) {
   if (state.busy) return; // the adapter's queue drain also calls this; stay silent
   saveDraftNow(); // keep the draft of the chat we're leaving
+  if (state.unread[id]) { delete state.unread[id]; saveUnread(); renderRecents(); }
   closeSidebar();
   const sess = findSession(id);
   if (sess && (sess.messages || []).length) { state.session = sess; state.isPrivate = false; syncPrivate(); renderConversation(state.session); return; }
@@ -1432,6 +1493,21 @@ function openChatMenu(session, anchor) {
     { label: 'Delete', danger: true, onClick: () => deleteChat(session) },
   ]);
 }
+function openRowMenu(session, anchor) {
+  // Grok's sidebar row menu (2026-11-25 re-study): no Send Feedback, no
+  // Delete — those live in the thread's conversation menu only.
+  showMenu(anchor, [
+    { label: 'Share', onClick: () => shareChat(session) },
+    { label: session.pinned ? 'Unpin' : 'Pin', onClick: () => pinChat(session) },
+    { label: 'Rename', onClick: () => renameChat(session) },
+    { label: 'Add to Project', onClick: () => openProjectPicker(session, anchor) },
+    { label: 'Mark as Unread', onClick: () => { state.unread[session.id] = true; saveUnread(); renderRecents(); } },
+    'sep',
+    { label: 'Copy Conversation ID', onClick: async () => { toast((await copyCodeText(session.id)) ? 'Conversation ID copied' : 'Copy failed'); } },
+    { label: 'Open in new tab', onClick: () => window.open(location.pathname + '?s=' + encodeURIComponent(session.id), '_blank') },
+    { label: 'Archive', onClick: () => archiveChat(session) },
+  ]);
+}
 function openProjectPicker(session, anchor) {
   const items = state.localProjects.map(p => ({ label: (state.chatProjects[session.id] === p.id ? '\u2713 ' : '') + p.name, onClick: () => { state.chatProjects[session.id] = p.id; saveChatProjects(); renderProjects(); renderRecents(); toast('Added to ' + p.name); } }));
   items.push({ label: 'New project\u2026', onClick: () => createProject(session.id) });
@@ -1457,9 +1533,6 @@ function openMessageMenu(message, session, anchor) {
     { label: 'Read aloud', onClick: () => speakNow(message.content || '') },
     { label: 'Export to PDF', onClick: () => window.print() },
     { label: 'Report message', onClick: () => openFeedback(s?.id, 'report') },
-    'sep',
-    { label: 'Copy Conversation ID', onClick: async () => { const id = s?.id || ''; toast((await copyCodeText(id)) ? 'Conversation ID copied' : 'Copy failed'); } },
-    { label: 'Send feedback', onClick: () => openFeedback(s?.id) },
   ];
   showMenu(anchor || $('composer'), items);
 }
@@ -1629,6 +1702,40 @@ function openPlusMenu() {
     m.append(b);
   };
   addRow('upload', 'Upload a file', 'png, jpg, webp, txt, code', () => $('attachment').click());
+  addRow('book', 'Projects', 'Add this chat to a project', () => { if (state.session) openProjectPicker(state.session, btn); else createProject(); });
+  m.append(el('div', 'plus-menu-divider'));
+  // Skills submenu (Grok): built-in file skills + your own skills.
+  const skillsSub = el('div', 'plus-menu-sub'); skillsSub.hidden = true;
+  const skillsRow = el('button', 'plus-menu-row');
+  skillsRow.type = 'button';
+  skillsRow.innerHTML = `<svg><use href="#i-book"/></svg><span>Skills</span><span class="plus-menu-state">docx, pdf, pptx, xlsx</span>`;
+  skillsRow.onclick = () => {
+    if (skillsSub.hidden) {
+      skillsSub.replaceChildren();
+      for (const sk of state.customSkills) {
+        const b = el('button', 'plus-menu-row');
+        b.type = 'button';
+        b.innerHTML = `<svg><use href="#i-spark"/></svg><span>${escapeHTML(sk.name)}</span>`;
+        b.onclick = () => { closePlusMenu(); $('prompt').value = sk.instruction || sk.name; autoGrowPrompt(); syncSendState(); $('prompt').focus(); };
+        skillsSub.append(b);
+      }
+      for (const [kind, label] of FILE_SKILLS) {
+        const b = el('button', 'plus-menu-row');
+        b.type = 'button';
+        b.innerHTML = `<svg><use href="#i-file"/></svg><span>${label}</span>`;
+        b.onclick = () => { closePlusMenu(); armFileSkill(kind, label); };
+        skillsSub.append(b);
+      }
+      const mg = el('button', 'plus-menu-row');
+      mg.type = 'button';
+      mg.innerHTML = `<svg><use href="#i-settings"/></svg><span>Manage skills</span>`;
+      mg.onclick = () => { closePlusMenu(); openSettings('skills'); };
+      skillsSub.append(mg);
+    }
+    skillsSub.hidden = !skillsSub.hidden;
+  };
+  m.append(skillsRow, skillsSub);
+  addRow('external', 'Add connector', 'Tavily, GitHub, Figma', () => openToolsPanel());
   // Files submenu (Grok): your Library files inline, or "No files yet".
   const filesSub = el('div', 'plus-menu-sub'); filesSub.hidden = true;
   const filesRow = el('button', 'plus-menu-row');
@@ -1649,8 +1756,6 @@ function openPlusMenu() {
     filesSub.hidden = !filesSub.hidden;
   };
   m.append(filesRow, filesSub);
-  addRow('book', 'Projects', 'Add this chat to a project', () => { if (state.session) openProjectPicker(state.session, btn); else createProject(); });
-  addRow('external', 'Add connector', 'Tavily, GitHub, Figma', () => openToolsPanel());
   m.append(el('div', 'plus-menu-divider'));
   const research = el('button', 'plus-menu-row');
   research.type = 'button';
@@ -1889,13 +1994,17 @@ const SETTINGS_SECTIONS = [
   { id: 'account', label: 'Account' },
   { id: 'appearance', label: 'Appearance' },
   { id: 'behavior', label: 'Behavior' },
-  { id: 'voice', label: 'Voice' },
   { id: 'notifications', label: 'Notifications' },
   { id: 'personality', label: 'Customize' },
   { id: 'connectors', label: 'Connect Apps' },
+  { id: 'skills', label: 'Skills' },
+  { id: 'automations', label: 'Automations' },
   { id: 'data', label: 'Data Controls' },
 ];
 function openSettings(section = 'account') {
+  // Grok has no standalone Voice section (voice lives in Behavior) —
+  // an old ?_s=voice deep link lands on Behavior instead.
+  if (section === 'voice') section = 'behavior';
   closeSidebar();
   const overlay = $('settingsView');
   overlay.hidden = false;
@@ -1960,14 +2069,14 @@ function renderSettingsBody(section) {
     h('Behavior');
     body.append(settingsRow({ label: 'Require Ctrl+Enter to Submit', hint: 'Enter inserts a new line instead of sending', control: settingsToggle(state.settings.require_ctrl_enter === true, v => persistSettings({ require_ctrl_enter: v })) }));
     body.append(settingsRow({ label: 'Auto-Scroll', hint: 'Follow new answers as they stream in', control: settingsToggle(state.settings.auto_scroll !== false, v => persistSettings({ auto_scroll: v })) }));
-  } else if (section === 'voice') {
-    h('Voice');
+    // Grok keeps voice inside Behavior (no standalone Voice section).
+    body.append(el('h3', '', 'Voice'));
     body.append(settingsRow({ label: 'Voice', hint: 'The voice Janna speaks with', control: settingsSelect(VOICE_PERSONAS.map(p => [p.id, p.name + ' \u2014 ' + p.desc]), state.settings.voice_name || 'ara', async v => { await persistSettings({ voice_name: v }); syncVoiceNameLabel(); }) }));
     body.append(settingsRow({ label: 'Speed', hint: 'How fast Janna speaks', control: settingsSelect(VOICE_SPEEDS.map(s => [s[0], s[0]]), state.settings.voice_speed || 'Normal', v => persistSettings({ voice_speed: v })) }));
     body.append(settingsRow({ label: 'Personality', hint: 'How Janna speaks in voice mode', control: settingsSelect(VOICE_PERSONALITIES.map(p => [p[0], p[0]]).concat([['Custom', 'Custom\u2026']]), state.settings.voice_personality || 'Assistant', async v => {
       if (v === 'Custom') {
         const res = await showDialog({ title: 'Custom personality', text: 'How should Janna speak in voice mode?', fields: [{ name: 'text', value: state.settings.voice_personality_custom || '', placeholder: 'e.g. Speak like a pirate, but kindly' }], okText: 'Save' });
-        if (!res || !String(res.text || '').trim()) { renderSettingsBody('voice'); return; }
+        if (!res || !String(res.text || '').trim()) { renderSettingsBody('behavior'); return; }
         await persistSettings({ voice_personality: 'Custom', voice_personality_custom: String(res.text).trim() });
       } else await persistSettings({ voice_personality: v });
       syncVoiceNameLabel();
@@ -2029,6 +2138,47 @@ function renderSettingsBody(section) {
     addBtn.classList.add('text-btn');
     body.append(addBtn);
     body.append(el('p', 'settings-note', 'The web edition keeps connections local to this browser. GitHub and Figma sign-in are desktop-only features.'));
+  } else if (section === 'skills') {
+    h('Skills');
+    body.append(settingsRow({ label: 'Personal', hint: 'Teach Janna a repeatable task it follows whenever a request matches.', control: button('New Skill', () => addCustomSkill()) }));
+    for (const sk of state.customSkills) {
+      body.append(settingsRow({ label: sk.name, hint: sk.instruction, control: button('Delete', () => { state.customSkills = state.customSkills.filter(r => r !== sk); saveCustomSkills(); renderSettingsBody('skills'); }) }));
+    }
+    body.append(el('h3', '', 'Built-in'));
+    for (const [kind, label, hint] of FILE_SKILLS) {
+      body.append(settingsRow({ label, hint, control: button('Use', () => { closeSettings(); armFileSkill(kind, label); }) }));
+    }
+  } else if (section === 'automations') {
+    h('Automations');
+    const search = document.createElement('input');
+    search.type = 'search'; search.placeholder = 'Search automations'; search.setAttribute('aria-label', 'Search automations');
+    body.append(search);
+    const tabs = el('div', 'palette-tabs');
+    const cats = ['All', 'News', 'Productivity', 'Finance', 'Research', 'Lifestyle'];
+    let cat = 'All';
+    const list = el('div', 'automations-list');
+    const renderList = () => {
+      list.replaceChildren();
+      const q = search.value.trim().toLowerCase();
+      for (const g of AUTOMATIONS.filter(g => cat === 'All' || g.cat === cat)) {
+        const items = g.items.filter(it => !q || (it.name + ' ' + (it.desc || '')).toLowerCase().includes(q));
+        if (!items.length) continue;
+        if (cat === 'All') list.append(el('h3', '', g.cat));
+        for (const it of items) {
+          list.append(settingsRow({ label: it.name, hint: it.desc || g.cat, control: button('Add', () => toast('Automations aren\u2019t available in Janna yet.')) }));
+        }
+      }
+      if (!list.childNodes.length) list.append(el('div', 'empty-state', 'No automations match your search.'));
+    };
+    for (const c of cats) {
+      const b = el('button', 'palette-tab' + (c === cat ? ' active' : ''));
+      b.type = 'button'; b.textContent = c;
+      b.onclick = () => { cat = c; tabs.querySelectorAll('.palette-tab').forEach(t => t.classList.toggle('active', t.textContent === c)); renderList(); };
+      tabs.append(b);
+    }
+    search.oninput = renderList;
+    body.append(tabs, list);
+    renderList();
   } else if (section === 'data') {
     h('Data Controls');
     body.append(settingsRow({ label: 'Personalize With Conversation History', hint: 'Janna remembers facts from your chats to answer better', control: settingsToggle(state.settings.memory_enabled !== false, v => persistSettings({ memory_enabled: v })) }));
