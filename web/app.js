@@ -94,11 +94,13 @@ function topToast(text, action) {
 }
 state.localProjects = loadJSON('janna-web-projects-v1', []);
 state.chatProjects = loadJSON('janna-web-chat-projects-v1', {});
+state.savedAutomations = loadJSON('janna-web-automations-v1', []);
 state.library = loadJSON('janna-web-library-v1', []);
 state.customSkills = loadJSON('janna-web-skills-v1', []);
 state.unread = loadJSON('janna-web-unread-v1', {});
 const saveProjects = () => saveJSON('janna-web-projects-v1', state.localProjects);
 const saveChatProjects = () => saveJSON('janna-web-chat-projects-v1', state.chatProjects);
+const saveAutomations = () => saveJSON('janna-web-automations-v1', state.savedAutomations);
 const saveLibrary = () => saveJSON('janna-web-library-v1', state.library);
 const saveCustomSkills = () => saveJSON('janna-web-skills-v1', state.customSkills);
 const saveUnread = () => saveJSON('janna-web-unread-v1', state.unread);
@@ -866,7 +868,9 @@ const MODES = {
 };
 const MODE_ORDER = ['search', 'apps', 'writing', 'presentation'];
 /* Topic prompts that rotate with the modes (Grok's pool, 2026-11-25
-   re-study). Tapping one sends it as a question. */
+   re-study). Tapping one sends it as a question — except "Create an
+   image", which pre-fills the composer like Grok's "imagine skill"
+   (Janna cannot generate images, so nothing is sent). */
 const TOPIC_SUGGESTIONS = [
   { label: 'Explore Python type hints', icon: 'spark' },
   { label: 'Compare TypeScript and Python', icon: 'edit' },
@@ -874,7 +878,104 @@ const TOPIC_SUGGESTIONS = [
   { label: 'What\u2019s new in AI this week?', icon: 'globe' },
   { label: 'Find things to do this weekend', icon: 'spark' },
   { label: 'Compare the latest flagship phones', icon: 'globe' },
+  { label: 'Create an image', icon: 'image', prefill: 'Create an image of ' },
 ];
+/* Project icons (Grok's New Project picker, 2026-11-25 re-study):
+   64 icons in an 8x8 grid + 8 colours. Inline stroke SVGs in the same
+   style as the shell sprite (24x24, stroke currentColor, width 1.65). */
+const PROJECT_ICONS = [
+  ['folder', 'Folder', '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>'],
+  ['flag', 'Flag', '<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><path d="M4 22v-7"/>'],
+  ['home', 'Home', '<path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/>'],
+  ['star', 'Star', '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>'],
+  ['heart', 'Heart', '<path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>'],
+  ['globe', 'Globe', '<circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>'],
+  ['unlock', 'Unlock', '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/>'],
+  ['smile', 'Smile', '<circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><path d="M9 9h.01M15 9h.01"/>'],
+  ['shield', 'Shield', '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>'],
+  ['bell', 'Bell', '<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>'],
+  ['mail', 'Mail', '<path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><path d="M22 6l-10 7L2 6"/>'],
+  ['phone', 'Phone', '<path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/>'],
+  ['user', 'User', '<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>'],
+  ['stethoscope', 'Stethoscope', '<path d="M4 3v5a7 7 0 0 0 14 0V3"/><path d="M11 15v1a5 5 0 0 0 10 0v-3"/><circle cx="21" cy="9" r="1.8"/>'],
+  ['calendar', 'Calendar', '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>'],
+  ['clock', 'Clock', '<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>'],
+  ['hourglass', 'Hourglass', '<path d="M5 22h14M5 2h14M17 22v-4.17a2 2 0 0 0-.59-1.42L12 12l-4.41 4.41A2 2 0 0 0 7 17.83V22M7 2v4.17a2 2 0 0 0 .59 1.42L12 12l4.41-4.41A2 2 0 0 0 17 6.17V2"/>'],
+  ['sun', 'Sun', '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>'],
+  ['moon', 'Moon', '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>'],
+  ['monitor', 'Monitor', '<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>'],
+  ['umbrella', 'Umbrella', '<path d="M23 12a11.05 11.05 0 0 0-22 0zm-5 7a3 3 0 0 1-6 0v-7"/>'],
+  ['leaf', 'Leaf', '<path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10z"/><path d="M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12"/>'],
+  ['bug', 'Bug', '<path d="M12 3a5 5 0 0 1 5 5v8a5 5 0 0 1-10 0V8a5 5 0 0 1 5-5z"/><path d="M9 3l1 2M15 3l-1 2M8 21l-2-2M16 21l2-2M7 9h10M7 13h10"/>'],
+  ['flask', 'Flask', '<path d="M10 2v6L4.5 18a2 2 0 0 0 1.8 3h11.4a2 2 0 0 0 1.8-3L14 8V2"/><path d="M8.5 2h7M7 16h10"/>'],
+  ['rocket', 'Rocket', '<path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="M12 15l-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/>'],
+  ['plane', 'Plane', '<path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/>'],
+  ['car', 'Car', '<path d="M3 13l1.5-4.5A2 2 0 0 1 6.4 7h11.2a2 2 0 0 1 1.9 1.5L21 13v5a1 1 0 0 1-1 1h-1"/><path d="M3 13v5a1 1 0 0 0 1 1h1"/><circle cx="7.5" cy="18" r="1.8"/><circle cx="16.5" cy="18" r="1.8"/><path d="M9.3 18h5.4"/>'],
+  ['camera', 'Camera', '<path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/>'],
+  ['video', 'Video', '<path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/>'],
+  ['music', 'Music', '<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>'],
+  ['headphones', 'Headphones', '<path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/>'],
+  ['microscope', 'Microscope', '<path d="M9 2h6"/><path d="M12 2v6"/><path d="M8 21h8"/><path d="M12 8l4.5 6.5a3.5 3.5 0 0 1-3 5.5h-3a3.5 3.5 0 0 1-3-5.5z"/><path d="M12 21v-1"/>'],
+  ['archive', 'Archive', '<rect x="3" y="3" width="18" height="5" rx="1"/><path d="M5 8v11a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/>'],
+  ['book', 'Book', '<path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>'],
+  ['zap', 'Zap', '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>'],
+  ['wrench', 'Wrench', '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>'],
+  ['note', 'Note', '<path d="M15.5 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8.5z"/><path d="M15 3v6h6M9 13h6M9 17h4"/>'],
+  ['scale', 'Scale', '<path d="M12 3v18M5 7h14M7 21h10"/><path d="M5 7l-2.5 6a3 3 0 0 0 5 0zM19 7l-2.5 6a3 3 0 0 0 5 0z"/>'],
+  ['film', 'Film', '<rect x="2" y="2" width="20" height="20" rx="2.18"/><path d="M7 2v20M17 2v20M2 12h20M2 7h5M2 17h5M17 17h5M17 7h5"/>'],
+  ['palette', 'Palette', '<path d="M12 3a9 9 0 1 0 0 18c1.5 0 2-1 1.5-2.5-.5-1.5.5-2.5 2-2.5H17a4 4 0 0 0 4-4c0-5-4-9-9-9z"/><path d="M8 10h.01M12 7h.01M16 10h.01"/>'],
+  ['cpu', 'CPU', '<rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M1 9h3M1 15h3M20 9h3M20 15h3"/>'],
+  ['calculator', 'Calculator', '<rect x="4" y="2" width="16" height="20" rx="2"/><path d="M8 6h8"/><path d="M8 12h.01M12 12h.01M16 12h.01M8 16h.01M12 16h.01M16 16h.01"/>'],
+  ['laptop', 'Laptop', '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M2 20h20"/>'],
+  ['briefcase', 'Briefcase', '<rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>'],
+  ['clipboard', 'Clipboard', '<path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M9 12h6M9 16h6"/>'],
+  ['building', 'Building', '<rect x="4" y="2" width="16" height="20" rx="2"/><path d="M9 22v-4h6v4"/><path d="M8 6h.01M16 6h.01M12 6h.01M12 10h.01M12 14h.01M16 10h.01M16 14h.01M8 10h.01M8 14h.01"/>'],
+  ['flame', 'Flame', '<path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.07-2.14-.22-4.05 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.15.43-2.29 1-3a2.5 2.5 0 0 0 2.5 2.5z"/>'],
+  ['play', 'Play', '<polygon points="5 3 19 12 5 21 5 3"/>'],
+  ['database', 'Database', '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>'],
+  ['shirt', 'Shirt', '<path d="M20.38 3.46L16 2a4 4 0 0 1-8 0L3.62 3.46a2 2 0 0 0-1.34 2.23l.58 3.47a1 1 0 0 0 .99.84H6v10c0 1.1.9 2 2 2h8a2 2 0 0 0 2-2V10h2.15a1 1 0 0 0 .99-.84l.58-3.47a2 2 0 0 0-1.34-2.23z"/>'],
+  ['gem', 'Gem', '<path d="M6 3h12l4 6-10 13L2 9z"/><path d="M11 3L8 9l4 13 4-13-3-6M2 9h20"/>'],
+  ['gamepad', 'Gamepad', '<path d="M17.32 5H6.68a4 4 0 0 0-3.98 3.59L2 17a2 2 0 0 0 3.35 1.47L8 15h8l2.65 3.47A2 2 0 0 0 22 17l-.7-8.41A4 4 0 0 0 17.32 5z"/><path d="M6 12h4M8 10v4M15 13h.01M18 11h.01"/>'],
+  ['chef', 'Chef Hat', '<path d="M17 21a1 1 0 0 0 1-1v-5.35c0-.46.32-.84.73-1.04a4 4 0 0 0-2.13-7.59 5 5 0 0 0-9.19 0 4 4 0 0 0-2.13 7.59c.41.2.73.58.73 1.04V20a1 1 0 0 0 1 1z"/><path d="M6 17h12"/>'],
+  ['dollar', 'Dollar', '<path d="M12 1v22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>'],
+  ['tag', 'Tag', '<path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><path d="M7 7h.01"/>'],
+  ['gradcap', 'Graduation Cap', '<path d="M22 10L12 5 2 10l10 5 10-5z"/><path d="M6 12v5c0 1.66 2.69 3 6 3s6-1.34 6-3v-5"/><path d="M22 10v6"/>'],
+  ['pin', 'Pin', '<path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>'],
+  ['compass', 'Compass', '<circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/>'],
+  ['code', 'Code', '<path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/>'],
+  ['box', 'Box', '<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.27 6.96L12 12.01l8.73-5.05M12 22.08V12"/>'],
+  ['sparkles', 'Sparkles', '<path d="M12 3l1.9 5.8a2 2 0 0 0 1.3 1.3L21 12l-5.8 1.9a2 2 0 0 0-1.3 1.3L12 21l-1.9-5.8a2 2 0 0 0-1.3-1.3L3 12l5.8-1.9a2 2 0 0 0 1.3-1.3z"/><path d="M19 3l.9 2.6 2.6.9-2.6.9L19 10l-.9-2.6-2.6-.9 2.6-.9z"/>'],
+  ['key', 'Key', '<path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.78 7.78 5.5 5.5 0 0 1 7.78-7.78zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/>'],
+  ['bulb', 'Lightbulb', '<path d="M9 18h6M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.4 1 2.3h6c0-.9.4-1.8 1-2.3A7 7 0 0 0 12 2z"/>'],
+  ['bookmark', 'Bookmark', '<path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>'],
+];
+const PROJECT_COLORS = [
+  ['default', 'Default color', ''],
+  ['blue', 'Blue', '#1f7aec'],
+  ['orange', 'Orange', '#f97316'],
+  ['pink', 'Pink', '#ec4899'],
+  ['purple', 'Purple', '#8b5cf6'],
+  ['teal', 'Teal', '#14b8a6'],
+  ['red', 'Red', '#ef4444'],
+  ['green', 'Green', '#22c55e'],
+];
+/* Example projects (Grok's Library Projects tab, 2026-11-25 re-study).
+   Descriptions are the truncated card texts exactly as shown on grok. */
+const EXAMPLE_PROJECTS = [
+  { name: 'Legal Document Reviewer', desc: 'Get expert analysis of U.S. legal\u2026' },
+  { name: 'Cover Letter Writer', desc: 'Craft tailored cover letters that align\u2026' },
+  { name: 'Writing Assistant', desc: 'Polish and improve\u2026' },
+  { name: 'Fitness Advice', desc: 'Plan workouts, nutrition, and fit\u2026' },
+];
+function projectIconSvg(p) {
+  const found = PROJECT_ICONS.find(i => i[0] === (p && p.icon)) || PROJECT_ICONS[0];
+  const col = (PROJECT_COLORS.find(c => c[0] === (p && p.color)) || PROJECT_COLORS[0])[2];
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="${col || 'currentColor'}" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round">${found[2]}</svg>`;
+}
+function inlineIcon(id) {
+  const found = PROJECT_ICONS.find(i => i[0] === id) || PROJECT_ICONS[0];
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round">${found[2]}</svg>`;
+}
 /* Built-in file skills (Grok's Skills section, 2026-11-25 re-study).
    Tapping one puts a "Create a …" prompt in the composer — real, no fake. */
 const FILE_SKILLS = [
@@ -904,6 +1005,12 @@ const AUTOMATIONS = [
   { cat: 'Research', items: [{ name: 'Competitor Watch' }, { name: 'Paper Watch' }, { name: 'Weekend Deep Dive' }] },
   { cat: 'Lifestyle', items: [{ name: 'Workout Coach' }, { name: 'Meal Planner' }, { name: 'Language Practice' }] },
 ];
+/* Template instructions observed on grok (2026-11-25 re-study).
+   Only Morning Brief was opened, so only its instructions are known —
+   other templates start with an empty instructions box for the user. */
+const AUTOMATION_INSTRUCTIONS = {
+  'Morning Brief': 'Put together my morning brief: the top world, business, and tech headlines from the last 24 hours with one-line summaries, any major overnight market moves, and today\u2019s weather for my location. End with one story worth reading in depth and why. Keep the whole thing scannable.',
+};
 let suggestionRot = null;
 function suggestRotation() {
   if (suggestionRot !== null) return suggestionRot;
@@ -964,7 +1071,14 @@ function renderSuggestions() {
         const row = el('button', 'suggest-row');
         row.type = 'button';
         row.innerHTML = `<svg><use href="#i-${pick.topic.icon}"/></svg><span>${escapeHTML(pick.topic.label)}</span>`;
-        row.onclick = () => { $('prompt').value = pick.topic.label; syncSendState(); send(); };
+        if (pick.topic.prefill) {
+          // Grok: "Create an image" pre-fills the composer ("imagine
+          // skill") and does NOT send. Same here — the user finishes
+          // the description and sends it themself.
+          row.onclick = () => { $('prompt').value = pick.topic.prefill; autoGrowPrompt(); syncSendState(); $('prompt').focus(); };
+        } else {
+          row.onclick = () => { $('prompt').value = pick.topic.label; syncSendState(); send(); };
+        }
         list.append(row);
       }
     }
@@ -1442,10 +1556,12 @@ function renderProjects() {
   for (const p of state.localProjects) {
     const row = el('div', 'side-row');
     const count = state.sessions.filter(s => state.chatProjects[s.id] === p.id).length;
+    const icon = el('span', 'side-row-icon');
+    icon.innerHTML = projectIconSvg(p);
     const label = el('button', 'side-row-label' + (state.projectFilter === p.id ? ' project-filter' : ''), p.name + ' \u00b7 ' + count);
     label.type = 'button';
     label.onclick = () => { state.projectFilter = state.projectFilter === p.id ? null : p.id; renderProjects(); renderRecents(); };
-    row.append(label);
+    row.append(icon, label);
     list.append(row);
   }
 }
@@ -1600,13 +1716,104 @@ function openProjectPicker(session, anchor) {
   items.push('sep', { label: 'Remove from project', onClick: () => { delete state.chatProjects[session.id]; saveChatProjects(); renderProjects(); renderRecents(); }, disabled: !state.chatProjects[session.id] });
   showMenu(anchor, items);
 }
+/* New Project dialog (Grok's, 2026-11-25 re-study): icon tile +
+   "Choose an icon and color" (8 colours + 64 icons), heading-style
+   title input, "What's this project about?" textarea, "Add Folder"
+   box, full-width black Create pill. */
+function openProjectDialog(chatId, prefill) {
+  const draft = {
+    icon: (prefill && prefill.icon) || 'folder',
+    color: (prefill && prefill.color) || 'default',
+    files: [],
+  };
+  const overlay = document.createElement('div');
+  overlay.className = 'dialog-overlay';
+  overlay.id = 'projDialogOverlay';
+  overlay.innerHTML = `
+    <div class="dialog-card proj-dialog" role="dialog" aria-modal="true" aria-label="New project">
+      <button type="button" class="icon-button proj-close" aria-label="Close"><svg><use href="#i-close"/></svg></button>
+      <div class="proj-icon-row">
+        <button type="button" class="proj-icon-tile" id="projIconTile" aria-label="Choose an icon and color"></button>
+        <button type="button" class="text-btn" id="projChooseIcon">Choose an icon and color</button>
+      </div>
+      <div class="proj-icon-picker" id="projIconPicker" hidden>
+        <div class="proj-colors" id="projColors"></div>
+        <div class="proj-icons" id="projIcons"></div>
+      </div>
+      <input type="text" class="proj-title" id="projTitle" value="${escapeHTML((prefill && prefill.name) || 'Untitled Project')}" aria-label="Project name">
+      <textarea class="proj-about" id="projAbout" placeholder="What\u2019s this project about?" aria-label="What is this project about?">${escapeHTML((prefill && prefill.about) || '')}</textarea>
+      <button type="button" class="proj-add-folder" id="projAddFolder"><span>Add Folder</span><small id="projFilesNote"></small></button>
+      <input type="file" id="projFileInput" multiple hidden>
+      <button type="button" class="proj-create" id="projCreate">Create</button>
+    </div>`;
+  document.body.append(overlay);
+  const tile = overlay.querySelector('#projIconTile');
+  const paintTile = () => { tile.innerHTML = projectIconSvg(draft); };
+  paintTile();
+  const picker = overlay.querySelector('#projIconPicker');
+  const colorsEl = overlay.querySelector('#projColors');
+  for (const [id, label, hex] of PROJECT_COLORS) {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'proj-color' + (draft.color === id ? ' selected' : '');
+    b.title = label; b.setAttribute('aria-label', label);
+    b.style.background = hex || 'var(--muted)';
+    b.onclick = () => { draft.color = id; paintTile(); colorsEl.querySelectorAll('.proj-color').forEach(x => x.classList.toggle('selected', x === b)); };
+    colorsEl.append(b);
+  }
+  const iconsEl = overlay.querySelector('#projIcons');
+  for (const [id, label, svg] of PROJECT_ICONS) {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'proj-icon' + (draft.icon === id ? ' selected' : '');
+    b.title = label; b.setAttribute('aria-label', label);
+    b.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round">${svg}</svg>`;
+    b.onclick = () => { draft.icon = id; paintTile(); iconsEl.querySelectorAll('.proj-icon').forEach(x => x.classList.toggle('selected', x === b)); };
+    iconsEl.append(b);
+  }
+  const togglePicker = () => { picker.hidden = !picker.hidden; };
+  tile.onclick = togglePicker;
+  overlay.querySelector('#projChooseIcon').onclick = togglePicker;
+  const fileInput = overlay.querySelector('#projFileInput');
+  overlay.querySelector('#projAddFolder').onclick = () => fileInput.click();
+  fileInput.onchange = async () => {
+    const files = [...(fileInput.files || [])];
+    if (!files.length) return;
+    draft.files.push(...files.map(f => f.name));
+    overlay.querySelector('#projFilesNote').textContent = draft.files.length + (draft.files.length === 1 ? ' file attached' : ' files attached');
+    await addFilesToLibrary(files);
+  };
+  const close = () => { overlay.remove(); document.removeEventListener('keydown', onKey, true); };
+  const onKey = e => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+  document.addEventListener('keydown', onKey, true);
+  overlay.querySelector('.proj-close').onclick = close;
+  overlay.onclick = e => { if (e.target === overlay) close(); };
+  overlay.querySelector('#projCreate').onclick = () => {
+    const name = overlay.querySelector('#projTitle').value.trim() || 'Untitled Project';
+    const about = overlay.querySelector('#projAbout').value.trim();
+    const p = { id: uid('proj'), name, icon: draft.icon, color: draft.color, about, files: draft.files, created: Math.floor(Date.now() / 1000) };
+    state.localProjects.unshift(p); saveProjects(); renderProjects();
+    if (chatId) { state.chatProjects[chatId] = p.id; saveChatProjects(); renderRecents(); }
+    close();
+    toast('Project created: ' + name);
+  };
+  setTimeout(() => overlay.querySelector('#projTitle').focus(), 40);
+}
 async function createProject(chatId) {
-  const res = await showDialog({ title: 'New project', text: 'Projects group related chats in your sidebar.', fields: [{ name: 'name', placeholder: 'Project name' }], okText: 'Create' });
-  if (!res || !String(res.name).trim()) return;
-  const p = { id: uid('proj'), name: String(res.name).trim(), created: Math.floor(Date.now() / 1000) };
+  openProjectDialog(chatId);
+}
+/* Example project cards (Grok's Library Projects tab): tapping one
+   creates the local project with the observed name + description,
+   or opens it if it already exists. */
+function createExampleProject(ex) {
+  const existing = state.localProjects.find(p => p.name === ex.name);
+  if (existing) {
+    state.projectFilter = existing.id; renderProjects(); renderRecents(); closeLibrary();
+    toast('Showing chats in ' + ex.name);
+    return;
+  }
+  const p = { id: uid('proj'), name: ex.name, icon: 'folder', color: 'default', about: ex.desc, files: [], created: Math.floor(Date.now() / 1000) };
   state.localProjects.unshift(p); saveProjects(); renderProjects();
-  if (chatId) { state.chatProjects[chatId] = p.id; saveChatProjects(); renderRecents(); }
-  toast('Project created: ' + p.name);
+  state.projectFilter = p.id; renderRecents(); closeLibrary();
+  toast('Project created: ' + ex.name);
 }
 function openMessageMenu(message, session, anchor) {
   const s = session || state.session;
@@ -1719,16 +1926,31 @@ function renderLibrary() {
       const row = el('div', 'library-item');
       const main = el('button', 'lib-main');
       main.type = 'button';
-      main.innerHTML = `<svg><use href="#i-book"/></svg><span class="lib-texts"><strong>${escapeHTML(p.name)}</strong><small>${state.sessions.filter(s => state.chatProjects[s.id] === p.id).length} chats</small></span>`;
+      main.innerHTML = `<span class="lib-icon">${projectIconSvg(p)}</span><span class="lib-texts"><strong>${escapeHTML(p.name)}</strong><small>${state.sessions.filter(s => state.chatProjects[s.id] === p.id).length} chats${p.files && p.files.length ? ' \u00b7 ' + p.files.length + ' files' : ''}</small></span>`;
       main.onclick = () => { state.projectFilter = p.id; renderProjects(); renderRecents(); closeLibrary(); toast('Showing chats in ' + p.name); };
       row.append(main);
       list.append(row);
     }
     if (!state.localProjects.length) {
       const empty = el('div', 'library-empty');
-      empty.innerHTML = '<strong>No projects yet</strong>Create one from the sidebar.';
+      empty.innerHTML = '<strong>Get started by creating a new project</strong>Projects help you set common instructions and attach files for conversations.';
+      const np = el('button', 'text-btn');
+      np.type = 'button'; np.textContent = 'New project';
+      np.onclick = () => { closeLibrary(); createProject(); };
+      empty.append(np);
       list.append(empty);
     }
+    const exHead = el('h3', 'library-section-head', 'Example projects');
+    list.append(exHead);
+    const grid = el('div', 'lib-example-grid');
+    for (const ex of EXAMPLE_PROJECTS) {
+      const card = el('button', 'lib-example-card');
+      card.type = 'button';
+      card.innerHTML = `<span class="lib-example-doc"><span class="lib-example-doc-title">${escapeHTML(ex.name)}</span><span class="lib-example-doc-line"></span><span class="lib-example-doc-line"></span><span class="lib-example-doc-line"></span></span><strong>${escapeHTML(ex.name)}</strong><small>${escapeHTML(ex.desc)}</small>`;
+      card.onclick = () => createExampleProject(ex);
+      grid.append(card);
+    }
+    list.append(grid);
     return;
   }
   if (!items.length) {
@@ -2065,27 +2287,39 @@ function renderPalette() {
       list.append(b);
     }
   };
-  if (tab === 'All' || tab === 'Apps') {
-    addSection(tab === 'All' ? 'Actions' : 'Apps', [
+  if (tab === 'All') {
+    addSection('Actions', [
       { label: 'New Chat', kbd: 'Ctrl J', icon: 'plus', onClick: () => newChat() },
       { label: 'New Project', meta: '', icon: 'book', onClick: () => createProject() },
       { label: 'New Automation', icon: 'spark', onClick: () => openSettings('automations') },
       { label: 'Open settings', kbd: 'Ctrl ,', icon: 'settings', onClick: () => openSettings('account') },
     ].filter(r => !q || r.label.toLowerCase().includes(q)));
   }
-  if (tab === 'All' || tab === 'Imagine') {
+  if (tab === 'All') {
     addSection('Imagine', [
       { label: 'Make a website', meta: 'Apps', icon: 'spark', onClick: () => { armMode('apps'); $('prompt').focus(); } },
       { label: 'Design a presentation', meta: 'Slides', icon: 'book', onClick: () => { armMode('presentation'); $('prompt').focus(); } },
     ].filter(r => !q || r.label.toLowerCase().includes(q)));
   }
+  if (tab === 'Imagine' && !q) {
+    // Grok: the Imagine tab lists generated images — Janna generates
+    // none, so the tab is honestly empty.
+    list.append(el('div', 'palette-empty', 'Nothing generated in Imagine yet.'));
+  }
+  if (tab === 'Apps') {
+    const apps = state.library.filter(it => it.kind === 'app' && (!q || (it.name || '').toLowerCase().includes(q)));
+    if (apps.length) addSection('Apps', apps.map(it => ({ label: it.name, meta: it.kindLabel || it.kind, icon: 'panel', onClick: () => openLibraryItem(it) })));
+    else if (!q) list.append(el('div', 'palette-empty', 'No apps yet. Apps you build with Janna will show up here.'));
+  }
   if ((tab === 'All' || tab === 'Files') && !q) {
     addSection('Files', state.library.slice(0, 5).map(it => ({ label: it.name, meta: it.kindLabel || it.kind, icon: 'file', onClick: () => openLibraryItem(it) })));
+    if (tab === 'Files' && !state.library.length) list.append(el('div', 'palette-empty', 'No files yet.'));
   }
   if (tab === 'Automations') {
-    const rows = [];
-    for (const g of AUTOMATIONS) for (const it of g.items) rows.push({ label: it.name, meta: g.cat, icon: 'spark', onClick: () => openSettings('automations') });
-    addSection('Automations', rows.filter(r => !q || r.label.toLowerCase().includes(q)));
+    const rows = state.savedAutomations.map(a => ({ label: a.name, meta: a.trigger ? a.trigger.cadence + ' ' + a.trigger.time : 'No trigger', icon: 'spark', onClick: () => openAutomationDetail(a.name, a) }));
+    const hit = rows.filter(r => !q || r.label.toLowerCase().includes(q));
+    if (hit.length) addSection('Automations', hit);
+    else if (!q) list.append(el('div', 'palette-empty', 'No automations yet. Schedule Janna to run on its own and they will show up here.'));
   }
   if ((tab === 'All' || tab === 'Files') && q) {
     addSection('Files', state.library.filter(it => (it.name || '').toLowerCase().includes(q)).map(it => ({ label: it.name, meta: it.kindLabel || it.kind, icon: 'file', onClick: () => openLibraryItem(it) })));
@@ -2114,6 +2348,199 @@ function renderPaletteTabs() {
     b.onclick = () => { state.paletteTab = t; renderPaletteTabs(); renderPalette(); };
     tabs.append(b);
   }
+}
+
+/* Automation detail (Grok's, 2026-11-25 re-study): breadcrumb, icon +
+   Change icon, editable name, Triggers ("Daily ⌄ at 7:30 AM" + Remove),
+   Instructions textarea with + Attach / Connectors 0 / Skills 0 /
+   model toolbar, Notification "Email + App ⌄", Cancel/Save bar, NO
+   enable toggle. Saving stores the setup in this browser only — Janna
+   cannot run automations yet, and Save says so honestly. */
+function openAutomationDetail(name, existing) {
+  const draft = existing
+    ? { ...existing, trigger: existing.trigger ? { ...existing.trigger } : null, attachments: [...(existing.attachments || [])], skills: [...(existing.skills || [])] }
+    : { id: uid('auto'), name, icon: 'sun', trigger: { cadence: 'Daily', time: '7:30 AM' }, instructions: AUTOMATION_INSTRUCTIONS[name] || '', attachments: [], skills: [], model: state.selectedModel || '', notification: 'Email + App' };
+  openSettings('automations');
+  const body = $('settingsBody');
+  body.replaceChildren();
+  const back = button('\u2190 Automations', () => renderSettingsBody('automations'));
+  back.classList.add('text-btn');
+  body.append(back);
+  body.append(el('h2', '', 'Automations \u203a ' + draft.name));
+  const iconRow = el('div', 'auto-icon-row');
+  const tile = el('button', 'auto-icon-tile');
+  tile.type = 'button';
+  tile.innerHTML = inlineIcon(draft.icon);
+  tile.onclick = () => { picker.hidden = !picker.hidden; };
+  const changeBtn = button('Change icon', () => { picker.hidden = !picker.hidden; });
+  iconRow.append(tile, changeBtn);
+  body.append(iconRow);
+  const picker = el('div', 'auto-icon-picker');
+  picker.hidden = true;
+  const iconsEl = el('div', 'proj-icons');
+  for (const [id, label, svg] of PROJECT_ICONS) {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'proj-icon' + (draft.icon === id ? ' selected' : '');
+    b.title = label; b.setAttribute('aria-label', label);
+    b.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round">${svg}</svg>`;
+    b.onclick = () => { draft.icon = id; tile.innerHTML = inlineIcon(id); iconsEl.querySelectorAll('.proj-icon').forEach(x => x.classList.toggle('selected', x === b)); };
+    iconsEl.append(b);
+  }
+  picker.append(iconsEl);
+  body.append(picker);
+  body.append(el('h3', '', 'Automation name'));
+  const nameInput = document.createElement('input');
+  nameInput.type = 'text'; nameInput.value = draft.name; nameInput.setAttribute('aria-label', 'Automation name');
+  nameInput.className = 'auto-name-input';
+  nameInput.oninput = () => { draft.name = nameInput.value; };
+  body.append(nameInput);
+  body.append(el('h3', '', 'Triggers'));
+  const trigWrap = el('div', 'auto-triggers');
+  const renderTriggers = () => {
+    trigWrap.replaceChildren();
+    if (!draft.trigger) {
+      const add = button('Add trigger', () => { draft.trigger = { cadence: 'Daily', time: '7:30 AM' }; renderTriggers(); });
+      trigWrap.append(add);
+      return;
+    }
+    const row = el('div', 'auto-trigger-row');
+    const clock = el('span', 'auto-trigger-icon');
+    clock.innerHTML = inlineIcon('clock');
+    const cadBtn = button((draft.trigger.cadence || 'Daily') + ' \u2304', e => {
+      showMenu(cadBtn, ['Daily', 'Weekdays', 'Weekly', 'Monthly'].map(c => ({ label: (draft.trigger.cadence === c ? '\u2713 ' : '') + c, onClick: () => { draft.trigger.cadence = c; renderTriggers(); } })));
+    });
+    const timeBtn = button(draft.trigger.time || '7:30 AM', async () => {
+      const res = await showDialog({ title: 'Trigger time', text: 'What time should this automation run?', fields: [{ name: 'time', value: draft.trigger.time || '7:30 AM', placeholder: '7:30 AM' }], okText: 'Save' });
+      if (res && String(res.time || '').trim()) { draft.trigger.time = String(res.time).trim(); renderTriggers(); }
+    });
+    const del = button('', () => { draft.trigger = null; renderTriggers(); }, 'icon-button');
+    del.innerHTML = '<svg><use href="#i-trash"/></svg>';
+    del.title = 'Remove trigger'; del.setAttribute('aria-label', 'Remove trigger');
+    row.append(clock, cadBtn, el('span', '', 'at'), timeBtn, del);
+    trigWrap.append(row);
+  };
+  renderTriggers();
+  body.append(trigWrap);
+  body.append(el('h3', '', 'Instructions'));
+  const ta = document.createElement('textarea');
+  ta.className = 'auto-instructions';
+  ta.value = draft.instructions || '';
+  ta.placeholder = 'Describe what this automation should do\u2026';
+  ta.oninput = () => { draft.instructions = ta.value; };
+  body.append(ta);
+  const toolbar = el('div', 'auto-toolbar');
+  const attachBtn = button(draft.attachments.length ? '+ Attach (' + draft.attachments.length + ')' : '+ Attach', () => fileInput.click());
+  const connBtn = button('Connectors 0', e => {
+    showMenu(connBtn, [{ label: 'No connectors available', disabled: true }]);
+  });
+  const skillBtn = button('Skills ' + draft.skills.length, e => {
+    const items = [];
+    for (const [kind, label] of FILE_SKILLS) items.push({ label: (draft.skills.includes(kind) ? '\u2713 ' : '') + label, onClick: () => { toggleSkill(kind); } });
+    for (const sk of state.customSkills) items.push({ label: (draft.skills.includes('custom:' + sk.id) ? '\u2713 ' : '') + sk.name, onClick: () => { toggleSkill('custom:' + sk.id); } });
+    const toggleSkill = id => {
+      draft.skills = draft.skills.includes(id) ? draft.skills.filter(s => s !== id) : [...draft.skills, id];
+      skillBtn.textContent = 'Skills ' + draft.skills.length;
+    };
+    showMenu(skillBtn, items);
+  });
+  const modelLabel = () => {
+    const m = (state.models || []).find(x => x.id === draft.model);
+    return (m ? (SHORT_MODEL_LABELS[m.id] || m.label || m.id) : 'Fast') + ' \u2304';
+  };
+  const modelBtn = button(modelLabel(), e => {
+    showMenu(modelBtn, (state.models || []).map(m => ({ label: (draft.model === m.id ? '\u2713 ' : '') + (SHORT_MODEL_LABELS[m.id] || m.label || m.id), onClick: () => { draft.model = m.id; modelBtn.textContent = modelLabel(); } })));
+  });
+  const fileInput = document.createElement('input');
+  fileInput.type = 'file'; fileInput.multiple = true; fileInput.hidden = true;
+  fileInput.onchange = async () => {
+    const files = [...(fileInput.files || [])];
+    if (!files.length) return;
+    draft.attachments.push(...files.map(f => f.name));
+    attachBtn.textContent = '+ Attach (' + draft.attachments.length + ')';
+    await addFilesToLibrary(files);
+  };
+  toolbar.append(attachBtn, connBtn, skillBtn, modelBtn, fileInput);
+  body.append(toolbar);
+  body.append(el('h3', '', 'Notification'));
+  const notifBtn = button('\uD83D\uDD14 ' + draft.notification + ' \u2304', e => {
+    showMenu(notifBtn, ['Email + App', 'App only'].map(n => ({ label: (draft.notification === n ? '\u2713 ' : '') + n, onClick: () => { draft.notification = n; notifBtn.textContent = '\uD83D\uDD14 ' + n + ' \u2304'; } })));
+  });
+  body.append(notifBtn);
+  const bar = el('div', 'auto-save-bar');
+  const cancel = button('Cancel', () => renderSettingsBody('automations'));
+  const save = button('Save', () => {
+    const name = (draft.name || '').trim() || 'Untitled automation';
+    draft.name = name;
+    const i = state.savedAutomations.findIndex(a => a.id === draft.id);
+    if (i >= 0) state.savedAutomations[i] = draft; else state.savedAutomations.unshift(draft);
+    saveAutomations();
+    renderSettingsBody('automations');
+    toast('Automation saved in this browser. Janna can\u2019t run automations yet.');
+  });
+  save.classList.add('action-btn');
+  bar.append(cancel, save);
+  body.append(bar);
+}
+
+/* Connect Apps catalog (Grok's, 2026-11-25 re-study). Rows show the
+   brand tile, bold name, grey category and a Connect pill. Tapping a
+   row opens its detail page; Connect itself cannot complete in the
+   web version and says so honestly. */
+const CONNECT_APPS = {
+  recommended: [
+    { name: 'Gmail', cat: 'Google Workspace' },
+    { name: 'Google Drive', cat: 'Google Workspace' },
+    { name: 'Google Calendar', cat: 'Google Workspace' },
+    { name: 'GitHub', cat: 'Developer' },
+    { name: 'Finance', cat: 'Finance' },
+    { name: 'Notion', cat: 'Productivity' },
+  ],
+  categories: [
+    { cat: 'Advertising', apps: ['X Ads'] },
+    { cat: 'Analytics', apps: ['Google Cloud BigQuery'] },
+    { cat: 'Apps', apps: ['Expensify', 'Paypal', 'Zapier'] },
+    { cat: 'Developer', apps: ['GitHub', 'Datadog', 'Excalidraw', 'Mixpanel', 'Netlify', 'Vercel'] },
+    { cat: 'Finance', apps: ['Finance', 'Bigdata.com', 'Coinbase', 'Daloopa', 'Finary', 'Interactive Brokers (IBKR)'] },
+    { cat: 'Google Workspace', apps: ['Gmail', 'Google Calendar', 'Google Drive'] },
+    { cat: 'Payments', apps: ['Stripe'] },
+    { cat: 'Productivity', apps: ['Outlook', 'Outlook Calendar', 'Asana', 'Atlassian', 'Calendly', 'Canva'] },
+    { cat: 'Sales', apps: ['HubSpot', 'Meltwater'] },
+    { cat: 'Social Media', apps: ['Buffer', 'Metricool'] },
+    { cat: 'Storage', apps: ['Box'] },
+  ],
+};
+const CONNECTOR_CHIPS = ['All', 'Advertising', 'Analytics', 'Apps', 'Developer', 'Finance'];
+const CONNECTOR_MORE_CHIPS = ['Google Workspace', 'Payments', 'Productivity', 'Sales', 'Social Media', 'Storage'];
+function openConnectorDetail(app) {
+  openSettings('connectors');
+  const body = $('settingsBody');
+  body.replaceChildren();
+  const back = button('\u2190 Connect Apps', () => renderSettingsBody('connectors'));
+  back.classList.add('text-btn');
+  body.append(back);
+  body.append(el('h2', '', 'Connect Apps \u203a ' + app.name));
+  const head = el('div', 'conn-detail-head');
+  const tile = el('span', 'conn-tile conn-tile-lg');
+  tile.textContent = app.name.charAt(0);
+  head.append(tile);
+  const titles = el('div', 'conn-detail-titles');
+  titles.append(el('strong', 'conn-detail-name', app.name));
+  titles.append(el('small', '', app.cat));
+  head.append(titles);
+  const connectBtn = button('Connect', () => toast(app.name + ' can\u2019t be connected in the web version.'));
+  connectBtn.classList.add('text-btn');
+  head.append(connectBtn);
+  body.append(head);
+  if (app.name === 'Gmail') {
+    body.append(el('p', 'settings-note', 'Give Janna access to search your emails.'));
+    body.append(el('h3', '', 'About this Connector'));
+    body.append(settingsRow({ label: 'Search your emails', hint: 'Search your inbox, summarize unread emails, and find messages from specific people.' }));
+    body.append(settingsRow({ label: 'We never train on your data', hint: 'Janna does not train on your Gmail data.' }));
+    body.append(settingsRow({ label: 'Your emails stay in Gmail', hint: 'We don\u2019t store your emails. Janna searches Gmail in real-time when you ask questions.' }));
+  } else {
+    body.append(el('p', 'settings-note', app.name + ' isn\u2019t connected. Janna can\u2019t connect to ' + app.name + ' in the web version.'));
+  }
+  body.append(el('p', 'settings-note', 'Third-party connectors are not built or maintained by Janna AI. Use caution when granting access to external services. Review the permissions before connecting.'));
 }
 
 /* ---------- settings ---------- */
@@ -2239,23 +2666,65 @@ function renderSettingsBody(section) {
     }
   } else if (section === 'connectors') {
     h('Connect Apps');
-    body.append(el('p', 'settings-note', 'Your apps \u2014 0 connected'));
+    let chip = 'All';
+    let connectedOnly = false;
+    const yourBtn = button('Your apps \u2014 0 connected \u203a', () => { connectedOnly = !connectedOnly; renderRows(); });
+    yourBtn.classList.add('text-btn');
+    body.append(yourBtn);
     const search = document.createElement('input');
     search.type = 'search'; search.placeholder = 'Search apps'; search.setAttribute('aria-label', 'Search apps');
     body.append(search);
+    const chipsEl = el('div', 'palette-tabs');
+    const renderChips = () => {
+      chipsEl.replaceChildren();
+      for (const c of CONNECTOR_CHIPS) {
+        const b = el('button', 'palette-tab' + (chip === c ? ' active' : ''));
+        b.type = 'button'; b.textContent = c;
+        b.onclick = () => { chip = c; renderChips(); renderRows(); };
+        chipsEl.append(b);
+      }
+      const more = el('button', 'palette-tab' + (CONNECTOR_MORE_CHIPS.includes(chip) ? ' active' : ''));
+      more.type = 'button'; more.textContent = 'More \u2304';
+      more.onclick = () => showMenu(more, CONNECTOR_MORE_CHIPS.map(c => ({ label: (chip === c ? '\u2713 ' : '') + c, onClick: () => { chip = c; renderChips(); renderRows(); } })));
+      chipsEl.append(more);
+    };
+    renderChips();
+    body.append(chipsEl);
     const list = el('div', 'connectors-list');
-    const rows = [
-      { name: 'GitHub', status: 'Not connected in the web version' },
-      { name: 'Figma', status: 'Not connected in the web version' },
-      { name: 'Tavily (web search)', status: 'No search key saved' },
-    ];
     const renderRows = () => {
       list.replaceChildren();
       const q = search.value.trim().toLowerCase();
-      for (const r of rows.filter(r => !q || r.name.toLowerCase().includes(q))) {
+      if (connectedOnly) {
+        list.append(el('div', 'empty-state', 'No apps connected yet.'));
+        return;
+      }
+      const matchApp = a => !q || a.name.toLowerCase().includes(q) || a.cat.toLowerCase().includes(q);
+      const rowFor = a => {
         const row = el('div', 'connector-row');
-        row.append(el('strong', '', r.name), el('small', '', r.status));
-        list.append(row);
+        const tile = el('span', 'conn-tile'); tile.textContent = a.name.charAt(0);
+        const texts = el('div', 'settings-row-texts');
+        texts.append(el('strong', '', a.name));
+        texts.append(el('p', '', a.cat));
+        const conn = button('Connect', e => { e.stopPropagation(); openConnectorDetail(a); });
+        row.append(tile, texts, conn);
+        row.onclick = () => openConnectorDetail(a);
+        return row;
+      };
+      if (chip === 'All') {
+        const rec = CONNECT_APPS.recommended.filter(matchApp);
+        if (rec.length) {
+          const head = el('div', 'conn-rec-head');
+          head.append(el('strong', '', 'Recommended for you'));
+          const viewAll = button('View all', () => { search.value = ''; chip = 'All'; renderChips(); renderRows(); });
+          viewAll.classList.add('text-btn');
+          head.append(viewAll);
+          list.append(head);
+          for (const a of rec) list.append(rowFor(a));
+        }
+      }
+      for (const g of CONNECT_APPS.categories.filter(g => (chip === 'All' || g.cat === chip) && g.apps.some(n => matchApp({ name: n, cat: g.cat })))) {
+        list.append(el('h3', '', g.cat));
+        for (const n of g.apps.filter(n => matchApp({ name: n, cat: g.cat }))) list.append(rowFor({ name: n, cat: g.cat }));
       }
       if (!list.childNodes.length) list.append(el('div', 'empty-state', 'No apps match your search.'));
     };
@@ -2288,12 +2757,33 @@ function renderSettingsBody(section) {
     const renderList = () => {
       list.replaceChildren();
       const q = search.value.trim().toLowerCase();
+      const mine = state.savedAutomations.filter(a => !q || (a.name + ' ' + (a.instructions || '')).toLowerCase().includes(q));
+      if (mine.length && (cat === 'All' || q)) {
+        list.append(el('h3', '', 'Your automations'));
+        for (const a of mine) {
+          const ctrls = el('div', 'row-controls');
+          ctrls.append(button('Open', e => { e.stopPropagation(); openAutomationDetail(a.name, a); }));
+          ctrls.append(button('Remove', async e => {
+            e.stopPropagation();
+            const ok = await confirmDialog('Remove automation?', a.name + ' will be removed from this browser.', 'Remove');
+            if (!ok) return;
+            state.savedAutomations = state.savedAutomations.filter(x => x.id !== a.id);
+            saveAutomations(); renderList();
+          }));
+          const row = settingsRow({ label: a.name, hint: a.trigger ? a.trigger.cadence + ' at ' + a.trigger.time : 'No trigger', control: ctrls });
+          row.onclick = () => openAutomationDetail(a.name, a);
+          list.append(row);
+        }
+      }
       for (const g of AUTOMATIONS.filter(g => cat === 'All' || g.cat === cat)) {
         const items = g.items.filter(it => !q || (it.name + ' ' + (it.desc || '')).toLowerCase().includes(q));
         if (!items.length) continue;
         if (cat === 'All') list.append(el('h3', '', g.cat));
         for (const it of items) {
-          list.append(settingsRow({ label: it.name, hint: it.desc || g.cat, control: button('Add', () => toast('Automations aren\u2019t available in Janna yet.')) }));
+          const add = button('Add', e => { e.stopPropagation(); openAutomationDetail(it.name); });
+          const row = settingsRow({ label: it.name, hint: it.desc || g.cat, control: add });
+          row.onclick = () => openAutomationDetail(it.name);
+          list.append(row);
         }
       }
       if (!list.childNodes.length) list.append(el('div', 'empty-state', 'No automations match your search.'));
@@ -2362,10 +2852,56 @@ async function openToolsPanel() {
   } catch (e) { toast(e.message); }
 }
 
-/* ---------- account menu (static shell menu), help, feedback ---------- */
+/* ---------- account menu (static shell menu), help, feedback ----------
+   Grok's menu is Dashboard / Settings / Help › / Upgrade plan /
+   Sign out; Janna has no account, dashboard, upgrade or sign-out,
+   so its menu is honestly Settings + Help ›. Help opens upward into
+   FAQ / Community / Changelog / Send Feedback / Shared Links. */
+function renderAccountMenu(view) {
+  const m = $('accountMenu');
+  m.replaceChildren();
+  const item = (icon, label, onClick, chevron) => {
+    const b = el('button', 'account-menu-item');
+    b.type = 'button';
+    b.innerHTML = `<svg><use href="#i-${icon}"/></svg><span>${escapeHTML(label)}</span>${chevron ? '<span class="account-menu-chevron">\u203a</span>' : ''}`;
+    b.onclick = () => { m.hidden = true; onClick(); };
+    m.append(b);
+    return b;
+  };
+  if (view === 'help') {
+    const back = el('button', 'account-menu-item');
+    back.type = 'button';
+    back.innerHTML = `<span class="account-menu-chevron account-menu-chevron-back">\u2039</span><span>Help</span>`;
+    back.onclick = () => renderAccountMenu('main');
+    m.append(back);
+    item('feedback', 'FAQ', () => openHelp());
+    item('external', 'Community', () => window.open('https://github.com/JepongDevxyz/Janna-AI', '_blank'));
+    item('file', 'Changelog', () => openChangelog());
+    item('feedback', 'Send Feedback', () => openFeedback(null, 'feedback'));
+    item('share', 'Shared Links', () => openSharedLinks());
+    return;
+  }
+  item('settings', 'Settings', () => openSettings('account'));
+  item('feedback', 'Help', () => { renderAccountMenu('help'); m.hidden = false; }, true);
+}
 function toggleAccountMenu() {
   const m = $('accountMenu');
-  m.hidden = !m.hidden;
+  if (m.hidden) { renderAccountMenu('main'); m.hidden = false; }
+  else m.hidden = true;
+}
+function openChangelog() {
+  showDialog({
+    title: 'What\u2019s new \u2014 Janna AI',
+    text: 'v67: New Project dialog with icon + colour picker, example projects in Library, Automation detail pages (saved in this browser), Connect Apps list with app details, Help menu, palette empty states. v66: picker above the composer, top-bar cluster, thought line once, hidden-until-tap Edit/Copy, Branch as a real thread, read-aloud pill, autocomplete, code line numbers. v64: no blue tap flash anywhere. v62: Settings 9 sections, rotating suggestions, ephemeral follow-ups. v61: instant boot from cache. v60: footer/H1/composer geometry, thinking duration saved.',
+    okText: 'Close', showCancel: false,
+  });
+}
+function openSharedLinks() {
+  showDialog({
+    title: 'Shared Links',
+    text: 'No shared links yet \u2014 Janna doesn\u2019t create share links. Sharing copies the conversation as text instead.',
+    okText: 'Close', showCancel: false,
+  });
 }
 function openHelp() {
   showDialog({
@@ -2489,8 +3025,6 @@ function bindEvents() {
   $('navLibrary').onclick = () => { closeSidebar(); openLibrary(); };
   $('newProjectBtn').onclick = () => createProject();
   $('profileOpen').onclick = () => toggleAccountMenu();
-  $('amSettings').onclick = () => { $('accountMenu').hidden = true; openSettings('account'); };
-  $('amHelp').onclick = () => { $('accountMenu').hidden = true; openHelp(); };
   $('sidebarSettings').onclick = () => openSettings('account');
   $('projectsHead').onclick = e => { if (e.target.closest('.side-head-dots')) return; $('projectsSection').classList.toggle('collapsed'); };
   $('chatsHead').onclick = e => { if (e.target.closest('.side-head-dots') || e.target.closest('.side-head-plus')) return; $('chatsSection').classList.toggle('collapsed'); };
@@ -2608,7 +3142,9 @@ function bindEvents() {
     if (openMenuEl && !openMenuEl.contains(e.target) && Date.now() - menuOpenedAt > 50) closeMenus();
     if (!$('modelPicker').hidden && !e.target.closest('#modelPicker') && !e.target.closest('#modelPickerBtn')) closeModelPicker();
     if (!$('plusMenu').hidden && !e.target.closest('#plusMenu') && !e.target.closest('#plusBtn')) closePlusMenu();
-    if (!$('accountMenu').hidden && !e.target.closest('#accountMenu') && !e.target.closest('#profileOpen')) $('accountMenu').hidden = true;
+    // A click whose target was detached mid-click (e.g. the Help item
+    // re-rendering the menu into its submenu) is not an outside click.
+    if (!$('accountMenu').hidden && e.target.isConnected && !e.target.closest('#accountMenu') && !e.target.closest('#profileOpen')) $('accountMenu').hidden = true;
   });
   document.addEventListener('keydown', e => {
     const mod = e.ctrlKey || e.metaKey;

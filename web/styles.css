@@ -593,3 +593,68 @@ body.reduce-motion *,body.reduce-motion *::before,body.reduce-motion *::after{an
   .messages{max-width:100%;padding:0}
   .message{break-inside:avoid}
 }
+
+/* v67 — grok deep-review completion: New Project dialog, Automation
+   detail, Connect Apps list, Library example projects, account menu. */
+.side-row-icon{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:8px;background:var(--chip);color:var(--muted);flex-shrink:0}
+.side-row-icon svg{width:17px;height:17px}
+.lib-icon{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:9px;background:var(--chip);color:var(--muted);flex-shrink:0}
+.lib-icon svg{width:19px;height:19px}
+.library-section-head{font-size:15px;font-weight:600;margin:22px 4px 10px}
+.library-empty .text-btn{margin-top:14px}
+.lib-example-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:4px}
+.lib-example-card{display:flex;flex-direction:column;align-items:stretch;gap:8px;text-align:left;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;cursor:pointer}
+.lib-example-card:hover{background:var(--hover)}
+.lib-example-card strong{font-size:14px}
+.lib-example-card small{color:var(--muted);font-size:12px;line-height:1.45}
+.lib-example-doc{display:flex;flex-direction:column;gap:5px;background:var(--chip);border:1px solid var(--line);border-radius:8px;padding:10px 12px;min-height:74px}
+.lib-example-doc-title{font-size:11px;font-weight:600;color:var(--ink)}
+.lib-example-doc-line{height:5px;border-radius:3px;background:var(--line)}
+.lib-example-doc-line:last-child{width:60%}
+.proj-dialog{position:relative;width:min(480px,100%)}
+.proj-close{position:absolute;top:14px;right:14px}
+.proj-icon-row{display:flex;align-items:center;gap:12px;margin:4px 0 14px}
+.proj-icon-tile{width:52px;height:52px;border-radius:14px;border:1px solid var(--line);background:var(--chip);display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--muted);flex-shrink:0}
+.proj-icon-tile svg{width:26px;height:26px}
+.proj-icon-picker{margin:0 0 14px;border:1px solid var(--line);border-radius:14px;padding:12px}
+.proj-colors{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+.proj-color{width:26px;height:26px;border-radius:50%;border:2px solid transparent;cursor:pointer;padding:0}
+.proj-color.selected{border-color:var(--ink);box-shadow:0 0 0 2px var(--panel),0 0 0 4px var(--ink)}
+.proj-icons{display:grid;grid-template-columns:repeat(8,1fr);gap:4px}
+.proj-icon{display:flex;align-items:center;justify-content:center;aspect-ratio:1;border:0;background:transparent;border-radius:8px;color:var(--muted);cursor:pointer;padding:4px}
+.proj-icon:hover{background:var(--hover)}
+.proj-icon.selected{background:var(--chip);color:var(--ink);box-shadow:inset 0 0 0 1px var(--line)}
+.proj-icon svg{width:19px;height:19px}
+.proj-dialog input.proj-title{width:100%;border:0;background:transparent;font-size:22px;font-weight:500;padding:2px 0;margin:0 0 10px;outline:0;color:var(--ink);border-radius:0}
+.proj-dialog textarea.proj-about{width:100%;border:0;background:transparent;font-size:14px;line-height:1.55;min-height:64px;resize:vertical;outline:0;color:var(--ink);padding:2px 0;margin:0;border-radius:0}
+.proj-add-folder{width:100%;border:1px solid var(--line);border-radius:12px;background:transparent;padding:16px;display:flex;flex-direction:column;align-items:center;gap:4px;color:var(--muted);font-size:13px;cursor:pointer;margin:10px 0 14px}
+.proj-add-folder small{font-size:12px;color:var(--faded)}
+.proj-create{width:100%;background:var(--ink);color:var(--panel);border:0;border-radius:999px;padding:12px;font-size:14px;font-weight:600;cursor:pointer}
+.proj-create:hover{opacity:.88}
+.auto-icon-row{display:flex;align-items:center;gap:12px;margin:6px 0 4px}
+.auto-icon-tile{width:52px;height:52px;border-radius:14px;background:#1f7aec;color:#fff;border:0;display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0}
+.auto-icon-tile svg{width:26px;height:26px}
+.auto-icon-picker{margin:10px 0;border:1px solid var(--line);border-radius:14px;padding:12px}
+.auto-name-input{width:100%;border:1px solid var(--line);background:var(--panel);border-radius:10px;padding:10px 12px;font-size:14px;margin:4px 0 8px;color:var(--ink)}
+.auto-triggers{margin:4px 0 8px}
+.auto-trigger-row{display:flex;align-items:center;gap:10px;border:1px solid var(--line);border-radius:12px;padding:10px 12px;flex-wrap:wrap}
+.auto-trigger-icon{display:inline-flex;color:var(--muted)}
+.auto-trigger-icon svg{width:18px;height:18px}
+.auto-trigger-row .text-btn{flex-shrink:0}
+.auto-instructions{width:100%;border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:12px;font-size:14px;line-height:1.6;min-height:150px;resize:vertical;color:var(--ink);margin:4px 0 10px}
+.auto-toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
+.auto-save-bar{position:sticky;bottom:0;display:flex;justify-content:space-between;align-items:center;gap:12px;background:var(--panel);padding:12px 0 4px;border-top:1px solid var(--line);margin-top:8px}
+.connector-row{flex-direction:row;align-items:center;gap:12px}
+.connector-row .settings-row-texts{flex:1;min-width:0}
+.connector-row .text-btn{flex-shrink:0}
+.conn-tiles{display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;border-radius:10px;background:var(--chip);color:var(--ink);font-size:17px;font-weight:600;flex-shrink:0}
+.conn-tile-lg{width:56px;height:56px;border-radius:14px;font-size:24px}
+.conn-rec-head{display:flex;align-items:center;justify-content:space-between;margin:14px 0 8px}
+.conn-rec-head strong{font-size:14px}
+.conn-detail-head{display:flex;align-items:center;gap:14px;margin:10px 0 14px}
+.conn-detail-titles{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.conn-detail-name{font-size:20px}
+.conn-detail-titles small{color:var(--muted);font-size:13px}
+.account-menu-chevron{margin-left:auto;color:var(--muted);font-size:16px}
+.account-menu-chevron-back{margin-left:0;margin-right:2px}
+.row-controls{display:flex;gap:8px;flex-shrink:0}
