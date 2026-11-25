@@ -16,6 +16,13 @@
 
   var SKEY = 'janna-web-sessions-v1';
   var SETKEY = 'janna-web-settings-v1';
+  var MKEY = 'janna-web-models-v1';
+  function loadModels() {
+    try { var m = JSON.parse(localStorage.getItem(MKEY) || 'null'); return (m && Array.isArray(m.models)) ? m : null; } catch { return null; }
+  }
+  function saveModels(m) {
+    try { localStorage.setItem(MKEY, JSON.stringify(m)); } catch { /* ignore */ }
+  }
 
   function loadSessions() {
     try { return JSON.parse(localStorage.getItem(SKEY) || '[]'); } catch { return []; }
@@ -272,14 +279,34 @@
     return new Response(response.body.pipeThrough(tap), { status: response.status, statusText: response.statusText, headers: headers });
   }
 
+  // First bootstrap per page load is served from this browser (below).
+  var bootLocal = false;
+
   window.fetch = function (input, init) {
     var url = typeof input === 'string' ? input : (input && input.url) || '';
     var path = '';
     try { path = new URL(url, location.origin).pathname; } catch { path = url; }
     var method = ((init && init.method) || (typeof input !== 'string' && input && input.method) || 'GET').toUpperCase();
 
-    // --- bootstrap: merge local sessions + settings into the server reply ---
+    // --- remote-info: on hosted domains this is never a remote desktop ---
+    if (path === '/api/remote-info' && method === 'GET')
+      return Promise.resolve(jsonResponse({ remote: false, pair_required: false, remote_enabled: false }));
+
+    // --- bootstrap: the first call is served from this browser so the
+    // first paint never waits on the network (grok shows history at once);
+    // the model list refreshes in the background and the app re-fetches
+    // on 'janna-bootstrap-refreshed'. Later calls go to the network.
     if (path === '/api/bootstrap' && method === 'GET') {
+      if (!bootLocal) {
+        bootLocal = true;
+        var cached = loadModels();
+        var local = { token: 'web', version: '1.6.0-web.5', projects: [], active_project: null, sessions: loadSessions().map(summary), models: cached ? cached.models : [], model_catalog: cached ? cached.model_catalog : [], settings: loadSettings(), languages: [], local: true };
+        nativeFetch(input, init).then(function (r) { return r.json(); }).then(function (b) {
+          if (b && Array.isArray(b.models)) saveModels({ models: b.models, model_catalog: b.model_catalog || [], saved_at: Date.now() });
+          window.dispatchEvent(new CustomEvent('janna-bootstrap-refreshed'));
+        }).catch(function () { /* stay on the cached list; the 10s reconnect retries */ });
+        return Promise.resolve(jsonResponse(local));
+      }
       return nativeFetch(input, init).then(function (r) {
         return r.json().then(function (b) {
           b.sessions = loadSessions().map(summary);

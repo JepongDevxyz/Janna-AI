@@ -11,7 +11,8 @@
 const $ = id => document.getElementById(id);
 const state = {
   token: '', remote: false, projects: [], sessions: [], session: null,
-  models: [], modelCatalog: [], model: '', modelVision: false,
+  models: [], modelCatalog: [], model: '', modelVision: false, booted: false,
+  modelsKnown: false, bootFailed: false,
   settings: {}, languages: [], busy: false, busySessions: [], runId: null,
   stopRequested: false, stream: '', events: [],
   pending: [], isPrivate: false, privateThread: [],
@@ -676,6 +677,10 @@ function modelRecord(id) { return state.modelCatalog.find(m => m.id === id) || {
 function modelLabel(id) { return modelRecord(id).label || id; }
 function rememberModelChoice() { try { if (state.model) localStorage.setItem('janna-selected-model', state.model); } catch { /* ignore */ } }
 function renderModelOptions(models) {
+  // v61: a local-first bootstrap with no cached catalog yet returns an
+  // empty list — that means "not loaded yet", not "no models". Keep the
+  // seeded model label instead of blanking it to "Choose a model".
+  if (!models || !models.length) { syncModelPicker(); return; }
   state.models = models || [];
   const current = state.model || (() => { try { return localStorage.getItem('janna-selected-model') || ''; } catch { return ''; } })();
   const ordered = [];
@@ -927,8 +932,11 @@ function updateBusy() {
 }
 function statusBadge() {
   const ok = !!state.models.length;
-  $('sidebarDot').classList.toggle('offline', !ok);
-  $('sidebarState').textContent = state.busy ? 'Working\u2026' : ok ? 'Cloud \u00b7 Ready' : 'Cloud \u00b7 Offline';
+  const failed = state.booted && state.bootFailed;
+  $('sidebarDot').classList.toggle('offline', (state.modelsKnown && !ok) || failed);
+  // Before the first bootstrap settles the honest label is "Connecting…":
+  // an empty model list at boot means "not loaded yet", never "offline".
+  $('sidebarState').textContent = state.busy ? 'Working\u2026' : !state.booted ? 'Connecting\u2026' : failed ? 'Cloud \u00b7 Offline' : !state.modelsKnown ? 'Connecting\u2026' : ok ? 'Cloud \u00b7 Ready' : 'Cloud \u00b7 Offline';
 }
 
 /* ---------- thinking display (matches styles.css .thinking structure) ---------- */
@@ -2129,6 +2137,11 @@ async function initialConnection() {
 async function refreshBootstrap(keepSession) {
   try {
     const b = await api('/api/bootstrap');
+    state.booted = true;
+    state.bootFailed = false;
+    // A local-first reply with no model list yet means "still loading",
+    // not "offline" — the network refresh follows on the event.
+    if (b.local !== true || (b.models && b.models.length)) state.modelsKnown = true;
     if (typeof b.token === 'string' && b.token && !state.remote) state.token = b.token;
     state.projects = b.projects || [];
     state.sessions = b.sessions || [];
@@ -2145,6 +2158,8 @@ async function refreshBootstrap(keepSession) {
     renderRecents(); renderProjects(); renderLibrary(); renderSuggestions(); syncPrivate();
     statusBadge();
   } catch (e) {
+    state.booted = true;
+    state.bootFailed = true;
     toast('Could not reach Janna. ' + e.message);
     statusBadge();
   }
@@ -2302,6 +2317,9 @@ function bindEvents() {
     else if (e.key === 'Escape') { const sheet = document.getElementById('voiceSheet'); if (sheet && !sheet.hidden) { voiceToggleSheet(false); return; } if (document.getElementById('voiceOverlay')) { voiceClose(); return; } closeMenus(); closeModelPicker(); closePlusMenu(); $('accountMenu').hidden = true; if (!$('palette').hidden) closePalette(); else if (!$('settingsView').hidden) closeSettings(); else if (!$('libraryView').hidden) closeLibrary(); else closeSidebar(); }
   });
   window.addEventListener('online', () => reconnectCheck());
+  // v61: the adapter serves the first bootstrap locally, then refreshes
+  // the model list in the background — re-fetch when it lands.
+  window.addEventListener('janna-bootstrap-refreshed', () => refreshBootstrap(true));
   document.addEventListener('visibilitychange', () => { if (!document.hidden) reconnectCheck(); });
   window.addEventListener('resize', () => syncDesktopChrome());
   if (window.matchMedia) matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => applyTheme());
@@ -2309,6 +2327,13 @@ function bindEvents() {
 }
 document.addEventListener('DOMContentLoaded', async () => {
   bindEvents();
+  // v61 instant first paint: chats + settings live in this browser, so
+  // render the cached list before the network bootstrap returns — grok
+  // shows history at once instead of an empty list. The local-first
+  // bootstrap (web-adapter) replaces these with the same merged list.
+  state.sessions = loadJSON('janna-web-sessions-v1', []);
+  state.settings = Object.assign({}, loadJSON('janna-web-settings-v1', {}));
+  try { state.model = localStorage.getItem('janna-selected-model') || ''; } catch { /* ignore */ }
   renderPaletteTabs();
   renderProjects();
   renderRecents();
@@ -2318,6 +2343,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   syncPrivate();
   autoGrowPrompt();
   syncSendState();
+  syncModelPicker();
   updateBusy();
   await initialConnection();
   await refreshBootstrap();
