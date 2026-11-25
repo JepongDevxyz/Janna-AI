@@ -23,6 +23,8 @@
     <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></symbol>
     <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
     <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></symbol>
+    <symbol id="i-chat" viewBox="0 0 24 24"><path d="M12 3C6.48 3 2 6.94 2 11.5c0 2.4 1.19 4.54 3.06 5.99L4 21l3.9-1.95c1.2.3 2.6.45 4.1.45 5.52 0 10-3.94 10-8.5S17.52 3 12 3z"/></symbol>
+    <symbol id="i-pause" viewBox="0 0 24 24"><path d="M7 5h3.6v14H7zM13.4 5H17v14h-3.6z"/></symbol>
     <symbol id="i-close" viewBox="0 0 24 24"><path d="M5 5l14 14M19 5 5 19"/></symbol>
     <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
     <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
@@ -90,10 +92,14 @@
           <button id="headerSearch" class="top-search" type="button" title="Search"><svg><use href="#i-search"/></svg><span>Search</span></button>
         </div>
         <div class="top-centre">
+          <div id="homeCentre" class="home-centre">
+            <span class="home-bot"><span class="home-bot-mark">J</span><span>Janna</span></span>
+            <span class="home-centre-divider"></span>
+            <button id="privateToggle" class="private-pill" type="button" title="Switch to Private Chat" aria-pressed="false"><span class="private-dot"></span><span>Private</span></button>
+          </div>
           <div id="threadTitlePill" class="thread-title-pill" hidden><span id="threadTitle">New chat</span></div>
         </div>
         <div class="top-right">
-          <button id="privateToggle" class="private-pill" type="button" title="Switch to Private Chat" aria-pressed="false"><span class="private-dot"></span><span>Private</span></button>
           <button id="convMenuBtn" class="icon-button" type="button" title="Conversation actions" aria-label="Conversation actions"><svg><use href="#i-dots"/></svg></button>
           <button id="rightPaneToggle" class="icon-button" type="button" title="Toggle right pane" aria-label="Toggle right pane"><svg><use href="#i-panel"/></svg></button>
         </div>
@@ -112,12 +118,18 @@
         </div>
         <div class="composer-dock" id="composerDock" hidden>
           <div id="followUps" class="follow-ups" hidden></div>
+          <div id="readAloudBar" class="read-aloud-bar" hidden>
+            <button id="raPause" class="ra-btn" type="button" title="Pause" aria-label="Pause read aloud"><svg><use href="#i-pause"/></svg></button>
+            <button id="raVoice" class="ra-pill" type="button" title="Voice"><span id="raVoiceLabel">Ara</span><svg><use href="#i-chevron"/></svg></button>
+            <button id="raRate" class="ra-pill" type="button" title="Playback rate"><span id="raRateLabel">1x</span></button>
+            <button id="raStop" class="ra-btn" type="button" title="Stop" aria-label="Stop read aloud"><svg><use href="#i-close"/></svg></button>
+          </div>
           <div id="composerHome"></div>
         </div>
-        <button id="jumpLatest" class="jump-latest" type="button" title="Scroll to bottom" aria-label="Scroll to bottom" hidden><svg><use href="#i-chevron"/></svg></button>
-        <p class="ai-disclaimer">Janna AI can make mistakes. Check important info.</p>
+        <p class="ai-disclaimer" id="aiDisclaimer"><button type="button" class="link-btn" id="privacyChoicesLink">Your privacy choices</button></p>
 
         <div class="composer" id="composer">
+          <button id="jumpLatest" class="jump-latest" type="button" title="Scroll to bottom" aria-label="Scroll to bottom" hidden><svg><use href="#i-chevron"/></svg></button>
           <div id="modeChipRow" class="mode-chip-row" hidden></div>
           <div id="attachmentTray" class="attachment-tray" hidden></div>
           <div class="composer-row">

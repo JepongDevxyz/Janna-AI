@@ -127,7 +127,11 @@ svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.65;strok
 .private-pill[aria-pressed="true"]{background:var(--chip);border:1px solid var(--line);color:var(--ink);font-weight:600}
 .private-dot{width:8px;height:8px;border:1.5px dashed currentColor;border-radius:50%;flex-shrink:0}
 .private-pill[aria-pressed="true"] .private-dot{border-style:solid;background:currentColor}
-.thread-title-pill{display:flex;align-items:center;min-width:0;max-width:100%;background:transparent;border:1px solid var(--line);border-radius:999px;padding:5px 16px;font-size:13px;font-weight:600}
+.thread-title-pill{display:flex;align-items:center;min-width:0;max-width:100%;background:var(--chip);border:1px solid var(--line);border-radius:999px;padding:5px 16px;font-size:13px;font-weight:600}
+.home-centre{display:flex;align-items:center;gap:10px;min-width:0}
+.home-bot{display:flex;align-items:center;gap:7px;font-size:14px;font-weight:600;color:var(--ink);white-space:nowrap}
+.home-bot-mark{width:24px;height:24px;border-radius:50%;background:var(--ink);color:var(--panel);display:inline-flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;flex-shrink:0}
+.home-centre-divider{width:1px;height:20px;background:var(--line);flex-shrink:0}
 .thread-title-pill span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 /* ---------- Chat view / welcome ---------- */
@@ -146,6 +150,9 @@ svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.65;strok
 .suggest-row:hover{background:var(--hover)}
 .suggest-row svg{color:var(--muted);width:18px;height:18px}
 .suggest-row .suggest-hint{margin-left:auto;font-size:12px;color:var(--faded)}
+/* Autocomplete: the typed part is darker, the rest stays muted. */
+.ac-match{color:var(--ink);font-weight:600}
+.ac-rest{color:var(--muted)}
 .suggest-back{color:var(--muted);font-size:13px}
 
 /* ---------- Composer ---------- */
@@ -209,7 +216,7 @@ svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.65;strok
 .attachment-chip button:hover{background:var(--hover);color:var(--ink)}
 
 /* Model picker opens BELOW the composer (Grok); plus menu opens above it */
-.model-picker{position:absolute;left:0;right:0;top:calc(100% + 8px);z-index:50;background:var(--panel);border:1px solid var(--line);border-radius:20px;box-shadow:var(--shadow);padding:8px;max-height:min(420px,62vh);overflow:auto}
+.model-picker{position:absolute;left:0;right:0;bottom:calc(100% + 8px);top:auto;z-index:50;background:var(--panel);border:1px solid var(--line);border-radius:20px;box-shadow:var(--shadow);padding:8px;max-height:min(420px,62vh);overflow:auto}
 .plus-menu{position:absolute;left:0;right:0;bottom:calc(100% + 8px);z-index:50;background:var(--panel);border:1px solid var(--line);border-radius:20px;box-shadow:var(--shadow);padding:8px;max-height:min(420px,62vh);overflow:auto}
 .plus-menu-handle{display:none}
 .plus-scrim{position:fixed;inset:0;background:rgba(0,0,0,.32);z-index:79}
@@ -238,6 +245,18 @@ svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.65;strok
 
 /* ---------- Follow-up chips ---------- */
 .follow-ups{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-start;width:100%;max-width:760px;margin:0 auto 10px}
+/* Read aloud (Grok): a floating white playback pill above the composer. */
+.read-aloud-bar{display:flex;align-items:center;gap:4px;background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:6px 8px;box-shadow:var(--shadow);margin:0 auto 10px;width:fit-content;max-width:100%}
+.ra-btn{flex-shrink:0;width:32px;height:32px;border:0;border-radius:50%;background:transparent;color:var(--ink);display:inline-flex;align-items:center;justify-content:center}
+.ra-btn:hover{background:var(--hover)}
+.ra-btn svg{width:16px;height:16px}
+.ra-pill{display:flex;align-items:center;gap:3px;border:0;background:transparent;color:var(--ink);font-size:13px;font-weight:600;padding:6px 8px;border-radius:999px;white-space:nowrap}
+.ra-pill:hover{background:var(--hover)}
+.ra-pill svg{width:13px;height:13px;color:var(--muted)}
+/* Private empty composer (Grok): grey up-arrow Send, no voice button. */
+.composer.private-mode.is-empty .voice-mode-btn{display:none}
+.composer.private-mode.is-empty:not(.is-busy) .send-button{display:inline-flex;width:48px;height:48px;background:var(--chip);color:var(--muted)}
+.composer.private-mode.is-empty:not(.is-busy) .send-button svg{width:22px;height:22px}
 .follow-chip{border:1px solid var(--line);background:var(--panel);border-radius:999px;padding:8px 14px;font-size:13px;color:var(--ink);text-align:left}
 .follow-chip:hover{background:var(--hover)}
 .follow-chip.primary{background:var(--chip);border-color:transparent}
@@ -264,8 +283,11 @@ svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.65;strok
 .version-pager button:disabled{opacity:.4}
 .message-actions{display:flex;align-items:center;gap:2px;margin-top:6px}
 .message.user .message-actions{justify-content:flex-end}
-/* Edit/Copy actions under your bubble (Grok shows them). */
-.user-actions{margin-top:4px}
+/* User Edit/Copy (Grok): hidden until you tap the bubble, then icon-only,
+   to the LEFT of the bubble on the same baseline. */
+.user-row{display:flex;align-items:flex-end;justify-content:flex-end;gap:2px;max-width:100%}
+.user-actions{display:none;margin:0}
+.message.user.show-user-actions .user-actions{display:flex}
 .message-action-text{display:inline-flex;align-items:center;gap:5px;border:0;background:transparent;color:var(--muted);font-size:12.5px;padding:5px 8px;border-radius:8px}
 .message-action-text:hover{background:var(--hover);color:var(--ink)}
 .message-action-text svg{width:14px;height:14px}
@@ -299,11 +321,12 @@ svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.65;strok
 
 /* Thinking display */
 .thinking{margin:0 0 14px;border:0;background:transparent;font-size:14px;color:var(--muted)}
+.thinking.done{border-bottom:1px solid var(--line);padding-bottom:10px}
+.thinking.done .think-title{font-size:15px}
 .thinking-head{display:flex;align-items:center;gap:8px;width:100%;border:0;background:transparent;color:var(--muted);font-size:14px;padding:4px 0;text-align:left;border-radius:8px}
 .thinking-head:hover{color:var(--ink)}
 .thinking-head .think-spinner{width:14px;height:14px;border:2px solid var(--line);border-top-color:var(--muted);border-radius:50%;animation:spin 1s linear infinite;flex-shrink:0}
 .thinking-head .think-title{flex:1;text-align:left;font-size:18px;font-weight:500;color:var(--muted)}
-.thinking-head .think-clock{font-variant-numeric:tabular-nums;font-size:13px}
 .thinking-head .think-chevron{width:15px;height:15px;transition:transform .15s}
 .thinking.collapsed .think-chevron{transform:rotate(-90deg)}
 .thinking.collapsed .think-body{display:none}
@@ -326,6 +349,10 @@ svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.65;strok
 .code-action{border:1px solid transparent;border-radius:8px;background:transparent;padding:6px 10px;color:var(--muted);font-size:12px;font-weight:600;white-space:nowrap}
 .code-action:hover{background:var(--hover);color:var(--ink);border-color:var(--line)}
 .message-body .code-block pre{border:0;border-radius:0;background:var(--panel);margin:0;padding:14px 16px;max-height:460px;overflow:auto;white-space:pre;tab-size:2;color:var(--ink)}
+/* Code line numbers (Grok shows them): a sticky gutter inside the scroll. */
+.code-scroll{display:flex;overflow:auto;max-height:460px}
+.code-gutter{flex-shrink:0;position:sticky;left:0;padding:14px 8px 14px 16px;font:12.5px/1.65 ui-monospace,SFMono-Regular,Consolas,'Liberation Mono',monospace;color:var(--faded);text-align:right;user-select:none;background:var(--panel);white-space:pre}
+.message-body .code-block .code-scroll pre{flex:1;min-width:0;overflow:visible;max-height:none}
 .message-body .code-block code{font:12.5px/1.65 ui-monospace,SFMono-Regular,Consolas,'Liberation Mono',monospace;white-space:pre}
 body.wrap-code .message-body .code-block pre{white-space:pre-wrap;overflow-wrap:anywhere}
 .tok-kw{color:var(--code-kw)}.tok-str{color:var(--code-str)}.tok-com{color:var(--code-com);font-style:italic}.tok-num{color:var(--code-num)}.tok-fn{color:var(--code-fn)}
@@ -449,6 +476,10 @@ body.wrap-code .message-body .code-block pre{white-space:pre-wrap;overflow-wrap:
 
 /* ---------- Toast ---------- */
 .toast{position:fixed;z-index:90;left:50%;transform:translateX(-50%);bottom:24px;max-width:min(560px,92vw);padding:11px 17px;background:var(--ink);color:var(--panel);box-shadow:var(--shadow);border-radius:12px;font-size:13px;line-height:1.5}
+/* Dark mode: the bottom toast must NOT invert to a white card (the old
+   --ink background did exactly that — the ugly white card in her
+   screenshot). Dark card + light text in dark mode, like Grok's. */
+body[data-theme='dark'] .toast,body[data-theme='velvet'] .toast,body[data-theme='midnight'] .toast,body[data-theme='pro'] .toast{background:var(--panel);color:var(--ink);border:1px solid var(--line)}
 /* White top toast (Grok's mic-denied card): white card, top centre, X. */
 .top-toast{position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:95;display:flex;align-items:flex-start;gap:10px;max-width:min(480px,92vw);background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);padding:12px 14px;font-size:13.5px;line-height:1.5}
 .top-toast + .top-toast{top:64px}
@@ -503,7 +534,7 @@ body.wrap-code .message-body .code-block pre{white-space:pre-wrap;overflow-wrap:
 .voice-sheet-row select{max-width:200px;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:999px;padding:8px 12px;font-size:14px}
 
 /* ---------- Jump to latest (Grok: circular, centered above the composer) ---------- */
-.jump-latest{position:absolute;left:50%;transform:translateX(-50%);bottom:136px;width:40px;height:40px;border:1px solid var(--line);border-radius:50%;padding:0;background:var(--panel);color:var(--ink);z-index:5;box-shadow:var(--shadow-sm);display:inline-flex;align-items:center;justify-content:center}
+.jump-latest{position:absolute;left:50%;transform:translateX(-50%);bottom:calc(100% + 12px);width:40px;height:40px;border:1px solid var(--line);border-radius:50%;padding:0;background:var(--panel);color:var(--ink);z-index:5;box-shadow:var(--shadow-sm);display:inline-flex;align-items:center;justify-content:center}
 .jump-latest svg{width:18px;height:18px}
 .interrupted-note{margin-top:8px}
 
@@ -536,6 +567,8 @@ body.wrap-code .message-body .code-block pre{white-space:pre-wrap;overflow-wrap:
   .composer:not(.is-empty) .send-button svg{width:22px;height:22px}
   /* "+" menu becomes a bottom sheet with a drag handle (Grok). */
   .plus-menu{position:fixed;left:0;right:0;bottom:0;top:auto;max-height:70vh;border-radius:20px 20px 0 0;padding:8px 16px 28px;z-index:80}
+  /* Model picker becomes a bottom sheet too (Grok, mobile). */
+  .model-picker{position:fixed;left:0;right:0;bottom:0;top:auto;max-height:70vh;border-radius:20px 20px 0 0;padding:8px 16px 28px;z-index:80}
   .plus-menu-handle{display:block;width:40px;height:4px;border-radius:2px;background:var(--line);margin:4px auto 10px}
   .model-picker-btn{max-width:112px}
   .model-picker-btn span{max-width:96px}

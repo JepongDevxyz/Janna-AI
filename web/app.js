@@ -268,7 +268,10 @@ function formatMarkdown(value) {
     const extra = isHtml
       ? `<button type="button" class="code-action" data-code-action="preview" data-code-index="${id}" title="Preview this page">Preview</button><button type="button" class="code-action" data-code-action="save" data-code-index="${id}" title="Save to Library">Save</button>`
       : '';
-    return `<section class="code-block" data-code-index="${id}"><div class="code-block-header"><span class="code-logo">${escapeHTML(logo)}</span><span class="code-language">${escapeHTML(label)}</span><span class="code-block-actions"><button type="button" class="code-action" data-code-action="copy" data-code-index="${id}" title="Copy this code">Copy</button>${extra}</span></div><pre tabindex="0"><code>${highlightCode(block.code, block.language)}</code></pre></section>`;
+    // Grok's code blocks have line numbers — a gutter inside the scroll.
+    const lineCount = String(block.code || '').split('\n').length;
+    const gutter = Array.from({ length: lineCount }, (_, i) => i + 1).join('\n');
+    return `<section class="code-block" data-code-index="${id}"><div class="code-block-header"><span class="code-logo">${escapeHTML(logo)}</span><span class="code-language">${escapeHTML(label)}</span><span class="code-block-actions"><button type="button" class="code-action" data-code-action="copy" data-code-index="${id}" title="Copy this code">Copy</button>${extra}</span></div><div class="code-scroll"><div class="code-gutter" aria-hidden="true">${gutter}</div><pre tabindex="0"><code>${highlightCode(block.code, block.language)}</code></pre></div></section>`;
   }).replace(/\uE002(\d+)\uE003/g, (_, id) => tables[Number(id)] || '');
   return { html, blocks };
 }
@@ -332,11 +335,39 @@ function voiceSpeak(text) {
 }
 /* Read aloud from the message menu (Grok's More → Read aloud): speaks on
    demand, even when the read-replies-aloud setting is off. */
+/* Read aloud (Grok): a floating playback pill above the composer —
+   Pause, Voice, playback rate, Stop. The pill hides when speech ends.
+   Changing voice or rate restarts the reading from the beginning. */
+const raState = { text: '', paused: false };
 function speakNow(text) {
   if (!('speechSynthesis' in window)) { toast('Read aloud is not available in this browser.'); return; }
   const cleaned = voiceClean(text);
   if (!cleaned) return;
-  try { window.speechSynthesis.cancel(); const u = applyVoicePersona(new SpeechSynthesisUtterance(cleaned.slice(0, 1700))); u.lang = speechTag(cleaned); window.speechSynthesis.speak(u); } catch { /* unavailable */ }
+  raState.text = cleaned.slice(0, 1700);
+  raState.paused = false;
+  startReadAloud();
+  showReadAloudBar();
+}
+function startReadAloud() {
+  try {
+    window.speechSynthesis.cancel();
+    const u = applyVoicePersona(new SpeechSynthesisUtterance(raState.text));
+    u.lang = speechTag(raState.text);
+    u.onend = () => hideReadAloudBar();
+    u.onerror = () => hideReadAloudBar();
+    window.speechSynthesis.speak(u);
+  } catch { hideReadAloudBar(); }
+}
+function showReadAloudBar() {
+  $('raVoiceLabel').textContent = voicePersona().name;
+  $('raRateLabel').textContent = (state.settings.voice_speed || 'Normal').replace('Normal', '1x');
+  $('raPause').innerHTML = '<svg><use href="#i-pause"/></svg>';
+  $('raPause').title = 'Pause'; $('raPause').setAttribute('aria-label', 'Pause read aloud');
+  $('readAloudBar').hidden = false;
+}
+function hideReadAloudBar() {
+  try { window.speechSynthesis.cancel(); } catch { /* ignore */ }
+  $('readAloudBar').hidden = true;
 }
 /* Dictation Refinement (Grok's Behavior setting): 'Tidy up' lightly cleans
    dictated text (collapse spaces, capitalise the first letter); 'Verbatim'
@@ -852,10 +883,6 @@ const FILE_SKILLS = [
   ['pptx', 'PowerPoint', 'Create, read, and edit PowerPoint presentations (.pptx)'],
   ['xlsx', 'Spreadsheet', 'Create, read, and edit spreadsheet files (.xlsx, .csv)'],
 ];
-function armFileSkill(kind, label) {
-  $('prompt').value = 'Create a ' + label + ' (' + kind + '): ';
-  autoGrowPrompt(); syncSendState(); $('prompt').focus();
-}
 async function addCustomSkill() {
   const res = await showDialog({ title: 'New skill', text: 'Teach Janna a repeatable task. Tapping it in the + menu puts its instruction in the composer.', fields: [{ name: 'name', placeholder: 'Skill name' }, { name: 'instruction', placeholder: 'What should Janna do? e.g. Summarize this in three bullet points' }], okText: 'Save' });
   if (!res || !String(res.name || '').trim() || !String(res.instruction || '').trim()) return;
@@ -884,6 +911,34 @@ function suggestRotation() {
   try { rot = Number(localStorage.getItem('janna-suggest-rot-v1') || '0') || 0; localStorage.setItem('janna-suggest-rot-v1', String(rot + 1)); } catch { /* ignore */ }
   suggestionRot = rot;
   return rot;
+}
+/* Autocomplete (Grok): while typing on home, the 3 static suggestion
+   rows are replaced by completion rows — typed part darker, remainder
+   grey. Janna has no completion backend, so the honest equivalent is
+   matching the local suggestion pool (topic prompts + mode prompts)
+   against the typed text. Clearing restores the static rows. */
+function renderAutocomplete() {
+  const list = $('suggestList');
+  if (!list || $('welcome').hidden) return;
+  const q = $('prompt').value.trim().toLowerCase();
+  if (state.isPrivate || state.armedMode || !q) { renderSuggestions(); return; }
+  const pool = [];
+  for (const t of TOPIC_SUGGESTIONS) pool.push({ label: t.label, icon: t.icon });
+  for (const k of MODE_ORDER) for (const p of (MODES[k].prompts || [])) pool.push({ label: p, icon: MODES[k].icon });
+  const hits = pool.filter(c => c.label.toLowerCase().includes(q)).slice(0, 3);
+  if (!hits.length) { renderSuggestions(); return; }
+  list.replaceChildren(); list.hidden = false;
+  for (const h of hits) {
+    const row = el('button', 'suggest-row');
+    row.type = 'button';
+    const i = h.label.toLowerCase().indexOf(q);
+    const before = escapeHTML(h.label.slice(0, i));
+    const match = escapeHTML(h.label.slice(i, i + q.length));
+    const after = escapeHTML(h.label.slice(i + q.length));
+    row.innerHTML = `<svg><use href="#i-${h.icon}"/></svg><span><span class="ac-rest">${before}</span><span class="ac-match">${match}</span><span class="ac-rest">${after}</span></span>`;
+    row.onclick = () => { $('prompt').value = h.label; autoGrowPrompt(); syncSendState(); $('prompt').focus(); renderSuggestions(); };
+    list.append(row);
+  }
 }
 function renderSuggestions() {
   const list = $('suggestList');
@@ -1002,7 +1057,7 @@ function thinkingEl() {
   const item = el('div', 'thinking');
   const head = el('button', 'thinking-head');
   head.type = 'button';
-  head.innerHTML = '<span class="think-spinner"></span><span class="think-title">Working for 1s</span><span class="think-clock">1s</span><svg class="think-chevron"><use href="#i-chevron"/></svg>';
+  head.innerHTML = '<span class="think-spinner"></span><span class="think-title">Working for 1s</span><svg class="think-chevron"><use href="#i-chevron"/></svg>';
   const body = el('div', 'think-body');
   body.append(el('ul', 'think-steps'));
   item.append(head, body);
@@ -1020,14 +1075,12 @@ function startThinking() {
   // Grok: "Planning next moves" first, then the live "Working for Ns" timer.
   think.planned = false;
   item.querySelector('.think-title').textContent = 'Planning next moves';
-  item.querySelector('.think-clock').textContent = '1s';
   item.querySelector('.think-steps').replaceChildren();
   think.start = Date.now();
   clearInterval(think.timer);
   think.timer = setInterval(() => {
     const secs = Math.max(1, Math.round((Date.now() - think.start) / 1000));
     if (think.planned) item.querySelector('.think-title').textContent = 'Working for ' + fmtDur(secs);
-    item.querySelector('.think-clock').textContent = fmtDur(secs);
   }, 1000);
   scrollThreadToBottom();
 }
@@ -1035,22 +1088,22 @@ function stopThinking() {
   clearInterval(think.timer);
   think.doneSecs = Math.max(1, Math.round((Date.now() - think.start) / 1000));
   if (think.el) {
+    // Grok shows no thought line for instant simple replies.
+    if (think.doneSecs < 2) { think.el.hidden = true; return; }
     const secs = fmtDur(think.doneSecs);
     think.el.classList.add('done', 'collapsed');
     think.el.querySelector('.think-title').textContent = 'Thought for ' + secs;
-    think.el.querySelector('.think-clock').textContent = secs;
   }
 }
 function addProgressStep(text) {
   const item = thinkingEl();
   if (!item) return;
-  // Grok shows ONE short step line at a time: the old step fades, the
-  // current one is black. Never a long checklist.
+  // Grok shows ONE short step line at a time — the old one is replaced,
+  // never stacked (the v56 code kept two, which is why two lines showed).
   think.planned = true;
   item.querySelector('.think-title').textContent = 'Working for ' + fmtDur(Math.max(1, Math.round((Date.now() - think.start) / 1000)));
   const steps = item.querySelector('.think-steps');
-  steps.querySelectorAll('li').forEach(li => { li.classList.remove('is-current'); li.classList.add('fading'); });
-  while (steps.children.length > 1) steps.removeChild(steps.firstChild);
+  steps.replaceChildren();
   const li = el('li', 'is-current', text);
   steps.append(li);
   scrollThreadToBottom();
@@ -1067,16 +1120,26 @@ function createMessageNode(message, session) {
     if (message.kind === 'image' && message.data) { const img = document.createElement('img'); img.src = 'data:image/jpeg;base64,' + message.data; img.alt = ''; img.className = 'attachment-preview'; bubble.append(img); }
     if (message.kind === 'log') bubble.append(el('div', 'muted', (message.name || 'log') + ' \u00b7 ' + (message.content || '').length + ' characters'));
     if (Array.isArray(message.attached)) for (const a of message.attached) bubble.append(el('div', 'muted', (a.kind === 'image' ? 'Image' : 'File') + ': ' + (a.name || 'file')));
-    item.append(bubble);
-    // Grok shows Edit/Copy actions under your bubble (tap still edits too).
+    // Grok: Edit/Copy are hidden until you tap the bubble, then icon-only
+    // buttons appear to the LEFT of the bubble on the same baseline.
+    // A branched copy (grok's Branch) has Copy only, no Edit.
+    const row = el('div', 'user-row');
     const uActions = el('div', 'message-actions user-actions');
-    const uEdit = button('Edit', () => { if (!state.busy) startEdit(item, message, session); });
-    uEdit.classList.add('message-action-text'); uEdit.innerHTML = '<svg><use href="#i-edit"/></svg><span>Edit</span>';
-    const uCopy = button('Copy', async () => { toast((await copyCodeText(currentVersionText(message))) ? 'Copied' : 'Copy failed'); });
-    uCopy.classList.add('message-action-text'); uCopy.innerHTML = '<svg><use href="#i-copy"/></svg><span>Copy</span>';
-    uActions.append(uEdit, uCopy);
-    item.append(uActions);
-    bubble.onclick = () => { if (!state.busy) startEdit(item, message, session); };
+    if (!message.branched) {
+      const uEdit = button('Edit', () => { if (!state.busy) { item.classList.remove('show-user-actions'); startEdit(item, message, session); } });
+      uEdit.classList.add('message-action'); uEdit.innerHTML = '<svg><use href="#i-edit"/></svg>'; uEdit.title = 'Edit';
+      uActions.append(uEdit);
+    }
+    const uCopy = button('Copy', async () => { item.classList.remove('show-user-actions'); toast((await copyCodeText(currentVersionText(message))) ? 'Copied' : 'Copy failed'); });
+    uCopy.classList.add('message-action'); uCopy.innerHTML = '<svg><use href="#i-copy"/></svg>'; uCopy.title = 'Copy';
+    uActions.append(uCopy);
+    row.append(uActions, bubble);
+    item.append(row);
+    bubble.onclick = () => {
+      if (state.busy) return;
+      document.querySelectorAll('.message.user.show-user-actions').forEach(n => { if (n !== item) n.classList.remove('show-user-actions'); });
+      item.classList.toggle('show-user-actions');
+    };
     if (Array.isArray(message.versions) && message.versions.length > 1) {
       const pager = el('div', 'version-pager');
       const prev = button('\u2039', () => switchVersion(message, session, (message.version || 0) - 1));
@@ -1102,7 +1165,8 @@ function createMessageNode(message, session) {
     const more = button('More', () => openMessageMenu(message, session, more));
     more.classList.add('message-action'); more.innerHTML = '<svg><use href="#i-dots"/></svg>'; more.title = 'More actions';
     actions.append(copyBtn, like, dislike, more);
-    item.append(actions);
+    // Grok's branched copy has no assistant action bar.
+    if (!message.branched) item.append(actions);
     // A reply cut short by a refresh keeps its partial text, marked as
     // interrupted — it is never silently presented as finished.
     if (message.pending) item.append(el('div', 'muted interrupted-note', 'Interrupted \u2014 this reply stopped here. Send a follow-up to continue.'));
@@ -1139,7 +1203,6 @@ function startEdit(item, message, session) {
   area.append(ta);
   const row = el('div', 'edit-actions');
   const cancel = button('Cancel', () => renderConversation(session));
-  const copy = button('Copy', async () => { toast((await copyCodeText(ta.value)) ? 'Copied' : 'Copy failed'); });
   const sendBtn = button('Send', async () => {
     // Editing an earlier message forks the thread: everything after it is
     // replaced by the new answer (Grok's branch behaviour). Never do that
@@ -1157,8 +1220,8 @@ function startEdit(item, message, session) {
     }
     finishEdit(message, session, ta.value);
   });
-  cancel.classList.add('edit-pill'); copy.classList.add('edit-pill'); sendBtn.classList.add('edit-pill', 'edit-send');
-  row.append(cancel, copy, sendBtn);
+  cancel.classList.add('edit-pill'); sendBtn.classList.add('edit-pill', 'edit-send');
+  row.append(cancel, sendBtn);
   area.append(row);
   item.append(area);
   autoGrowEdit(ta);
@@ -1298,7 +1361,10 @@ function renderConversation(session) {
   if (slot) slot.append($('composer'));
   const title = (session && findSession(session.id)?.title) || session?.title || '';
   $('threadTitle').textContent = title || 'New chat';
-  $('threadTitlePill').hidden = !session || empty;
+  syncTopbar();
+  // Grok shows no footer line inside a thread — the "Your privacy
+  // choices" line belongs to the home view only.
+  $('aiDisclaimer').hidden = !empty;
   if (session) {
     for (const msg of session.messages || []) $('messages').append(createMessageNode(msg, session));
   }
@@ -1309,13 +1375,14 @@ function renderConversation(session) {
   // and reloads.
   const _msgs = session?.messages || [];
   let _lastIdx = -1;
-  for (let i = _msgs.length - 1; i >= 0; i--) if (_msgs[i].role === 'assistant' && _msgs[i].thinkSecs) { _lastIdx = i; break; }
+  // Grok shows NO thought line for instant simple replies — only when
+  // the run actually took time (2s or more).
+  for (let i = _msgs.length - 1; i >= 0; i--) if (_msgs[i].role === 'assistant' && (_msgs[i].thinkSecs || 0) >= 2) { _lastIdx = i; break; }
   if (_lastIdx >= 0) {
     const item = thinkingEl();
     item.hidden = false;
     item.classList.add('done', 'collapsed');
     item.querySelector('.think-title').textContent = 'Thought for ' + fmtDur(_msgs[_lastIdx].thinkSecs);
-    item.querySelector('.think-clock').textContent = fmtDur(_msgs[_lastIdx].thinkSecs);
     item.querySelector('.think-steps').replaceChildren();
     const kids = $('messages').children;
     if (kids[_lastIdx]) $('messages').insertBefore(item, kids[_lastIdx]);
@@ -1350,7 +1417,7 @@ function visibleChats() {
 function renderRecents() {
   const list = $('sessionList'); list.replaceChildren();
   const chats = visibleChats();
-  const shown = state.showAllChats ? chats : chats.slice(0, 5);
+  const shown = state.showAllChats ? chats : chats.slice(0, 6);
   for (const s of shown) {
     const row = el('div', 'side-row');
     if (state.session && s.id === state.session.id) row.classList.add('active');
@@ -1432,18 +1499,37 @@ async function shareChat(session) {
 /* ---------- sidebar & header ---------- */
 function openSidebar() { $('sidebar').classList.add('open'); const s = $('mobileScrim'); s.hidden = false; s.classList.add('visible'); }
 function closeSidebar() { $('sidebar').classList.remove('open'); const s = $('mobileScrim'); s.classList.remove('visible'); s.hidden = true; $('accountMenu').hidden = true; }
+/* Top bar (Grok): home shows the bot + Private cluster in the centre;
+   a normal thread shows only the title pill; a private thread shows the
+   cluster again (there is no title for a private chat). The "…" menu
+   needs a conversation, so it hides on home. */
+function syncTopbar() {
+  const inThread = !!(state.session && (state.session.messages || []).length);
+  const inPrivate = state.isPrivate;
+  $('homeCentre').hidden = inThread && !inPrivate;
+  $('threadTitlePill').hidden = !inThread || inPrivate;
+  $('convMenuBtn').hidden = !inThread;
+}
 function syncPrivate() {
   const c = $('composer');
   c.classList.toggle('private-mode', state.isPrivate);
   $('privateToggle').setAttribute('aria-pressed', String(state.isPrivate));
+  $('privateToggle').title = state.isPrivate ? 'Exit Private Chat' : 'Switch to Private Chat';
+  // Grok's private home heading IS "What's on your mind today?" — the
+  // v65 change forcing the normal heading here was wrong; reverted.
   $('welcomeH1').textContent = state.isPrivate ? 'What\u2019s on your mind today?' : 'What\u2019s on the agenda today?';
   $('privateNote').hidden = !state.isPrivate;
   if (state.isPrivate) { state.armedMode = null; renderModeChip(); $('prompt').placeholder = 'Ask anything\u2026'; }
   renderSuggestions();
+  syncTopbar();
 }
 function togglePrivate() {
   state.isPrivate = !state.isPrivate;
-  if (state.isPrivate) { state.session = null; state.privateThread = []; renderConversation(null); toast('Private mode \u2014 this chat won\u2019t be saved.'); }
+  // Grok shows NO card when Private is toggled — the state is already
+  // visible in the top-bar pill, the dashed composer border and the
+  // private note under the composer. The old toast() here rendered as a
+  // big white card overlapping the footer in dark mode.
+  if (state.isPrivate) { state.session = null; state.privateThread = []; renderConversation(null); }
   syncPrivate();
 }
 
@@ -1528,7 +1614,7 @@ function openMessageMenu(message, session, anchor) {
   const timeLabel = 'Today ' + when.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   const items = [
     { group: timeLabel },
-    { label: 'Branch in new chat', onClick: () => branchMessage(message) },
+    { label: 'Branch in new chat', onClick: () => branchMessage(message, s) },
     { label: 'Share', onClick: () => shareChat(s) },
     { label: 'Read aloud', onClick: () => speakNow(message.content || '') },
     { label: 'Export to PDF', onClick: () => window.print() },
@@ -1536,11 +1622,38 @@ function openMessageMenu(message, session, anchor) {
   ];
   showMenu(anchor || $('composer'), items);
 }
-async function branchMessage(message) {
-  const text = stripStyleDirective(message.content || '');
-  newChat();
-  $('prompt').value = text; autoGrowPrompt(); syncSendState();
-  toast('Branched into a new chat \u2014 press send when ready.');
+async function branchMessage(message, session) {
+  const s = session || state.session;
+  const list = (s && s.messages) || [];
+  const idx = list.indexOf(message);
+  // Grok's Branch copies the SINGLE exchange (the user message just
+  // before this reply + the reply), stripped: no sources, no action bar,
+  // and the user message has Copy only. It opens as a real thread with a
+  // sidebar entry, titled with the question.
+  let uIdx = -1;
+  for (let i = idx - 1; i >= 0; i--) if (list[i].role === 'user') { uIdx = i; break; }
+  if (idx < 0 || uIdx < 0) { toast('Nothing to branch from here.'); return; }
+  const userClone = { ...list[uIdx], branched: true };
+  const asstClone = { ...message, branched: true };
+  const title = wordSafeTitle(stripStyleDirective(list[uIdx].content || ''));
+  const exchange = [userClone, asstClone];
+  try {
+    const data = await api('/api/sessions', { project_id: null });
+    const ns = data.session || data;
+    if (!ns || !ns.id) throw new Error('Could not create a chat');
+    await api('/api/sessions/update', { session_id: ns.id, title, messages: exchange });
+    ns.title = title; ns.messages = exchange;
+    state.sessions.unshift(ns);
+    state.session = ns; state.isPrivate = false; syncPrivate();
+    renderConversation(ns); renderRecents();
+  } catch (e) {
+    // Local-only fallback: the branch still opens as a real thread.
+    const ns = { id: uid('session'), title, messages: exchange, updated: Math.floor(Date.now() / 1000) };
+    state.sessions.unshift(ns);
+    state.session = ns; state.isPrivate = false; syncPrivate();
+    renderConversation(ns); renderRecents();
+    toast('Branched on this device.');
+  }
 }
 
 /* ---------- right pane (app preview; scripts always off — the shell's
@@ -1620,7 +1733,7 @@ function renderLibrary() {
   }
   if (!items.length) {
     const empty = el('div', 'library-empty');
-    empty.innerHTML = '<strong>Your library is empty</strong>Upload a file to keep it here.';
+    empty.innerHTML = '<strong>Your library is empty</strong>Upload files to keep them within reach.';
     list.append(empty);
     return;
   }
@@ -1723,7 +1836,9 @@ function openPlusMenu() {
         const b = el('button', 'plus-menu-row');
         b.type = 'button';
         b.innerHTML = `<svg><use href="#i-file"/></svg><span>${label}</span>`;
-        b.onclick = () => { closePlusMenu(); armFileSkill(kind, label); };
+        // Grok: tapping a built-in skill just closes the sheet — no
+        // visible change, no composer arming (the skill runs server-side).
+        b.onclick = () => { closePlusMenu(); };
         skillsSub.append(b);
       }
       const mg = el('button', 'plus-menu-row');
@@ -1954,6 +2069,7 @@ function renderPalette() {
     addSection(tab === 'All' ? 'Actions' : 'Apps', [
       { label: 'New Chat', kbd: 'Ctrl J', icon: 'plus', onClick: () => newChat() },
       { label: 'New Project', meta: '', icon: 'book', onClick: () => createProject() },
+      { label: 'New Automation', icon: 'spark', onClick: () => openSettings('automations') },
       { label: 'Open settings', kbd: 'Ctrl ,', icon: 'settings', onClick: () => openSettings('account') },
     ].filter(r => !q || r.label.toLowerCase().includes(q)));
   }
@@ -1967,16 +2083,27 @@ function renderPalette() {
     addSection('Files', state.library.slice(0, 5).map(it => ({ label: it.name, meta: it.kindLabel || it.kind, icon: 'file', onClick: () => openLibraryItem(it) })));
   }
   if (tab === 'Automations') {
-    list.append(el('div', 'palette-empty', 'Janna has no automations yet.'));
+    const rows = [];
+    for (const g of AUTOMATIONS) for (const it of g.items) rows.push({ label: it.name, meta: g.cat, icon: 'spark', onClick: () => openSettings('automations') });
+    addSection('Automations', rows.filter(r => !q || r.label.toLowerCase().includes(q)));
   }
   if ((tab === 'All' || tab === 'Files') && q) {
     addSection('Files', state.library.filter(it => (it.name || '').toLowerCase().includes(q)).map(it => ({ label: it.name, meta: it.kindLabel || it.kind, icon: 'file', onClick: () => openLibraryItem(it) })));
   }
   if (tab === 'All') {
     const chats = visibleChats().filter(s => !q || (s.title || '').toLowerCase().includes(q) || (s.messages || []).some(m => (m.content || '').toLowerCase().includes(q)));
-    addSection('Chats', chats.slice(0, 8).map(s => ({ label: s.title || 'New chat', meta: timeAgo(s.updated), icon: 'search', onClick: () => openSession(s.id) })));
+    if (q) list.append(el('div', 'palette-group', chats.length + ' conversation' + (chats.length === 1 ? '' : 's') + ' found'));
+    addSection('Chats', chats.slice(0, 8).map(s => ({ label: s.title || 'New chat', meta: timeAgo(s.updated), icon: 'chat', onClick: () => openSession(s.id) })));
+    if (q && chats.length === 0 && !list.querySelector('.palette-item')) list.append(el('div', 'palette-empty', 'No matches for \u201c' + $('paletteInput').value.trim() + '\u201d.'));
+    if (q) {
+      const ask = el('button', 'palette-item');
+      ask.type = 'button';
+      ask.innerHTML = `<svg><use href="#i-search"/></svg><span>Ask Janna \u201c${escapeHTML($('paletteInput').value.trim())}\u201d</span>`;
+      ask.onclick = () => { closePalette(); $('prompt').value = $('paletteInput').value.trim(); autoGrowPrompt(); syncSendState(); $('prompt').focus(); };
+      list.append(ask);
+    }
   }
-  if (!list.childNodes.length) list.append(el('div', 'palette-empty', 'No results for \u201c' + $('paletteInput').value.trim() + '\u201d'));
+  if (!list.childNodes.length) list.append(el('div', 'palette-empty', 'No matches for \u201c' + $('paletteInput').value.trim() + '\u201d.'));
 }
 function renderPaletteTabs() {
   const tabs = $('paletteTabs');
@@ -2028,7 +2155,8 @@ function settingsRow({ label, hint = '', control }) {
   const texts = el('div', 'settings-row-texts');
   texts.append(el('strong', '', label));
   if (hint) texts.append(el('p', '', hint));
-  row.append(texts, control);
+  row.append(texts);
+  if (control) row.append(control);
   return row;
 }
 function settingsSelect(options, value, onChange) {
@@ -2146,7 +2274,7 @@ function renderSettingsBody(section) {
     }
     body.append(el('h3', '', 'Built-in'));
     for (const [kind, label, hint] of FILE_SKILLS) {
-      body.append(settingsRow({ label, hint, control: button('Use', () => { closeSettings(); armFileSkill(kind, label); }) }));
+      body.append(settingsRow({ label, hint }));
     }
   } else if (section === 'automations') {
     h('Automations');
@@ -2326,7 +2454,7 @@ function initializeWorkspace() {
 }
 function bindEvents() {
   const prompt = $('prompt');
-  prompt.addEventListener('input', () => { autoGrowPrompt(); syncSendState(); saveDraftSoon(); });
+  prompt.addEventListener('input', () => { autoGrowPrompt(); syncSendState(); saveDraftSoon(); renderAutocomplete(); });
   prompt.addEventListener('keydown', e => {
     const ctrlEnter = state.settings.require_ctrl_enter === true;
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -2383,6 +2511,29 @@ function bindEvents() {
   $('showMoreChats').onclick = () => { state.showAllChats = !state.showAllChats; renderRecents(); };
   $('headerSearch').onclick = () => openPalette();
   $('privateToggle').onclick = () => togglePrivate();
+  $('raPause').onclick = () => {
+    if (!('speechSynthesis' in window)) return;
+    if (raState.paused) { try { window.speechSynthesis.resume(); } catch { /* ignore */ } raState.paused = false; $('raPause').innerHTML = '<svg><use href="#i-pause"/></svg>'; $('raPause').title = 'Pause'; }
+    else { try { window.speechSynthesis.pause(); } catch { /* ignore */ } raState.paused = true; $('raPause').innerHTML = '<svg><use href="#i-play"/></svg>'; $('raPause').title = 'Resume'; }
+  };
+  $('raVoice').onclick = () => {
+    const i = VOICE_PERSONAS.findIndex(p => p.id === (state.settings.voice_name || 'ara'));
+    const next = VOICE_PERSONAS[(i + 1) % VOICE_PERSONAS.length];
+    state.settings.voice_name = next.id;
+    saveJSON('janna-web-settings-v1', state.settings);
+    $('raVoiceLabel').textContent = next.name;
+    startReadAloud();
+  };
+  $('raRate').onclick = () => {
+    const cur = state.settings.voice_speed || 'Normal';
+    const i = VOICE_SPEEDS.findIndex(s => s[0] === cur);
+    const next = VOICE_SPEEDS[(i + 1) % VOICE_SPEEDS.length];
+    state.settings.voice_speed = next[0];
+    saveJSON('janna-web-settings-v1', state.settings);
+    $('raRateLabel').textContent = next[0].replace('Normal', '1x');
+    startReadAloud();
+  };
+  $('raStop').onclick = () => hideReadAloudBar();
   $('rightPaneToggle').onclick = () => { $('rightPane').hidden ? openRightPane() : closeRightPane(); };
   $('rightPaneHide').onclick = () => closeRightPane();
   $('rightPaneNewTab').onclick = () => clearPreview();
@@ -2423,6 +2574,7 @@ function bindEvents() {
   $('settingsClose').onclick = () => closeSettings();
   $('termsLink').onclick = () => openLegal('terms');
   $('privacyLink').onclick = () => openLegal('privacy');
+  $('privacyChoicesLink').onclick = () => openSettings('data');
   $('convMenuBtn').onclick = e => {
     const s = state.session;
     if (!s) return;
