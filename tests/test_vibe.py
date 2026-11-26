@@ -732,7 +732,16 @@ class Detection(Temp):
         self.assertTrue(result['tested'])
         self.assertFalse(result['ran'])
         self.assertEqual([step['kind'] for step in result['steps'] if step['status'] == 'passed'], ['build', 'build', 'test'])
-        app = root / '.janna-build' / 'app'
+        # The binary's location depends on the generator: single-config puts
+        # it in the build dir, multi-config (Visual Studio, the Windows
+        # default) puts it in a per-config subdir, and Windows adds .exe.
+        # The WSL path builds a Linux binary with no suffix.
+        candidates = [root / '.janna-build' / 'app',
+                      root / '.janna-build' / 'Debug' / 'app']
+        if os.name == 'nt':
+            candidates += [root / '.janna-build' / 'Debug' / 'app.exe',
+                           root / '.janna-build' / 'app.exe']
+        app = next((c for c in candidates if c.is_file()), candidates[0])
         self.assertTrue(app.is_file())
         if os.name == 'nt' and app.read_bytes()[:2] != b'MZ':
             return  # built and tested through a non-native toolchain; Windows cannot launch it directly
