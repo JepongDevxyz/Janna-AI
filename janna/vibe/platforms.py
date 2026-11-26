@@ -171,8 +171,12 @@ def _cpp(project: Path, files: list[Path]) -> tuple[list[str], list[Step]]:
     if cmake and ctest and compiler:
         # Pin the compiler we found. CMake's default c++ can be a different, unlinkable binary.
         steps = [Step('cmake configure', 'build', [cmake, '-S', '.', '-B', BUILD_DIR, '-DCMAKE_BUILD_TYPE=Debug', f'-DCMAKE_CXX_COMPILER={compiler}'], platform='cpp'),
-                 Step('cmake build', 'build', [cmake, '--build', BUILD_DIR, '--parallel'], platform='cpp'),
-                 Step('ctest', 'test', [ctest, '--test-dir', BUILD_DIR, '--output-on-failure', '--no-tests=ignore'], platform='cpp')]
+                 # Multi-config generators (Visual Studio, the Windows default)
+                 # need an explicit configuration: without --config/-C the build
+                 # defaults to Debug but CTest refuses to run ("Missing -C").
+                 # Single-config generators ignore both flags.
+                 Step('cmake build', 'build', [cmake, '--build', BUILD_DIR, '--config', 'Debug', '--parallel'], platform='cpp'),
+                 Step('ctest', 'test', [ctest, '--test-dir', BUILD_DIR, '-C', 'Debug', '--output-on-failure', '--no-tests=ignore'], platform='cpp')]
         return ['cpp'], steps
     tools = _wsl_tools(('cmake', 'ctest', 'g++'))
     if tools and all(tools.values()):
