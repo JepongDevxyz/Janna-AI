@@ -85,24 +85,39 @@ def check_block(language: str, source: str, *, timeout: float = 4.0, cancel=None
             'CL', '_CL_', 'CCC_OVERRIDE_OPTIONS', 'CLANG_CONFIG_FILE_USER_DIR', 'CLANG_CONFIG_FILE_SYSTEM_DIR'}}
     try:
         with tempfile.TemporaryDirectory(prefix='janna-syntax-') as directory:
-            with tempfile.TemporaryFile() as log:
-                proc = subprocess.Popen([exe, *args], stdin=subprocess.PIPE, stdout=log, stderr=log,
-                                        cwd=directory, env=env, creationflags=0x08000000 if os.name == 'nt' else 0)
-                deadline = time.monotonic() + max(.1, min(timeout, 5.0))
-                data = source.encode('utf-8')
-                while True:
-                    try:
-                        proc.communicate(data, timeout=.05)
-                        break
-                    except subprocess.TimeoutExpired:
-                        data = None
-                        if time.monotonic() >= deadline or (cancel is not None and cancel.is_set()):
-                            proc.kill()
-                            proc.communicate()
-                            return {**result, 'reason': 'Syntax check interrupted or timed out; no pass is claimed.'}
-                log.seek(0)
-                diagnostic = log.read(6000).decode('utf-8', errors='replace')
-                return {**result, 'status': 'passed' if proc.returncode == 0 else 'failed',
-                        'exit_code': proc.returncode, 'diagnostic': diagnostic.strip()}
+            # A cold tool (first clang on a Windows box, antivirus scan) can
+            # exceed one timeout once; the retry is warm and fast. A genuinely
+            # hung compiler still times out twice and is reported unverified,
+            # never retried forever. Cancellation never retries.
+            for attempt in (1, 2):
+                with tempfile.TemporaryFile() as log:
+                    proc = subprocess.Popen([exe, *args], stdin=subprocess.PIPE, stdout=log, stderr=log,
+                                            cwd=directory, env=env, creationflags=0x08000000 if os.name == 'nt' else 0)
+                    deadline = time.monotonic() + max(.1, min(timeout, 5.0))
+                    data = source.encode('utf-8')
+                    timed_out = False
+                    while True:
+                        try:
+                            proc.communicate(data, timeout=.05)
+                            break
+                        except subprocess.TimeoutExpired:
+                            data = None
+                            if cancel is not None and cancel.is_set():
+                                proc.kill()
+                                proc.communicate()
+                                return {**result, 'reason': 'Syntax check interrupted or timed out; no pass is claimed.'}
+                            if time.monotonic() >= deadline:
+                                proc.kill()
+                                proc.communicate()
+                                timed_out = True
+                                break
+                    if timed_out:
+                        if attempt == 1:
+                            continue
+                        return {**result, 'reason': 'Syntax check interrupted or timed out; no pass is claimed.'}
+                    log.seek(0)
+                    diagnostic = log.read(6000).decode('utf-8', errors='replace')
+                    return {**result, 'status': 'passed' if proc.returncode == 0 else 'failed',
+                            'exit_code': proc.returncode, 'diagnostic': diagnostic.strip()}
     except OSError as exc:
         return {**result, 'reason': 'Compiler could not run: ' + str(exc)[:200]}
