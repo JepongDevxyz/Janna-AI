@@ -12,7 +12,7 @@
   font-family:system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
   font-synthesis:none;-webkit-font-smoothing:antialiased;
   --paper:#f7f7f5;--sidebar:#f7f7f5;--panel:#ffffff;--card:#ffffff;--chip:#f0f0ee;
-  --hover:#ececea;--line:#e5e5e2;--ink:#111111;--muted:#6f6f6c;--faded:#9d9d99;
+  --hover:#ececea;--line:#e5e5e2;--ink:#111111;--muted:#6f6f6c;--faded:#8f8f8a;
   --bubble:#efefec;--accent:#1f7aec;--accent-ink:#ffffff;
   --shadow:0 8px 30px rgba(20,20,20,.08),0 1px 3px rgba(20,20,20,.06);
   --shadow-sm:0 2px 10px rgba(20,20,20,.08);
@@ -30,7 +30,7 @@ body[data-theme='dark'],body[data-theme='velvet'],body[data-theme='midnight'],bo
 }
 body[data-theme='rose'],body[data-theme='porcelain']{ /* legacy stored themes map to light */
   --paper:#f7f7f5;--sidebar:#f7f7f5;--panel:#ffffff;--card:#ffffff;--chip:#f0f0ee;
-  --hover:#ececea;--line:#e5e5e2;--ink:#111111;--muted:#6f6f6c;--faded:#9d9d99;
+  --hover:#ececea;--line:#e5e5e2;--ink:#111111;--muted:#6f6f6c;--faded:#8f8f8a;
   --bubble:#efefec;--accent:#1f7aec;color-scheme:light;
 }
 *{box-sizing:border-box}
