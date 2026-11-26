@@ -218,7 +218,11 @@ class SetupHttpTests(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as err:
             self.req('/api/models/install', {'tag': 'qwen3:72b'})
         self.assertEqual(err.exception.code, 400)
-        with mock.patch('janna.provisioning.subprocess.Popen', return_value=FakeChild('pulling\n')) as launch:
+        # The pull itself is mocked, so the runtime lookup must be too:
+        # without ollama installed, install_library raises before Popen
+        # runs and the request 500s instead of reaching the mocked pull.
+        with mock.patch('janna.provisioning.subprocess.Popen', return_value=FakeChild('pulling\n')) as launch, \
+                mock.patch('janna.provisioning.ollama_executable', return_value='ollama'):
             code, info = self.req('/api/models/install', {'tag': 'qwen2.5-coder:7b'})
         self.assertEqual(code, 202)
         self.assertEqual(launch.call_args.args[0][-2:], ['pull', 'qwen2.5-coder:7b'])

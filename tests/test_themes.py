@@ -1,4 +1,5 @@
-"""Every selectable theme has a stylesheet, a swatch, and a native title-bar color."""
+"""The web shell offers System/Light/Dark; the desktop keeps the 60+ theme
+catalog, and every theme id there matches the native title bar."""
 import re
 import unittest
 from pathlib import Path
@@ -7,25 +8,29 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ThemeCatalogTests(unittest.TestCase):
-    def test_settings_css_and_title_bar_list_the_same_themes(self):
+    def test_desktop_theme_catalog_agrees_and_web_shell_offers_system_light_dark(self):
+        # The desktop server still carries the 60+ theme catalog and the
+        # native title bar must list the same ids (minus porcelain, which
+        # maps to light). The WEB shell has no such catalog: since the grok
+        # rebuild (v47+, fresh-reset v68) it offers only System / Light /
+        # Dark, and styles.css keeps every legacy stored theme id painting
+        # so an old stored choice never renders unstyled.
         server = (ROOT / 'janna' / 'server.py').read_text(encoding='utf-8')
         allowed = re.search(r'"theme": \[(.*?)\]', server, re.S)
         self.assertIsNotNone(allowed)
         server_ids = re.findall(r'"([a-z]{2,16})"', allowed.group(1))
-        app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
-        block = re.search(r'const JANNA_THEMES=\{(.*?)\};', app, re.S)
-        self.assertIsNotNone(block)
-        js_ids = re.findall(r'([a-z]{2,16}):\[', block.group(1))
-        css_ids = re.findall(r"body\[data-theme='([a-z]{2,16})']", (ROOT / 'web' / 'styles.css').read_text(encoding='utf-8'))
         title = (ROOT / 'desktop' / 'Janna.Desktop' / 'JannaTitleBar.cs').read_text(encoding='utf-8')
         title_ids = re.findall(r'"([a-z]{2,16})" =>', title)
-        self.assertEqual(set(server_ids), set(js_ids))
+        self.assertEqual(set(server_ids), set(title_ids) | {'porcelain'})
         self.assertEqual(len(server_ids), len(set(server_ids)))
         self.assertGreaterEqual(len(server_ids), 60)
-        self.assertEqual(set(css_ids), set(server_ids) - {'porcelain'})
-        self.assertEqual(set(title_ids), set(server_ids) - {'porcelain'})
         for ident in server_ids:
             self.assertRegex(ident, r'^[a-z]{2,16}$')
+        app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
+        self.assertIn("for (const m of ['system', 'light', 'dark'])", app)
+        css = (ROOT / 'web' / 'styles.css').read_text(encoding='utf-8')
+        for ident in ('dark', 'velvet', 'midnight', 'pro', 'rose', 'porcelain'):
+            self.assertIn("body[data-theme='%s']" % ident, css)
 
 
 def _luminance(color):
@@ -43,54 +48,73 @@ class ColorThemeTests(unittest.TestCase):
     def setUp(self):
         self.app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
         self.css = (ROOT / 'web' / 'styles.css').read_text(encoding='utf-8')
-        block = re.search(r'const COLOR_THEMES=\{(.*?)\};', self.app).group(1)
-        self.names = re.findall(r"([a-z]{2,16}):'", block)
+        # The grok shell has exactly two themes — light (:root) and dark
+        # (body[data-theme='dark']). There is no COLOR_THEMES catalog and
+        # no ember theme; those belonged to the pre-grok shell.
+        root = re.search(r':root\{(.*?)\}', self.css, re.S)
+        dark = re.search(r"body\[data-theme='dark'\][^{]*\{(.*?)\}", self.css, re.S)
+        self.assertIsNotNone(root)
+        self.assertIsNotNone(dark)
+        self.themes = {
+            'light': dict(re.findall(r'--([a-z]+):(#[0-9a-f]{6})', root.group(1))),
+            'dark': dict(re.findall(r'--([a-z]+):(#[0-9a-f]{6})', dark.group(1))),
+        }
 
-    def test_includes_the_ember_theme(self):
-        self.assertIn('ember', self.names)
-        self.assertGreaterEqual(len(self.names), 10)
+    def test_web_shell_has_two_themes_not_a_color_catalog(self):
+        self.assertNotIn('COLOR_THEMES', self.app)
+        self.assertNotIn('JANNA_THEMES', self.app)
+        self.assertIn("for (const m of ['system', 'light', 'dark'])", self.app)
+        self.assertEqual(set(self.themes), {'light', 'dark'})
 
     def test_text_stays_readable_on_every_color_theme(self):
-        for name in self.names:
-            rule = re.search(r"body\[data-theme='%s'\]\{(.*?)\}" % name, self.css).group(1)
-            values = dict(re.findall(r'--([a-z]+):(#[0-9a-f]{6})', rule))
+        for name, values in self.themes.items():
             with self.subTest(theme=name):
                 self.assertGreaterEqual(_contrast(values['ink'], values['paper']), 7)
                 self.assertGreaterEqual(_contrast(values['muted'], values['paper']), 4.5)
                 self.assertGreaterEqual(_contrast(values['faded'], values['paper']), 3)
-                self.assertGreaterEqual(_contrast(values['rose'], values['paper']), 3)
                 self.assertGreaterEqual(_contrast(values['ink'], values['bubble']), 7)
 
 
 class SettingsTests(unittest.TestCase):
     def setUp(self):
         self.app = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
-        self.body = self.app[self.app.index('function drawSettings(){'):self.app.index("function speechTag(sample='')")]
+        self.body = self.app[self.app.index('function renderSettingsBody('):]
 
-    def test_every_section_is_present_in_order_and_has_a_body(self):
-        # Settings is a tabbed page with a grouped rail (logged-in ChatGPT structure, 2026-11-10):
-        # every section heading appears in order and content follows each one.
-        heads = [(m.start(), m.group(1)) for m in re.finditer(r"el\('h3','','([^']+)'\)", self.body)]
-        expected = ['General', 'Appearance', 'Personalization', 'How hard Janna works',
-                    'Checking answers', 'Web research', 'Tools and connections',
-                    'On-device control', 'Data controls']
-        positions = []
-        for name in expected:
-            match = [pos for pos, title in heads if title == name]
-            self.assertEqual(len(match), 1, name)
-            positions.append(match[0])
+    def test_settings_has_groks_nine_sections_in_order_with_bodies(self):
+        # Settings is grok's 9-section page since v62 (fresh-reset v68 kept
+        # it): the old drawSettings() page with General / Personalization /
+        # "How hard Janna works" etc. is gone.
+        match = re.search(r"const SETTING_SECTIONS = \[(.*?)\];", self.app, re.S)
+        self.assertIsNotNone(match)
+        sections = re.findall(r"'([a-z]+)'", match.group(1))
+        expected = ['account', 'appearance', 'behavior', 'notifications',
+                    'customize', 'connectors', 'skills', 'automations', 'data']
+        self.assertEqual(sections, expected)
+        labels = re.search(r"const SETTING_LABELS = \{(.*?)\};", self.app, re.S)
+        self.assertIsNotNone(labels)
+        names = dict(re.findall(r"([a-z]+): '([^']+)'", labels.group(1)))
+        self.assertEqual([names[s] for s in expected],
+                         ['Account', 'Appearance', 'Behavior', 'Notifications',
+                          'Customize', 'Connect Apps', 'Skills', 'Automations',
+                          'Data Controls'])
+        heads = [(m.start(), m.group(1)) for m in re.finditer(r"section === '([a-z]+)'", self.body)]
+        self.assertEqual([name for _, name in heads], expected)
+        positions = [pos for pos, _ in heads]
         self.assertEqual(positions, sorted(positions))
         for i, pos in enumerate(positions):
             end = positions[i + 1] if i + 1 < len(positions) else len(self.body)
             self.assertGreater(end - pos, 120, expected[i])
 
-    def test_every_control_maps_to_a_setting_the_backend_accepts_and_uses(self):
-        server = (ROOT / 'janna' / 'server.py').read_text(encoding='utf-8')
-        keys = re.findall(r"(?:toggle|select)\('[^']*','([a-z_]+)'", self.body)
-        self.assertIn('repair_generated_html', keys)
-        for key in keys:
-            with self.subTest(key=key):
-                self.assertIn(f'"{key}":', server[server.index('allowed = {'):server.index('with self.lock', server.index('allowed = {'))])
+    def test_settings_controls_persist_locally_and_offer_system_light_dark(self):
+        # The web shell's settings are local (persistSettings), not the
+        # desktop server's allowed-keys map: a desktop-server control such
+        # as repair_generated_html must not appear as a web control.
+        self.assertIn("for (const m of ['system', 'light', 'dark'])", self.body)
+        self.assertIn("persistSettings({ appearance_mode:", self.body)
+        self.assertIn('state.settings.appearance_mode', self.body)
+        self.assertIn('Clear all chats', self.body)
+        self.assertIn('Export all chats', self.body)
+        self.assertNotIn('repair_generated_html', self.app)
         # Stored by the backend but never read, so a control for it would do nothing.
         self.assertNotIn('autonomy_passes', self.body)
 
