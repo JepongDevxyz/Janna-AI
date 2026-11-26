@@ -85,11 +85,13 @@ def check_block(language: str, source: str, *, timeout: float = 4.0, cancel=None
             'CL', '_CL_', 'CCC_OVERRIDE_OPTIONS', 'CLANG_CONFIG_FILE_USER_DIR', 'CLANG_CONFIG_FILE_SYSTEM_DIR'}}
     try:
         with tempfile.TemporaryDirectory(prefix='janna-syntax-') as directory:
-            # A cold tool (first clang on a Windows box, antivirus scan) can
-            # exceed one timeout once; the retry is warm and fast. A genuinely
-            # hung compiler still times out twice and is reported unverified,
-            # never retried forever. Cancellation never retries.
-            for attempt in (1, 2):
+            # A cold tool (first clang on a cold CI runner or a Windows box,
+            # antivirus scan) can exceed a timeout twice — the v73 ubuntu run
+            # needed more than two 4s attempts for clang to start. The retry
+            # is warm and fast. A genuinely hung compiler still times out
+            # three times and is reported unverified, never retried forever.
+            # Cancellation never retries.
+            for attempt in (1, 2, 3):
                 with tempfile.TemporaryFile() as log:
                     proc = subprocess.Popen([exe, *args], stdin=subprocess.PIPE, stdout=log, stderr=log,
                                             cwd=directory, env=env, creationflags=0x08000000 if os.name == 'nt' else 0)
@@ -112,7 +114,7 @@ def check_block(language: str, source: str, *, timeout: float = 4.0, cancel=None
                                 timed_out = True
                                 break
                     if timed_out:
-                        if attempt == 1:
+                        if attempt < 3:
                             continue
                         return {**result, 'reason': 'Syntax check interrupted or timed out; no pass is claimed.'}
                     log.seek(0)
