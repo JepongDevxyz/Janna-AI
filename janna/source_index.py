@@ -762,24 +762,42 @@ def _clang(path: str, snapshot: Path, sources: dict, *, timeout: float, cancel=N
             '-fsyntax-only', '-fno-color-diagnostics', '-ferror-limit=3', '-Xclang', '-ast-dump=json', path]
     env = {k: v for k, v in os.environ.items() if k.upper() not in
            {'CPATH', 'C_INCLUDE_PATH', 'CPLUS_INCLUDE_PATH', 'INCLUDE', 'CL', '_CL_', 'CCC_OVERRIDE_OPTIONS'}}
-    try:
-        with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as errors:
-            proc = subprocess.Popen(args, cwd=snapshot, env=env, stdout=output, stderr=errors,
-                                    creationflags=0x08000000 if os.name == 'nt' else 0)
-            deadline = time.monotonic() + timeout
-            while proc.poll() is None:
-                if time.monotonic() >= deadline or (cancel is not None and cancel.is_set()):
-                    proc.kill(); proc.wait()
+    # A cold tool (first clang on a Windows box, antivirus scan) can exceed
+    # one per-file timeout once; the retry is warm and fast. A genuinely hung
+    # clang still times out twice and is reported incomplete, never retried
+    # forever. Cancellation never retries.
+    tree = None
+    for attempt in (1, 2):
+        try:
+            with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as errors:
+                proc = subprocess.Popen(args, cwd=snapshot, env=env, stdout=output, stderr=errors,
+                                        creationflags=0x08000000 if os.name == 'nt' else 0)
+                deadline = time.monotonic() + timeout
+                timed_out = False
+                while proc.poll() is None:
+                    if cancel is not None and cancel.is_set():
+                        proc.kill(); proc.wait()
+                        return {**result, 'diagnostic': 'Indexing interrupted or timed out.'}
+                    if time.monotonic() >= deadline:
+                        proc.kill(); proc.wait()
+                        timed_out = True
+                        break
+                    time.sleep(.025)
+                if timed_out:
+                    if attempt == 1:
+                        continue
                     return {**result, 'diagnostic': 'Indexing interrupted or timed out.'}
-                time.sleep(.025)
-            errors.seek(0)
-            result.update(complete=proc.returncode == 0, diagnostic=errors.read(1500).decode('utf-8', 'replace'), tool=exe)
-            if output.tell() > 12_000_000:
-                return {**result, 'complete': False, 'diagnostic': 'AST exceeded the bounded index size.'}
-            output.seek(0)
-            tree = json.load(output)
-    except (OSError, ValueError) as exc:
-        return {**result, 'diagnostic': str(exc)[:300]}
+                errors.seek(0)
+                result.update(complete=proc.returncode == 0, diagnostic=errors.read(1500).decode('utf-8', 'replace'), tool=exe)
+                if output.tell() > 12_000_000:
+                    return {**result, 'complete': False, 'diagnostic': 'AST exceeded the bounded index size.'}
+                output.seek(0)
+                tree = json.load(output)
+                break
+        except (OSError, ValueError) as exc:
+            return {**result, 'diagnostic': str(exc)[:300]}
+    if tree is None:
+        return {**result, 'diagnostic': 'Indexing interrupted or timed out.'}
 
     offsets = {p: [0] + [m.end() for m in re.finditer(b'\n', raw)] for p, raw in sources.items()}
     declarations = {}
