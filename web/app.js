@@ -2238,7 +2238,7 @@ function renderSettingsBody(section, opts) {
   if (st) st.textContent = SETTING_LABELS[section];
   if (section === 'account') {
     const card = el('div', 'settings-card');
-    const avatar = el('span', 'settings-avatar');
+    const avatar = el('span', 'settings-avatar avatar');
     avatar.textContent = 'J';
     const who = el('div', 'settings-who');
     who.append(el('strong', '', 'Workspace Guest'), el('span', 'muted', 'No sign-in needed — Janna AI is free.'));
@@ -2254,7 +2254,7 @@ function renderSettingsBody(section, opts) {
       o.value = l; o.textContent = l;
       sel.append(o);
     }
-    sel.value = state.settings.language || 'English';
+    sel.value = state.settings.language === 'Tagalog' ? 'Tagalog' : 'English';
     sel.onchange = () => persistSettings({ language: sel.value });
     lang.append(sel);
     card.append(avatar, who, plan, lang);
@@ -2312,7 +2312,7 @@ function renderSettingsBody(section, opts) {
           o.value = v; o.textContent = t;
           sel.append(o);
         }
-        sel.value = state.settings.research_mode || 'auto';
+        sel.value = state.settings.research_mode === 'always' ? 'always' : 'auto';
         sel.onchange = () => persistSettings({ research_mode: sel.value });
         row.append(sel);
       } else {
