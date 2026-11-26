@@ -41,27 +41,33 @@ class Activity(unittest.TestCase):
     def setUp(self):
         self.app = (ROOT / 'web' / 'app.js').read_text('utf-8')
 
-    def test_raw_reasoning_panel_is_replaced_by_the_activity_chain(self):
-        # Her order (2026-11-10): no raw model-text panel anywhere; a run's
-        # thinking is the ChatGPT-style activity chain ("Thought for Ns").
+    def test_no_raw_reasoning_panel_and_no_persistent_thought_line(self):
+        # Her order (2026-11-10): no raw model-text panel anywhere.
+        # SUPERSEDED 2026-11-26 by the grok deep review #3 (three fresh
+        # probes: grok shows NO "Thought for Xs" line after any reply) and
+        # the v68 fresh reset: the ChatGPT-style activity chain is gone.
+        # The live run shows one transient header — "Thinking" + a single
+        # step, "Planning next moves" — removed when the first token lands.
         self.assertNotIn('reasoning-live', self.app)
         self.assertNotIn('Text from the model. This is not the answer.', self.app)
-        self.assertIn("chain.className='activity-chain'", self.app)
-        self.assertIn("'Thought for '+fmtDur(", self.app)
+        self.assertNotIn("chain.className='activity-chain'", self.app)
+        self.assertNotIn("'Thought for '+fmtDur(", self.app)
+        self.assertIn('Planning next moves', self.app)
+        self.assertIn('think.el.remove()', self.app)
 
     def test_internal_noise_is_gone_from_the_feed(self):
         for noise in ('First response received', 'tokens/sec measured', 'Found ${sources.length} reference leads', 'providers unavailable', 'Live steps and verification results', 'Connection lost · reconnecting'):
             self.assertNotIn(noise, self.app)
 
-    def test_steps_read_as_finished_after_they_finish(self):
-        node = shutil.which('node')
-        if not node:
-            self.skipTest('node is not installed')
-        start = self.app.index('const FINISHED_WORDS=')
-        end = self.app.index('const JANNA_THEMES=')
-        script = self.app[start:end] + "console.log(finishedStep('Inspecting project')+'|'+finishedStep('Checking live references')+'|'+finishedStep('Syntax check'))"
-        done = subprocess.run([node, '-e', script], capture_output=True, text=True, timeout=30)
-        self.assertEqual(done.stdout.strip(), 'Inspected project|Checked live references|Syntax check')
+    def test_live_header_is_one_transient_step_removed_on_first_token(self):
+        # The old finishedStep vocabulary (FINISHED_WORDS) belonged to the
+        # activity chain removed by the v68 fresh reset (see above): there
+        # are no finished steps to read back. The live header carries one
+        # step, "Planning next moves", and first_token removes the header.
+        self.assertNotIn('FINISHED_WORDS', self.app)
+        self.assertNotIn('finishedStep', self.app)
+        self.assertIn('Planning next moves', self.app)
+        self.assertIn("else if (ev.type === 'first_token') stopThinking();", self.app)
 
     def test_a_routine_resume_is_not_reported_as_an_outage(self):
         node = shutil.which('node')

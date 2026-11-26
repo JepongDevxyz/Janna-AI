@@ -1,5 +1,6 @@
 import base64
 import json
+import re
 import subprocess
 import tempfile
 import unittest
@@ -41,9 +42,20 @@ class JannaProReleaseTests(unittest.TestCase):
         self.assertIn('not the Janna Lite profile', by_id['bonsai-2:9b']['note'])
         self.assertNotIn(':', by_id['qwen3:4b']['label'])
         ui=(ROOT/'web/app.js').read_text(encoding='utf-8')
-        self.assertIn('modelMenuList', ui)
-        self.assertIn('Janna profiles', ui)
-        self.assertIn("ordered.push(row)", ui)
+        # The grok shell (v47+, fresh-reset v68) lists the catalog's real
+        # models in the picker (renderModelOptions + SHORT_MODEL_LABELS);
+        # the old "Janna profiles" menu builder is gone by her order that
+        # the picker show real model names. The labels must still be unique
+        # and must never call a model a Janna profile.
+        self.assertIn('function renderModelOptions', ui)
+        block = re.search(r'const SHORT_MODEL_LABELS = \{(.*?)\};', ui, re.S)
+        self.assertIsNotNone(block)
+        labels = dict(re.findall(r"'([^']+)': '([^']+)'", block.group(1)))
+        self.assertEqual(len(labels), 16)
+        self.assertEqual(len(set(labels.values())), len(labels))
+        for label in labels.values():
+            self.assertNotIn('Janna Pro', label)
+            self.assertNotIn('Janna Lite', label)
 
     def test_model_activation_no_download(self):
         with self.assertRaisesRegex(ValueError, 'base weights'):

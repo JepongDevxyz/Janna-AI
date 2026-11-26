@@ -63,7 +63,13 @@ class JannaLiteTests(unittest.TestCase):
         ui = (ROOT/'web/app.js').read_text(encoding='utf-8')
         self.assertIn("janna-selected-model", ui)
         self.assertIn("rememberModelChoice()", ui)
-        self.assertIn('models.find(m=>/^janna-lite-', ui)
+        # The grok shell (v47+, fresh-reset v68) persists the choice in
+        # localStorage and, when the saved id is no longer in the catalog,
+        # falls back to the first catalog model — there is no Lite-specific
+        # preference string in the web shell. The Lite profile itself is a
+        # desktop/backend concern, covered by the other tests in this file.
+        self.assertIn('function renderModelOptions', ui)
+        self.assertIn("ordered[0]?.id", ui)
 
     def test_installer_does_not_claim_janna_pro_when_lite_is_selected(self):
         install = (ROOT/'scripts/Install-Janna.ps1').read_text(encoding='utf-8')

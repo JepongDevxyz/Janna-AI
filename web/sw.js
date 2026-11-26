@@ -1,5 +1,5 @@
 /* Offline shell only. Never cache API responses, projects, tokens or conversations. */
-const CACHE = 'janna-app-native-phone-v68';
+const CACHE = 'janna-app-native-phone-v69';
 const SHELL = [
   '/', '/index.html', '/styles.css', '/app.js', '/run-stream.js', '/mobile.js',
   '/theme.js', '/mark-clean.png', '/vibe.js', '/icon-192.png', '/icon-512.png',
