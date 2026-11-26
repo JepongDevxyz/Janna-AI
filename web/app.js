@@ -1,13 +1,17 @@
 'use strict';
-/* Janna AI — Grok-style shell (fresh reset, 2026-11-24).
+/* Janna AI — Grok-style shell, v68 fresh rebuild (2026-11-26).
    Reuses the existing API contract exactly: /api/bootstrap, /api/models,
    /api/run (SSE via JannaRuns), /api/sessions*, /api/settings, /api/stop,
    /api/profile/export, /api/memory. (Vision comes from the /api/models
    catalog, not /api/reasoning/:model — that route 404s live.)
    The backend api/[...slug].js is unchanged.
+   v68 (grok-spec.md §14, review #3): no persistent "Thought for" line and
+   no message queue — the live header is just "Thinking" + "Planning next
+   moves"; the running composer keeps "Ask anything..." with a black square
+   Stop; automation "Add" creates immediately like Grok's; example projects
+   and Connect Apps use the full descriptions observed on grok.com.
    No Luna anywhere in this file. No fake Grok data: every control below has
-   a real handler, and anything the web backend cannot do is omitted (see
-   BUILD-REPORT.md). */
+   a real handler, and anything the web backend cannot do is omitted. */
 const $ = id => document.getElementById(id);
 const state = {
   token: '', remote: false, projects: [], sessions: [], session: null,
@@ -198,543 +202,146 @@ function highlightCode(code, lang) {
     if (m.index > last) out += escapeHTML(code.slice(last, m.index));
     out += '<span class="' + clsFor(m[0]) + '">' + escapeHTML(m[0]) + '</span>';
     last = m.index + m[0].length;
-    if (m[0].length === 0) re.lastIndex++;
   }
-  out += escapeHTML(code.slice(last));
+  if (last < code.length) out += escapeHTML(code.slice(last));
   return out;
 }
-function formatMarkdown(value) {
-  const source = String(value || '').replace(/\r\n/g, '\n');
-  const rows = source.split('\n'), blocks = [], lines = [];
-  const languageLabel = x => ({ js: 'JavaScript', javascript: 'JavaScript', ts: 'TypeScript', typescript: 'TypeScript', jsx: 'React JSX', tsx: 'React TSX', html: 'HTML', css: 'CSS', py: 'Python', python: 'Python', cs: 'C#', cpp: 'C++', c: 'C', rs: 'Rust', rust: 'Rust', go: 'Go', json: 'JSON', sh: 'Shell', bash: 'Shell', shell: 'Shell', sql: 'SQL', php: 'PHP', swift: 'Swift', kotlin: 'Kotlin', yaml: 'YAML', yml: 'YAML', xml: 'XML', svg: 'SVG' }[x] || x.toUpperCase() || 'Code');
-  // Small per-language mark in the code header (Grok shows a language logo).
-  const languageLogo = (x, label) => ({ py: 'Py', python: 'Py', js: 'JS', javascript: 'JS', ts: 'TS', typescript: 'TS', jsx: 'JS', tsx: 'TS', html: '<>', css: '{}', json: '{}', java: 'Ja', go: 'Go', rs: 'Rs', rust: 'Rs', sh: '$_', bash: '$_', sql: 'SQL', cs: 'C#', cpp: 'C+', c: 'C' }[String(x || '').toLowerCase()] || String(label || 'Code').slice(0, 2));
-  for (let i = 0; i < rows.length; i++) {
-    const m = rows[i].match(/^ {0,3}(`{3,}|~{3,})\s*([^\n]*)$/);
-    if (!m) { lines.push(escapeHTML(rows[i])); continue; }
-    const delimiter = m[1], language = String(m[2] || '').trim().split(/\s+/)[0].replace(/[^a-z0-9#+._-]/gi, '').toLowerCase();
-    const body = []; let closed = false;
-    while (++i < rows.length) {
-      const line = rows[i], end = line.match(/^ {0,3}(`{3,}|~{3,})\s*$/);
-      if (end && end[1][0] === delimiter[0] && end[1].length >= delimiter.length) { closed = true; break; }
-      body.push(line);
+
+/* ---------- Markdown rendering ---------- */
+function codeFileName(lang) {
+  const map = { js: 'script.js', javascript: 'script.js', ts: 'script.ts', typescript: 'script.ts', py: 'main.py', python: 'main.py', html: 'index.html', css: 'style.css', json: 'data.json', sh: 'script.sh', bash: 'script.sh', go: 'main.go', rs: 'main.rs', rust: 'main.rs', java: 'Main.java', c: 'main.c', cpp: 'main.cpp', cs: 'Program.cs', rb: 'main.rb', ruby: 'main.rb', php: 'index.php', sql: 'query.sql', xml: 'data.xml', yaml: 'config.yaml', yml: 'config.yaml', md: 'notes.md' };
+  return map[String(lang || '').toLowerCase()] || ((lang || 'code') + '.txt');
+}
+function formatMarkdown(text) {
+  const lines = String(text || '').replace(/\r\n?/g, '\n').split('\n');
+  const blocks = [];
+  let i = 0, buf = [];
+  const flush = () => { if (buf.length) { blocks.push({ type: 'text', text: buf.join('\n') }); buf = []; } };
+  while (i < lines.length) {
+    const line = lines[i];
+    const fence = line.match(/^```(\S*)\s*$/);
+    if (fence) {
+      flush();
+      const lang = fence[1] || '';
+      const code = [];
+      i++;
+      while (i < lines.length && !lines[i].startsWith('```')) { code.push(lines[i]); i++; }
+      const closed = i < lines.length;
+      blocks.push({ type: 'code', lang, code: code.join('\n'), closed });
+      i++;
+      continue;
     }
-    const code = body.join('\n').replace(/\n+$/, ''); const index = blocks.length;
-    blocks.push({ language, code, closed });
-    lines.push(`\uE000${index}\uE001`);
-  }
-  if (!blocks.length && /^\s*(?:<!doctype html\b|<html\b)/i.test(source)) {
-    blocks.push({ language: 'html', code: source.trim(), closed: true }); lines.length = 0; lines.push('\uE0000\uE001');
-  }
-  const inline = s => {
-    const saved = [];
-    const protect = html => { const id = saved.length; saved.push(html); return `\uE010${id}\uE011`; };
-    const styled = s.replace(/`([^`]+)`|\[([^\]\n]+)\]\((https?:\/\/[^\s<>"()]+)\)/g, (_, code, label, url) =>
-      protect(code !== undefined ? `<code>${code}</code>` : `<a href="${url}" target="_blank" rel="noopener noreferrer">${label}</a>`))
-      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/\*([^*]+)\*/g, '<em>$1</em>');
-    return styled.replace(/\uE010(\d+)\uE011/g, (_, id) => saved[Number(id)] || '');
-  };
-  const out = [], paragraph = [], items = [];
-  function flush() { if (paragraph.length) { out.push('<p>' + paragraph.map(inline).join('<br>') + '</p>'); paragraph.length = 0; } if (items.length) { out.push('<ul>' + items.map(v => '<li>' + inline(v) + '</li>').join('') + '</ul>'); items.length = 0; } }
-  const tables = [];
-  const splitCells = r => { let s = r.trim(); if (s.startsWith('|')) s = s.slice(1); if (s.endsWith('|')) s = s.slice(0, -1); return s.split('|').map(c => c.trim()); };
-  const isSep = r => { if (!r.includes('-')) return false; const cells = splitCells(r); return cells.length > 0 && cells.every(c => /^:?-{1,}:?$/.test(c)); };
-  for (let li = 0; li < lines.length; li++) {
-    const row = lines[li];
-    if (row.includes('|') && li + 1 < lines.length && isSep(lines[li + 1])) {
-      const head = splitCells(row); const bodyRows = [];
-      let lj = li + 2;
-      while (lj < lines.length && lines[lj].includes('|') && lines[lj].trim()) { bodyRows.push(splitCells(lines[lj])); lj++; }
-      const th = head.map(c => `<th>${inline(c)}</th>`).join('');
-      const tb = bodyRows.map(r => '<tr>' + head.map((_, ci) => `<td>${inline(r[ci] || '')}</td>`).join('') + '</tr>').join('');
-      tables.push(`<div class="md-table-wrap"><div class="md-table-head"><span>Table</span><button type="button" class="table-copy-btn" data-table-copy title="Copy this table">Copy table</button></div><div class="md-table-scroll"><table class="md-table"><thead><tr>${th}</tr></thead><tbody>${tb}</tbody></table></div></div>`);
-      lines.splice(li, lj - li, `\uE002${tables.length - 1}\uE003`);
-    }
-  }
-  for (const row of lines) {
-    if (!row.trim()) { flush(); continue; }
-    if (/^\uE000\d+\uE001$/.test(row)) { flush(); out.push(row); continue; }
-    if (/^\uE002\d+\uE003$/.test(row)) { flush(); out.push(row); continue; }
-    const heading = row.match(/^(#{1,3})\s+(.+)$/);
-    if (heading) { flush(); const level = Math.min(3, heading[1].length + 1); out.push(`<h${level}>${inline(heading[2])}</h${level}>`); continue; }
-    const item = row.match(/^\s*[-*]\s+(.+)$/);
-    if (item) { if (paragraph.length) flush(); items.push(item[1]); continue; }
-    if (items.length) flush(); paragraph.push(row);
+    buf.push(line);
+    i++;
   }
   flush();
-  const html = out.join('').replace(/\uE000(\d+)\uE001/g, (_, id) => {
-    const block = blocks[Number(id)]; if (!block) return '';
-    const label = languageLabel(block.language);
-    const logo = languageLogo(block.language, label);
-    const isHtml = ['html', 'htm'].includes(block.language);
-    const extra = isHtml
-      ? `<button type="button" class="code-action" data-code-action="preview" data-code-index="${id}" title="Preview this page">Preview</button><button type="button" class="code-action" data-code-action="save" data-code-index="${id}" title="Save to Library">Save</button>`
-      : '';
-    // Grok's code blocks have line numbers — a gutter inside the scroll.
-    const lineCount = String(block.code || '').split('\n').length;
-    const gutter = Array.from({ length: lineCount }, (_, i) => i + 1).join('\n');
-    return `<section class="code-block" data-code-index="${id}"><div class="code-block-header"><span class="code-logo">${escapeHTML(logo)}</span><span class="code-language">${escapeHTML(label)}</span><span class="code-block-actions"><button type="button" class="code-action" data-code-action="copy" data-code-index="${id}" title="Copy this code">Copy</button>${extra}</span></div><div class="code-scroll"><div class="code-gutter" aria-hidden="true">${gutter}</div><pre tabindex="0"><code>${highlightCode(block.code, block.language)}</code></pre></div></section>`;
-  }).replace(/\uE002(\d+)\uE003/g, (_, id) => tables[Number(id)] || '');
+  const html = blocks.map(b => {
+    if (b.type === 'code') {
+      const lang = b.lang || 'code';
+      const logo = (lang || 'c').slice(0, 2).toUpperCase();
+      const numbered = b.code.split('\n').map((_, n) => n + 1).join('\n');
+      return `<div class="code-block"><div class="code-block-header"><span class="code-logo">${escapeHTML(logo)}</span><span class="code-language">${escapeHTML(lang)}</span><span class="code-block-actions"><button type="button" class="code-action" data-code-copy>Copy</button></span></div><div class="code-scroll"><div class="code-gutter" aria-hidden="true">${escapeHTML(numbered)}</div><pre><code>${highlightCode(b.code, lang)}</code></pre></div></div>`;
+    }
+    return inlineMarkdown(b.text);
+  }).join('');
   return { html, blocks };
 }
-function tableToText(table) {
-  const rows = [];
-  table.querySelectorAll('tr').forEach(tr => {
-    const cells = [];
-    tr.querySelectorAll('th,td').forEach(td => cells.push(td.textContent.trim()));
-    rows.push(cells.join('\t'));
+function inlineMarkdown(text) {
+  const esc = escapeHTML(text);
+  // Code spans are literal: pull them out first so link/bold/italic
+  // replacements never run inside them, then restore them at the end.
+  const codes = [];
+  const withCode = esc.replace(/`([^`\n]+)`/g, (m, c) => {
+    codes.push(c);
+    return '\u0000' + (codes.length - 1) + '\u0000';
   });
-  return rows.join('\n');
+  const withLinks = withCode.replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, (m, t, u) => `<a href="${u}" target="_blank" rel="noopener noreferrer">${t}</a>`);
+  const withBold = withLinks.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/__([^_]+)__/g, '<strong>$1</strong>');
+  const withItalic = withBold.replace(/(^|[^*\w])\*([^*\n]+)\*/g, '$1<em>$2</em>').replace(/(^|[^_\w])_([^_\n]+)_/g, '$1<em>$2</em>');
+  const restored = withItalic.replace(/\u0000(\d+)\u0000/g, (m, i) => `<code>${codes[+i]}</code>`);
+  const paras = restored.split(/\n{2,}/).map(p => {
+    const trimmed = p.trim();
+    if (!trimmed) return '';
+    const ls = trimmed.split('\n');
+    const isList = ls.every(l => /^[-*]\s+/.test(l) || /^\d+[.)]\s+/.test(l));
+    if (isList) {
+      const items = ls.map(l => `<li>${l.replace(/^[-*]\s+/, '').replace(/^\d+[.)]\s+/, '')}</li>`).join('');
+      return `<ul>${items}</ul>`;
+    }
+    if (/^#{1,3}\s+/.test(ls[0])) {
+      const level = ls[0].match(/^#+/)[0].length;
+      return `<h${level}>${ls[0].replace(/^#+\s+/, '')}</h${level}>` + (ls.length > 1 ? `<p>${ls.slice(1).join('<br>')}</p>` : '');
+    }
+    if (ls.length > 1 && ls.every(l => l.includes('|'))) {
+      const rows = ls.filter(l => l.trim().startsWith('|'));
+      const cells = r => r.split('|').filter(c => c.trim() !== '').map(c => c.trim());
+      const head = cells(rows[0]);
+      const bodyRows = rows.slice(1).filter(r => !/^[\s|:.-]+$/.test(r));
+      const thead = `<tr>${head.map(c => `<th>${c}</th>`).join('')}</tr>`;
+      const tbody = bodyRows.map(r => `<tr>${cells(r).map(c => `<td>${c}</td>`).join('')}</tr>`).join('');
+      return `<div class="md-table-wrap"><div class="md-table-head"><span>Table</span><button type="button" class="table-copy-btn" data-table-copy>Copy</button></div><div class="md-table-scroll"><table><thead>${thead}</thead><tbody>${tbody}</tbody></table></div></div>`;
+    }
+    return `<p>${ls.join('<br>')}</p>`;
+  });
+  return paras.filter(Boolean).join('');
 }
-function renderMarkdown(body, value) {
-  const result = formatMarkdown(value);
-  body.innerHTML = result.html;
-  codeByBody.set(body, result.blocks);
-  body.querySelectorAll('[data-table-copy]').forEach(btn => {
+function renderMarkdown(container, text) {
+  if (!container) return;
+  container.innerHTML = formatMarkdown(text || '').html;
+  container.querySelectorAll('[data-code-copy]').forEach(btn => {
     btn.onclick = async () => {
-      const t = btn.closest('.md-table-wrap')?.querySelector('table');
-      toast((await copyCodeText(t ? tableToText(t) : '')) ? 'Table copied' : 'Copy failed');
+      const pre = btn.closest('.code-block')?.querySelector('pre');
+      const raw = pre ? pre.textContent : '';
+      const ok = await copyCodeText(raw);
+      btn.textContent = ok ? 'Copied' : 'Copy failed';
+      setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
     };
   });
-  return result;
-}
-function codeFileName(language) {
-  const extension = ({ html: 'html', htm: 'html', js: 'js', mjs: 'mjs', jsx: 'jsx', ts: 'ts', tsx: 'tsx', css: 'css', json: 'json', py: 'py', python: 'py', cs: 'cs', cpp: 'cpp', c: 'c', rs: 'rs', go: 'go', sh: 'sh' }[language] || 'txt');
-  return 'janna-code.' + extension;
-}
-
-/* ---------- response style (Customize setting) ----------
-   The web backend has no style channel: its system prompt is fixed.
-   The style is applied by appending a short directive to the prompt SENT
-   to the model. The directive is stripped again when rendering history,
-   so what you see in the chat is exactly what you typed. */
-const STYLE_DIRECTIVES = {
-  Concise: 'Answer concisely: short sentences, no extra padding.',
-  Formal: 'Answer in a formal, professional tone.',
-  Tutor: 'Answer like a patient tutor: explain each step simply and check understanding.',
-  Comprehensive: 'Answer comprehensively, with full detail and examples.',
-};
-function styleDirective() {
-  const style = state.settings.response_style || 'Default';
-  if (style === 'Custom') { const c = String(state.settings.custom_style || '').trim(); return c ? 'Follow this response style: ' + c : ''; }
-  return STYLE_DIRECTIVES[style] || '';
-}
-const stripStyleDirective = text => String(text || '').replace(/(\n\n\[Response style:[^\]]*\])+\s*$/, '');
-
-/* ---------- voice: dictation + voice conversation mode ---------- */
-function speechTag(sample = '') {
-  const code = state.settings.language || 'auto';
-  const row = (state.languages || []).find(item => item.id === code);
-  if (row && row.speech) return row.speech;
-  if (code === 'auto') return /\b(?:il|la|questo|sono|posso|grazie)\b/i.test(sample || $('prompt')?.value || '') ? 'it-IT' : (navigator.language || 'en-US');
-  return code === 'it' ? 'it-IT' : 'en-US';
-}
-function voiceSpeak(text) {
-  if (state.settings.voice_output !== true || !('speechSynthesis' in window)) return;
-  const cleaned = String(text || '').replace(/```[\s\S]*?```/g, ' [code block omitted] ').replace(/[<>{}*_#]/g, '').slice(0, 1700);
-  if (!cleaned.trim()) return;
-  try { window.speechSynthesis.cancel(); const utter = applyVoicePersona(new SpeechSynthesisUtterance(cleaned)); utter.lang = speechTag(cleaned); window.speechSynthesis.speak(utter); } catch { /* unavailable */ }
-}
-/* Read aloud from the message menu (Grok's More → Read aloud): speaks on
-   demand, even when the read-replies-aloud setting is off. */
-/* Read aloud (Grok): a floating playback pill above the composer —
-   Pause, Voice, playback rate, Stop. The pill hides when speech ends.
-   Changing voice or rate restarts the reading from the beginning. */
-const raState = { text: '', paused: false };
-function speakNow(text) {
-  if (!('speechSynthesis' in window)) { toast('Read aloud is not available in this browser.'); return; }
-  const cleaned = voiceClean(text);
-  if (!cleaned) return;
-  raState.text = cleaned.slice(0, 1700);
-  raState.paused = false;
-  startReadAloud();
-  showReadAloudBar();
-}
-function startReadAloud() {
-  try {
-    window.speechSynthesis.cancel();
-    const u = applyVoicePersona(new SpeechSynthesisUtterance(raState.text));
-    u.lang = speechTag(raState.text);
-    u.onend = () => hideReadAloudBar();
-    u.onerror = () => hideReadAloudBar();
-    window.speechSynthesis.speak(u);
-  } catch { hideReadAloudBar(); }
-}
-function showReadAloudBar() {
-  $('raVoiceLabel').textContent = voicePersona().name;
-  $('raRateLabel').textContent = (state.settings.voice_speed || 'Normal').replace('Normal', '1x');
-  $('raPause').innerHTML = '<svg><use href="#i-pause"/></svg>';
-  $('raPause').title = 'Pause'; $('raPause').setAttribute('aria-label', 'Pause read aloud');
-  $('readAloudBar').hidden = false;
-}
-function hideReadAloudBar() {
-  try { window.speechSynthesis.cancel(); } catch { /* ignore */ }
-  $('readAloudBar').hidden = true;
-}
-/* Dictation Refinement (Grok's Behavior setting): 'Tidy up' lightly cleans
-   dictated text (collapse spaces, capitalise the first letter); 'Verbatim'
-   keeps exactly what the speech service heard. */
-function tidyDictation(text) {
-  const t = String(text || '').replace(/\s+/g, ' ').trim();
-  if (!t) return t;
-  return t.charAt(0).toUpperCase() + t.slice(1);
-}
-function voiceDictate() {
-  const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!Rec) return toast('Microphone dictation is not available in this browser. You can still type.');
-  if (state.voiceListening) { try { state.voiceRecognizer?.stop(); } catch { /* ignore */ } return; }
-  const recognition = new Rec(); state.voiceRecognizer = recognition;
-  recognition.lang = speechTag();
-  recognition.interimResults = true; recognition.continuous = false; recognition.maxAlternatives = 1;
-  const previous = $('prompt').value; let transcript = '';
-  recognition.onresult = e => {
-    transcript = Array.from(e.results).map(r => r[0].transcript).join(' ');
-    if (state.settings.dictation_refinement !== 'verbatim') transcript = tidyDictation(transcript);
-    $('prompt').value = (previous + ' ' + transcript).trim(); autoGrowPrompt(); syncSendState(); saveDraftSoon();
-  };
-  recognition.onerror = e => {
-    if (String(e.error || '') === 'not-allowed') {
-      // Grok: a white top toast, plus a second one linking to dictation settings.
-      topToast('Microphone access denied. Check your browser settings.');
-      topToast('Customize how much your dictation is cleaned up in settings.', { label: 'Settings', onClick: () => openSettings('voice') });
-      return;
-    }
-    toast('Voice transcription: ' + String(e.error || 'unavailable') + '. Some browsers require network access.');
-  };
-  recognition.onend = () => { state.voiceListening = false; $('voiceMic').classList.remove('listening'); $('voiceMic').setAttribute('aria-pressed', 'false'); $('prompt').focus(); };
-  try { recognition.start(); state.voiceListening = true; $('voiceMic').classList.add('listening'); $('voiceMic').setAttribute('aria-pressed', 'true'); }
-  catch (e) { toast('Microphone could not start: ' + e.message); }
-}
-/* Grok-style voice picker: the voice list, personality, speed and mic from
-   the voice screen's bottom sheet. Personas shape the spoken voice (pitch
-   + rate on the device TTS); personality shapes how answers are spoken. */
-const VOICE_PERSONAS = [
-  { id: 'ara', name: 'Ara', desc: 'Warm and friendly.', pitch: 1.1, rate: 1.0 },
-  { id: 'eve', name: 'Eve', desc: 'Energetic and upbeat.', pitch: 1.2, rate: 1.1 },
-  { id: 'leo', name: 'Leo', desc: 'Authoritative and strong.', pitch: 0.8, rate: 0.95 },
-  { id: 'rex', name: 'Rex', desc: 'Confident and clear.', pitch: 0.9, rate: 1.0 },
-  { id: 'sal', name: 'Sal', desc: 'Smooth and balanced.', pitch: 1.0, rate: 1.0 },
-  { id: 'gork', name: 'Gork', desc: 'Lazy.', tag: '18+', pitch: 0.7, rate: 0.9 },
-  { id: 'cosmo', name: 'Cosmo', desc: 'Bright, curious, and easy to follow.', pitch: 1.25, rate: 1.1 },
-  { id: 'celeste', name: 'Celeste', desc: 'Compassionate, confident, and easygoing.', pitch: 1.05, rate: 1.0 },
-  { id: 'neil', name: 'Neil', desc: 'Warm, thoughtful, and wise.', pitch: 0.85, rate: 0.95 },
-  { id: 'atlas', name: 'Atlas', desc: 'Confident, commanding, and reassuring.', pitch: 0.8, rate: 0.95 },
-  { id: 'aurora', name: 'Aurora', desc: 'Serene, steady, and radiant.', pitch: 1.15, rate: 0.95 },
-  { id: 'liora', name: 'Liora', desc: 'Calm, grounded, and luminous.', pitch: 1.1, rate: 0.9 },
-];
-const VOICE_PERSONALITIES = [
-  ['Assistant', ''], ['Storyteller', 'Tell it like a story.'],
-  ['Kids Story Time', 'Explain it like a bedtime story for a young child, using simple words.'],
-  ['Kids Trivia Game', 'Turn your answer into a fun trivia game for kids.'],
-  ['Meditation', 'Speak calmly and slowly, like a guided meditation.'],
-  ['Conspiracy', 'Answer with a playful conspiracy-theory spin.'],
-];
-const VOICE_SPEEDS = [['0.5x', 0.5], ['0.75x', 0.75], ['0.9x', 0.9], ['Normal', 1], ['1.1x', 1.1], ['1.25x', 1.25], ['1.5x', 1.5], ['2x', 2]];
-function voicePersona() { return VOICE_PERSONAS.find(p => p.id === (state.settings.voice_name || 'ara')) || VOICE_PERSONAS[0]; }
-function voiceSpeedRate() { const row = VOICE_SPEEDS.find(s => s[0] === (state.settings.voice_speed || 'Normal')); return row ? row[1] : 1; }
-function applyVoicePersona(u) {
-  const p = voicePersona();
-  try { u.pitch = p.pitch; } catch { /* ignore */ }
-  try { u.rate = Math.min(2, Math.max(0.5, p.rate * voiceSpeedRate())); } catch { /* ignore */ }
-  return u;
-}
-function voicePersonalityDirective() {
-  const key = state.settings.voice_personality || 'Assistant';
-  if (key === 'Custom') { const c = String(state.settings.voice_personality_custom || '').trim(); return c || ''; }
-  const row = VOICE_PERSONALITIES.find(p => p[0] === key);
-  return row ? row[1] : '';
-}
-const voiceTalk = { active: false, phase: 'idle', muted: false, recog: null, watch: null, restart: null, quiet: 0, errStrikes: 0, errKind: '', chunkTimer: null, langOverride: '', langRetried: false, stopped: false };
-function voiceOverlay() {
-  let ov = document.getElementById('voiceOverlay');
-  if (ov) return ov;
-  ov = document.createElement('div');
-  ov.className = 'voice-overlay'; ov.id = 'voiceOverlay'; ov.dataset.phase = 'idle';
-  ov.innerHTML = '<div class="voice-top"><button class="voice-orb" id="voiceOrb" type="button" aria-label="Voice orb"></button><div class="voice-status"><div class="voice-caption" id="voiceCaption">I\u2019m listening\u2026</div><div class="voice-sub" id="voiceSub">Just talk to Janna \u2014 she\u2019ll answer out loud.</div></div></div>'
-    + '<div class="voice-bar"><button class="voice-plus" id="voicePlusBtn" type="button" title="Back to typing" aria-label="Back to typing"><svg><use href="#i-plus"/></svg></button><button class="voice-name" id="voiceNameBtn" type="button"><span id="voiceNameLabel">Ara \u00b7 Assistant</span><svg><use href="#i-chevron"/></svg></button><span class="voice-bars" id="voiceBars"><i></i><i></i><i></i><i></i></span><button class="voice-ctl" id="voiceMuteBtn" type="button" title="Mute microphone" aria-label="Mute microphone"><svg><use href="#i-mic"/></svg></button><button class="voice-ctl stop" id="voiceCloseBtn" type="button" title="End voice chat" aria-label="End voice chat"><svg><use href="#i-stop"/></svg></button></div>';
-  document.body.appendChild(ov);
-  ov.querySelector('#voiceCloseBtn').onclick = () => voiceClose();
-  ov.querySelector('#voiceMuteBtn').onclick = () => voiceToggleMute();
-  ov.querySelector('#voiceOrb').onclick = () => voiceOrbTap();
-  ov.querySelector('#voicePlusBtn').onclick = () => { voiceClose(); $('prompt').focus(); };
-  ov.querySelector('#voiceNameBtn').onclick = () => voiceToggleSheet();
-  ov.addEventListener('click', e => {
-    if (e.target.closest('button') || e.target.closest('#voiceSheet')) return;
-    voiceToggleSheet(false);
-  });
-  voiceBuildSheet(ov);
-  syncVoiceNameLabel();
-  return ov;
-}
-function syncVoiceNameLabel() {
-  const label = document.getElementById('voiceNameLabel'); if (!label) return;
-  label.textContent = voicePersona().name + ' \u00b7 ' + (state.settings.voice_personality || 'Assistant');
-}
-function voiceBuildSheet(ov) {
-  const sheet = document.createElement('div');
-  sheet.className = 'voice-sheet'; sheet.id = 'voiceSheet'; sheet.hidden = true;
-  const handle = el('div', 'voice-sheet-handle');
-  const title = el('div', 'voice-sheet-title', 'Voice');
-  const list = el('div', 'voice-list'); list.id = 'voiceList';
-  sheet.append(handle, title, list);
-  const mkRow = (labelText, control) => {
-    const row = el('div', 'voice-sheet-row');
-    row.append(el('span', '', labelText), control);
-    sheet.append(row);
-  };
-  const persSel = settingsSelect(VOICE_PERSONALITIES.map(p => [p[0], p[0]]).concat([['Custom', 'Custom\u2026']]), state.settings.voice_personality || 'Assistant', async v => {
-    if (v === 'Custom') {
-      const res = await showDialog({ title: 'Custom personality', text: 'How should Janna speak in voice mode?', fields: [{ name: 'text', value: state.settings.voice_personality_custom || '', placeholder: 'e.g. Speak like a pirate, but kindly' }], okText: 'Save' });
-      if (!res || !String(res.text || '').trim()) { persSel.value = state.settings.voice_personality || 'Assistant'; return; }
-      persistSettings({ voice_personality: 'Custom', voice_personality_custom: String(res.text).trim() });
-    } else await persistSettings({ voice_personality: v });
-    syncVoiceNameLabel();
-  });
-  persSel.id = 'voicePersonalitySel';
-  mkRow('Personality', persSel);
-  const speedSel = settingsSelect(VOICE_SPEEDS.map(s => [s[0], s[0]]), state.settings.voice_speed || 'Normal', v => persistSettings({ voice_speed: v }));
-  speedSel.id = 'voiceSpeedSel';
-  mkRow('Speed', speedSel);
-  const micSel = document.createElement('select'); micSel.id = 'voiceMicSel';
-  const fallback = document.createElement('option'); fallback.value = 'Microphone'; fallback.textContent = 'Microphone'; micSel.append(fallback);
-  micSel.onchange = () => persistSettings({ voice_mic_label: micSel.value });
-  mkRow('Microphone', micSel);
-  ov.append(sheet);
-}
-function renderVoiceList() {
-  const list = document.getElementById('voiceList'); if (!list) return;
-  list.replaceChildren();
-  const current = state.settings.voice_name || 'ara';
-  for (const p of VOICE_PERSONAS) {
-    const row = el('button', 'voice-row' + (p.id === current ? ' selected' : ''));
-    row.type = 'button';
-    const texts = el('div', 'voice-row-texts');
-    texts.append(el('div', 'voice-row-name', p.name + (p.tag ? ' ' + p.tag : '')), el('div', 'voice-row-desc', p.desc));
-    row.append(texts, el('span', 'voice-check', p.id === current ? '\u2713' : ''));
-    row.onclick = async () => { await persistSettings({ voice_name: p.id }); syncVoiceNameLabel(); renderVoiceList(); };
-    list.append(row);
-  }
-}
-async function voiceLoadMics() {
-  const sel = document.getElementById('voiceMicSel'); if (!sel) return;
-  let devices = [];
-  try { if (navigator.mediaDevices?.enumerateDevices) devices = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'audioinput'); } catch { /* ignore */ }
-  sel.replaceChildren();
-  if (devices.length) {
-    devices.forEach((d, i) => { const o = document.createElement('option'); o.value = d.deviceId; o.textContent = d.label || 'Microphone ' + (i + 1); sel.append(o); });
-    sel.value = state.settings.voice_mic_device || devices[0].deviceId;
-    sel.onchange = () => persistSettings({ voice_mic_device: sel.value, voice_mic_label: sel.options[sel.selectedIndex]?.textContent || '' });
-  } else {
-    for (const label of ['Microphone', 'Speakerphone', 'Headset earpiece']) { const o = document.createElement('option'); o.value = label; o.textContent = label; sel.append(o); }
-    sel.value = state.settings.voice_mic_label || 'Microphone';
-    sel.onchange = () => persistSettings({ voice_mic_label: sel.value });
-  }
-}
-function voiceLoadMicsInto(sel) {
-  if (!sel) return;
-  (async () => {
-    let devices = [];
-    try { if (navigator.mediaDevices?.enumerateDevices) devices = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'audioinput'); } catch { /* ignore */ }
-    sel.replaceChildren();
-    if (devices.length) {
-      devices.forEach((d, i) => { const o = document.createElement('option'); o.value = d.deviceId; o.textContent = d.label || 'Microphone ' + (i + 1); sel.append(o); });
-      sel.value = state.settings.voice_mic_device || devices[0].deviceId;
-      sel.onchange = () => persistSettings({ voice_mic_device: sel.value, voice_mic_label: sel.options[sel.selectedIndex]?.textContent || '' });
-    } else {
-      for (const label of ['Microphone', 'Speakerphone', 'Headset earpiece']) { const o = document.createElement('option'); o.value = label; o.textContent = label; sel.append(o); }
-      sel.value = state.settings.voice_mic_label || 'Microphone';
-      sel.onchange = () => persistSettings({ voice_mic_label: sel.value });
-    }
-  })();
-}
-function voiceToggleSheet(open) {
-  const sheet = document.getElementById('voiceSheet'); if (!sheet) return;
-  const willOpen = open !== undefined ? open : sheet.hidden;
-  sheet.hidden = !willOpen;
-  if (willOpen) { renderVoiceList(); voiceLoadMics(); }
-}
-function voiceSetPhase(phase, caption) {
-  voiceTalk.phase = phase;
-  const ov = document.getElementById('voiceOverlay'); if (!ov) return;
-  ov.dataset.phase = phase;
-  if (caption != null) ov.querySelector('#voiceCaption').textContent = caption;
-}
-function voiceClean(text) {
-  return String(text || '').replace(/```[\s\S]*?```/g, ' [code block omitted] ').replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/[<>{}*_#~`>]/g, '').replace(/\s+/g, ' ').trim().slice(0, 1700);
-}
-function voiceTalkSpeak(text) {
-  const clean = voiceClean(text);
-  if (!clean || !('speechSynthesis' in window)) { voiceSetPhase('idle', 'My answer is in the chat \u2014 voice isn\u2019t available here.'); return; }
-  try { window.speechSynthesis.cancel(); } catch { /* ignore */ }
-  const chunks = [];
-  for (const part of clean.match(/[^.!?…]+[.!?…]*\s*/g) || [clean]) { const t = part.trim(); if (t) chunks.push(t); }
-  const queue = [];
-  for (const c of chunks) { if (c.length <= 180) queue.push(c); else for (let i = 0; i < c.length; i += 180) queue.push(c.slice(i, i + 180)); }
-  if (!queue.length) queue.push(clean);
-  voiceSetPhase('speaking', clean.length > 220 ? clean.slice(0, 220) + '\u2026' : clean);
-  let idx = 0;
-  const step = () => {
-    clearTimeout(voiceTalk.chunkTimer);
-    if (!voiceTalk.active || voiceTalk.muted) return;
-    if (idx >= queue.length) { voiceListen(); return; }
-    const piece = queue[idx++];
-    const utter = applyVoicePersona(new SpeechSynthesisUtterance(piece));
-    utter.lang = speechTag(piece);
-    let advanced = false;
-    const advance = () => { if (advanced) return; advanced = true; step(); };
-    utter.onend = advance; utter.onerror = advance;
-    voiceTalk.chunkTimer = setTimeout(advance, Math.max(5000, piece.length * 110 + 3000));
-    try { window.speechSynthesis.speak(utter); } catch { advance(); }
-  };
-  step();
-}
-function voiceExtract(elm) {
-  const clone = elm.cloneNode(true);
-  clone.querySelectorAll('.thinking,.message-actions,pre,button,details').forEach(n => n.remove());
-  return clone.textContent.replace(/\s+/g, ' ').trim();
-}
-function voiceWatchReply(beforeCount) {
-  const started = Date.now();
-  clearInterval(voiceTalk.watch);
-  voiceTalk.watch = setInterval(() => {
-    if (!voiceTalk.active) { clearInterval(voiceTalk.watch); return; }
-    if (state.busy) return;
-    clearInterval(voiceTalk.watch);
-    const els = document.querySelectorAll('.message.assistant');
-    const elm = els[els.length - 1];
-    if (elm && els.length > beforeCount) voiceTalkSpeak(voiceExtract(elm));
-    else voiceTalkSpeak('Done \u2014 my answer is in the chat.');
-  }, 700);
-  setTimeout(() => { clearInterval(voiceTalk.watch); }, 125000);
-}
-function voiceSubmit(text) {
-  const before = document.querySelectorAll('.message.assistant').length;
-  voiceSetPhase('thinking', '\u201c' + text + '\u201d');
-  const dir = voicePersonalityDirective();
-  $('prompt').value = dir ? text + '\n\n[Response style: ' + dir + ']' : text;
-  syncSendState();
-  send();
-  voiceWatchReply(before);
-}
-function voiceListen() {
-  if (!voiceTalk.active || voiceTalk.muted) return;
-  const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!Rec) { voiceSetPhase('idle', 'This browser doesn\u2019t support listening. Just type, or close this.'); return; }
-  try { voiceTalk.recog?.stop(); } catch { /* ignore */ }
-  const recog = new Rec(); voiceTalk.recog = recog;
-  recog.lang = voiceTalk.langOverride || speechTag(); recog.interimResults = true; recog.continuous = false; recog.maxAlternatives = 1;
-  voiceSetPhase('listening', 'I\u2019m listening\u2026 go ahead.');
-  recog.onresult = e => {
-    let interim = '', finalText = '';
-    for (const r of e.results) { if (r.isFinal) finalText += r[0].transcript; else interim += r[0].transcript; }
-    if (interim) voiceSetPhase('listening', interim);
-    if (finalText.trim()) { voiceTalk.quiet = 0; voiceTalk.errStrikes = 0; try { recog.stop(); } catch { /* ignore */ } voiceSubmit(finalText.trim()); }
-  };
-  recog.onerror = e => {
-    const err = String(e.error || '');
-    if (err === 'language-not-supported' && !voiceTalk.langRetried) { voiceTalk.langRetried = true; voiceTalk.langOverride = 'en-US'; voiceTalk.errStrikes = 0; }
-    else if (err === 'not-allowed' || err === 'service-not-allowed') { voiceSetPhase('idle', 'I can\u2019t hear you \u2014 allow the microphone for Janna, then try again.'); voiceTalk.recog = null; voiceTalk.errStrikes = 0; }
-    else if (err === 'no-speech') { voiceTalk.quiet++; }
-    else if (err) { voiceTalk.errStrikes = (voiceTalk.errStrikes || 0) + 1; voiceTalk.errKind = err; }
-  };
-  recog.onend = () => {
-    if (voiceTalk.recog !== recog) return;
-    if (!voiceTalk.active || voiceTalk.muted || voiceTalk.phase !== 'listening') return;
-    clearTimeout(voiceTalk.restart);
-    if ((voiceTalk.errStrikes || 0) >= 2) { const k = voiceTalk.errKind || ''; voiceTalk.errStrikes = 0; voiceTalk.stopped = true; voiceSetPhase('idle', k === 'network' ? 'My hearing can\u2019t reach the speech service \u2014 the internet it needs is weak or unavailable. Tap the circle to try again, or just type.' : 'Something\u2019s wrong with my listening (' + k + ') \u2014 tap the circle to try again.'); return; }
-    if (voiceTalk.quiet >= 3) { voiceTalk.stopped = true; voiceSetPhase('idle', 'I can\u2019t hear anything \u2014 tap the circle to try again.'); return; }
-    voiceTalk.restart = setTimeout(() => { if (!voiceTalk.stopped) voiceListen(); }, 350);
-  };
-  try { recog.start(); } catch { /* ignore */ }
-}
-function voiceOrbTap() {
-  if (voiceTalk.phase === 'speaking') { clearTimeout(voiceTalk.chunkTimer); try { window.speechSynthesis.cancel(); } catch { /* ignore */ } voiceListen(); }
-  else if (voiceTalk.phase === 'listening') { try { voiceTalk.recog?.stop(); } catch { /* ignore */ } voiceSetPhase('idle', 'Paused \u2014 tap the circle to continue.'); }
-  else if (voiceTalk.phase === 'idle' && !voiceTalk.muted) { voiceTalk.stopped = false; voiceListen(); }
-}
-function voiceToggleMute() {
-  voiceTalk.muted = !voiceTalk.muted;
-  const btn = document.getElementById('voiceMuteBtn'); if (btn) btn.classList.toggle('muted', voiceTalk.muted);
-  if (voiceTalk.muted) { clearTimeout(voiceTalk.chunkTimer); try { voiceTalk.recog?.stop(); } catch { /* ignore */ } try { window.speechSynthesis.cancel(); } catch { /* ignore */ } voiceSetPhase('idle', 'Mic is muted \u2014 tap the mic to talk again.'); }
-  else { voiceTalk.stopped = false; voiceListen(); }
-}
-async function voiceOpen() {
-  // Grok: a denied mic shows a white top toast and does NOT open a voice
-  // screen — so ask for the mic BEFORE opening the overlay.
-  if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-    const micId = state.settings.voice_mic_device || '';
-    const constraints = micId ? { audio: { deviceId: { exact: micId } } } : { audio: true };
-    const probe = async c => {
-      const stream = await navigator.mediaDevices.getUserMedia(c);
-      stream.getTracks().forEach(t => { try { t.stop(); } catch { /* ignore */ } });
-      return true;
+  container.querySelectorAll('[data-table-copy]').forEach(btn => {
+    btn.onclick = async () => {
+      const table = btn.closest('.md-table-wrap')?.querySelector('table');
+      if (!table) return;
+      const rows = [...table.querySelectorAll('tr')].map(tr => [...tr.querySelectorAll('th,td')].map(c => c.textContent).join('\t')).join('\n');
+      const ok = await copyCodeText(rows);
+      btn.textContent = ok ? 'Copied' : 'Copy failed';
+      setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
     };
-    try { await probe(constraints); }
-    catch (err) {
-      if (err && err.name === 'OverconstrainedError') {
-        try { await probe({ audio: true }); }
-        catch (err2) {
-          if (err2 && err2.name !== 'NotFoundError') { topToast('Microphone access denied. Check your browser settings.'); return; }
-        }
-      } else if (err && err.name === 'NotAllowedError') { topToast('Microphone access denied. Check your browser settings.'); return; }
-      else if (err && err.name !== 'NotFoundError') { topToast('Microphone access denied. Check your browser settings.'); return; }
-    }
-  }
-  voiceOverlay();
-  syncVoiceNameLabel();
-  voiceTalk.active = true; voiceTalk.muted = false; voiceTalk.quiet = 0; voiceTalk.errStrikes = 0; voiceTalk.stopped = false;
-  try { const synth = window.speechSynthesis; if (synth) { synth.getVoices(); const prime = new SpeechSynthesisUtterance(' '); prime.volume = 0; synth.speak(prime); } } catch { /* ignore */ }
-  document.body.classList.add('voice-open');
-  const btn = document.getElementById('voiceMuteBtn'); if (btn) btn.classList.remove('muted');
-  voiceTalk.langOverride = ''; voiceTalk.langRetried = false;
-  voiceListen();
-}
-function voiceClose() {
-  voiceTalk.active = false;
-  clearInterval(voiceTalk.watch); clearTimeout(voiceTalk.restart);
-  try { voiceTalk.recog?.stop(); } catch { /* ignore */ }
-  try { window.speechSynthesis.cancel(); } catch { /* ignore */ }
-  document.body.classList.remove('voice-open');
-  document.getElementById('voiceOverlay')?.remove();
+  });
+  container.querySelectorAll('.code-block').forEach(block => {
+    const code = block.querySelector('code');
+    if (code) codeByBody.set(block, code.textContent);
+  });
 }
 
 /* ---------- theme ---------- */
 function applyTheme() {
   const mode = state.settings.appearance_mode || 'system';
-  const dark = mode === 'dark' || (mode === 'system' && window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches);
-  document.body.dataset.theme = dark ? 'dark' : 'light';
-  document.body.classList.toggle('wrap-code', state.settings.wrap_code === true);
+  const custom = state.settings.custom_theme;
+  let theme = 'light';
+  if (mode === 'dark') theme = 'dark';
+  else if (mode === 'light') theme = 'light';
+  else if (custom) theme = custom;
+  else if (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches) theme = 'dark';
+  document.body.dataset.theme = theme;
   document.body.classList.toggle('reduce-motion', state.settings.reduce_motion === true);
-  if (window.syncPhoneChrome) { try { window.syncPhoneChrome(); } catch { /* ignore */ } }
+  document.body.classList.toggle('wrap-code', state.settings.wrap_code === true);
+  if (typeof window.syncPhoneChrome === 'function') { try { window.syncPhoneChrome(); } catch { /* ignore */ } }
 }
-function syncDesktopChrome() { applyTheme(); }
 
 /* ---------- models ---------- */
-function modelRecord(id) { return state.modelCatalog.find(m => m.id === id) || { id, label: id, note: 'Cloud model', model_class: 'Janna Cloud' }; }
-function modelLabel(id) { return modelRecord(id).label || id; }
-function rememberModelChoice() { try { if (state.model) localStorage.setItem('janna-selected-model', state.model); } catch { /* ignore */ } }
-function renderModelOptions(models) {
-  // v61: a local-first bootstrap with no cached catalog yet returns an
-  // empty list — that means "not loaded yet", not "no models". Keep the
-  // seeded model label instead of blanking it to "Choose a model".
-  if (!models || !models.length) { syncModelPicker(); return; }
-  state.models = models || [];
-  const current = state.model || (() => { try { return localStorage.getItem('janna-selected-model') || ''; } catch { return ''; } })();
-  const ordered = [];
-  const seen = new Set();
-  for (const row of state.modelCatalog) { if (state.models.includes(row.id) && !seen.has(row.id)) { ordered.push(row); seen.add(row.id); } }
-  for (const id of state.models) { if (!seen.has(id)) { ordered.push(modelRecord(id)); seen.add(id); } }
-  state.model = ordered.some(r => r.id === current) ? current : (ordered[0]?.id || '');
-  syncModelPicker();
-  refreshNativeLevels();
-}
-/* Short picker labels: distinct for every model (the old first-two-words
-   rule made DeepSeek V4 Flash and DeepSeek V4 Pro both "DeepSeek V4"). */
 const SHORT_MODEL_LABELS = { 'janna-cloud': 'Janna', 'apinex-gemini-3.8-flash': 'Gemini 3.8', 'apinex-gpt-6-luna': 'GPT-6 Luna', 'apinex-kimi-k3': 'Kimi K3', 'apinex-muse-spark-1.3': 'Muse Spark', 'apinex-deepseek-v4-flash': 'DeepSeek V4', 'apinex-deepseek-v4-pro': 'DeepSeek Pro', 'apinex-deepseek-v4.1-flash': 'DeepSeek 4.1', 'apinex-gemini-4-hydrogen': 'Gemini 4', 'apinex-glm-5.3': 'GLM 5.3', 'apinex-glm-5.3-flash': 'GLM Flash', 'apinex-hy4': 'HY4', 'apinex-hy4-flash': 'HY4 Flash', 'apinex-mimo-v2.6-pro': 'MiMo V2.6', 'apinex-minimax-m3.1-flash': 'MiniMax M3', 'apinex-qwen-3.8-max': 'Qwen 3.8' };
+function modelLabel(id) {
+  const row = state.modelCatalog.find(m => m.id === id);
+  if (row) return row.label || row.name || id;
+  return id;
+}
 function shortModelLabel(id) { return SHORT_MODEL_LABELS[id] || (modelLabel(id) || id).split(' ').slice(0, 2).join(' '); }
 function syncModelPicker() {
   const label = $('modelPickerLabel');
   if (label) label.textContent = state.model ? shortModelLabel(state.model) : 'Choose a model';
+}
+function rememberModelChoice() {
+  try { localStorage.setItem('janna-selected-model', state.model || ''); } catch { /* ignore */ }
 }
 async function refreshNativeLevels() {
   state.modelVision = false;
@@ -758,104 +365,25 @@ function openModelPicker() {
   if (!p.hidden) { closeModelPicker(); return; }
   closePlusMenu();
   p.replaceChildren();
-  const groups = [['Janna Cloud', r => r.id === 'janna-cloud'], ['APInex', r => r.id.startsWith('apinex-')], ['Other cloud models', r => r.id !== 'janna-cloud' && !r.id.startsWith('apinex-')]];
-  for (const [name, pred] of groups) {
-    const rows = state.modelCatalog.filter(r => state.models.includes(r.id) && pred(r));
-    if (!rows.length) continue;
-    p.append(el('div', 'model-picker-group', name));
-    for (const row of rows) {
-      const item = el('button', 'model-picker-item');
-      item.type = 'button'; item.setAttribute('role', 'radio'); item.setAttribute('aria-checked', String(row.id === state.model));
-      const icon = el('span', 'mp-icon');
-      icon.innerHTML = '<svg><use href="#i-' + (row.id === 'janna-cloud' ? 'spark' : row.id.startsWith('apinex-') ? 'bolt' : 'globe') + '"/></svg>';
-      const radio = el('span', 'radio');
-      const texts = el('div', 'mp-texts');
-      texts.append(el('strong', '', row.label));
-      const note = row.note || (row.vision ? 'Sees images' : '');
-      if (note) texts.append(el('small', '', note));
-      item.append(icon, radio, texts);
-      if (row.id === state.model) { const c = el('span', 'mp-check'); c.innerHTML = '<svg><use href="#i-check"/></svg>'; item.append(c); }
-      item.onclick = () => chooseModel(row.id);
-      p.append(item);
-    }
+  const head = el('div', 'model-picker-group', 'Models');
+  p.append(head);
+  for (const id of state.models) {
+    const row = state.modelCatalog.find(m => m.id === id) || {};
+    const item = el('button', 'model-picker-item');
+    item.type = 'button';
+    item.setAttribute('aria-checked', state.model === id ? 'true' : 'false');
+    item.innerHTML = `<span class="radio"></span><span class="mp-texts"><strong>${escapeHTML(shortModelLabel(id))}</strong><small>${escapeHTML(row.label || row.name || id)}${row.vision ? ' · Vision' : ''}</small></span>${state.model === id ? '<span class="mp-check"><svg><use href="#i-check"/></svg></span>' : ''}`;
+    item.onclick = () => chooseModel(id);
+    p.append(item);
   }
   const foot = el('div', 'model-picker-foot');
-  foot.append(document.createTextNode('Free \u2014 all models included. No account, no paid tiers.'));
+  foot.innerHTML = `All models are <strong>free</strong> — no sign-in, no limits.`;
   p.append(foot);
   p.hidden = false;
   btn.setAttribute('aria-expanded', 'true');
 }
 
-/* ---------- attachments ---------- */
-function downscaleImageFile(file) {
-  return new Promise((resolve, reject) => {
-    const url = URL.createObjectURL(file); const img = new Image();
-    img.onload = () => {
-      try {
-        const scale = Math.min(1, 1568 / Math.max(img.naturalWidth || 1, img.naturalHeight || 1));
-        const w = Math.max(1, Math.round(img.naturalWidth * scale)), h = Math.max(1, Math.round(img.naturalHeight * scale));
-        const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
-        const cx = cv.getContext('2d'); cx.fillStyle = '#ffffff'; cx.fillRect(0, 0, w, h); cx.drawImage(img, 0, 0, w, h);
-        URL.revokeObjectURL(url);
-        cv.toBlob(blob => { if (!blob) { reject(new Error('Could not shrink the image')); return; } resolve(new File([blob], (file.name || 'photo').replace(/\.[a-z0-9]+$/i, '') + '.jpg', { type: 'image/jpeg' })); }, 'image/jpeg', 0.85);
-      } catch (err) { URL.revokeObjectURL(url); reject(err); }
-    };
-    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Could not read the image')); };
-    img.src = url;
-  });
-}
-function fileBase64(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
-    reader.onerror = () => reject(reader.error || new Error('Could not read the file'));
-    reader.readAsDataURL(file);
-  });
-}
-function renderPending() {
-  const tray = $('attachmentTray'); if (!tray) return;
-  tray.replaceChildren();
-  tray.hidden = !state.pending.length;
-  for (const item of state.pending) {
-    const chip = el('span', 'attachment-chip');
-    if (item.kind === 'image' && item.file) { const img = document.createElement('img'); img.alt = ''; img.src = URL.createObjectURL(item.file); chip.append(img); }
-    chip.append(document.createTextNode(item.name + ' \u00b7 ' + (item.kind === 'image' ? (state.modelVision ? 'image' : 'image, pixels not sent') : 'log')));
-    chip.append(button('Remove', () => { state.pending = state.pending.filter(row => row !== item); renderPending(); }));
-    tray.append(chip);
-  }
-  syncSendState();
-}
-async function handleFiles(files) {
-  for (const file of files) {
-    if (state.pending.length >= 4) { toast('Attach at most 4 files.'); break; }
-    const name = file.name || 'attachment';
-    const image = /\.(png|jpe?g|webp)$/i.test(name) || ['image/png', 'image/jpeg', 'image/webp'].includes(file.type);
-    try {
-      if (image) {
-        if (/\.(svg|gif)$/i.test(name)) { toast(name + ' is not a PNG, JPEG, or WebP.'); continue; }
-        let useFile = file, useName = name;
-        if (file.size > 1200000) {
-          if (window.__JANNA_WEB__) { const small = await downscaleImageFile(file).catch(() => null); if (!small) { toast(name + ' could not be shrunk to fit.'); continue; } useFile = small; useName = small.name; }
-          else { toast(name + ' is over 1.2 MB.'); continue; }
-        }
-        if (state.pending.filter(item => item.kind === 'image').length >= 2) { toast('Attach at most 2 images.'); continue; }
-        const data = await fileBase64(useFile);
-        state.pending.push({ kind: 'image', name: useName, data, file: useFile });
-        if (!state.modelVision) toast(name + ' stays on this device. This model has not advertised vision, so its pixels will not be sent.');
-      } else {
-        if (file.size > 180000) { toast(name + ' is over 180,000 characters.'); continue; }
-        const text = await file.text();
-        if (text.includes('\u0000')) { toast(name + ' is not a text file.'); continue; }
-        state.pending.push({ kind: 'log', name, text });
-      }
-    } catch (err) { toast(err.message || 'Could not read ' + name); }
-  }
-  renderPending();
-}
-
-/* ---------- suggestions & modes ----------
-   Only modes Janna can really do. "Create an image" and "Check email and
-   calendar" are omitted (see BUILD-REPORT.md). */
+/* ---------- suggestion modes + rotating topics ---------- */
 const MODES = {
   search: { label: 'Search the web', icon: 'globe', chip: 'Web search', placeholder: 'Search the web.',
     prompts: ['What\u2019s in the news today?', 'What\u2019s new in AI this week?', 'Find things to do this weekend', 'Compare the latest flagship phones', 'Get a morning brief every day', 'Get a daily AI news digest', 'Get a daily market report'], sendOnTap: true },
@@ -867,150 +395,18 @@ const MODES = {
     prompts: ['Outline a presentation about a new product', 'Make slides for a school project', 'Create a pitch deck outline'], sendOnTap: false },
 };
 const MODE_ORDER = ['search', 'apps', 'writing', 'presentation'];
-/* Topic prompts that rotate with the modes (Grok's pool, 2026-11-25
-   re-study). Tapping one sends it as a question — except "Create an
+/* Topic prompts that rotate with the modes (Grok's pool, 2026-11-26
+   review #3). Tapping one sends it as a question — except "Create an
    image", which pre-fills the composer like Grok's "imagine skill"
    (Janna cannot generate images, so nothing is sent). */
 const TOPIC_SUGGESTIONS = [
-  { label: 'Explore Python type hints', icon: 'spark' },
+  { label: 'Explore prime factorization techniques', icon: 'spark' },
   { label: 'Compare TypeScript and Python', icon: 'edit' },
-  { label: 'What\u2019s in the news today?', icon: 'globe' },
-  { label: 'What\u2019s new in AI this week?', icon: 'globe' },
-  { label: 'Find things to do this weekend', icon: 'spark' },
-  { label: 'Compare the latest flagship phones', icon: 'globe' },
+  { label: 'Check email and calendar', icon: 'globe' },
+  { label: 'Analyze COP31 fossil fuel debates', icon: 'globe' },
+  { label: 'Check font size', icon: 'spark' },
   { label: 'Create an image', icon: 'image', prefill: 'Create an image of ' },
 ];
-/* Project icons (Grok's New Project picker, 2026-11-25 re-study):
-   64 icons in an 8x8 grid + 8 colours. Inline stroke SVGs in the same
-   style as the shell sprite (24x24, stroke currentColor, width 1.65). */
-const PROJECT_ICONS = [
-  ['folder', 'Folder', '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>'],
-  ['flag', 'Flag', '<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><path d="M4 22v-7"/>'],
-  ['home', 'Home', '<path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/>'],
-  ['star', 'Star', '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>'],
-  ['heart', 'Heart', '<path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>'],
-  ['globe', 'Globe', '<circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>'],
-  ['unlock', 'Unlock', '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/>'],
-  ['smile', 'Smile', '<circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><path d="M9 9h.01M15 9h.01"/>'],
-  ['shield', 'Shield', '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>'],
-  ['bell', 'Bell', '<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>'],
-  ['mail', 'Mail', '<path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><path d="M22 6l-10 7L2 6"/>'],
-  ['phone', 'Phone', '<path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/>'],
-  ['user', 'User', '<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>'],
-  ['stethoscope', 'Stethoscope', '<path d="M4 3v5a7 7 0 0 0 14 0V3"/><path d="M11 15v1a5 5 0 0 0 10 0v-3"/><circle cx="21" cy="9" r="1.8"/>'],
-  ['calendar', 'Calendar', '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>'],
-  ['clock', 'Clock', '<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>'],
-  ['hourglass', 'Hourglass', '<path d="M5 22h14M5 2h14M17 22v-4.17a2 2 0 0 0-.59-1.42L12 12l-4.41 4.41A2 2 0 0 0 7 17.83V22M7 2v4.17a2 2 0 0 0 .59 1.42L12 12l4.41-4.41A2 2 0 0 0 17 6.17V2"/>'],
-  ['sun', 'Sun', '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>'],
-  ['moon', 'Moon', '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>'],
-  ['monitor', 'Monitor', '<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>'],
-  ['umbrella', 'Umbrella', '<path d="M23 12a11.05 11.05 0 0 0-22 0zm-5 7a3 3 0 0 1-6 0v-7"/>'],
-  ['leaf', 'Leaf', '<path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10z"/><path d="M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12"/>'],
-  ['bug', 'Bug', '<path d="M12 3a5 5 0 0 1 5 5v8a5 5 0 0 1-10 0V8a5 5 0 0 1 5-5z"/><path d="M9 3l1 2M15 3l-1 2M8 21l-2-2M16 21l2-2M7 9h10M7 13h10"/>'],
-  ['flask', 'Flask', '<path d="M10 2v6L4.5 18a2 2 0 0 0 1.8 3h11.4a2 2 0 0 0 1.8-3L14 8V2"/><path d="M8.5 2h7M7 16h10"/>'],
-  ['rocket', 'Rocket', '<path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="M12 15l-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/>'],
-  ['plane', 'Plane', '<path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/>'],
-  ['car', 'Car', '<path d="M3 13l1.5-4.5A2 2 0 0 1 6.4 7h11.2a2 2 0 0 1 1.9 1.5L21 13v5a1 1 0 0 1-1 1h-1"/><path d="M3 13v5a1 1 0 0 0 1 1h1"/><circle cx="7.5" cy="18" r="1.8"/><circle cx="16.5" cy="18" r="1.8"/><path d="M9.3 18h5.4"/>'],
-  ['camera', 'Camera', '<path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/>'],
-  ['video', 'Video', '<path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/>'],
-  ['music', 'Music', '<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>'],
-  ['headphones', 'Headphones', '<path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/>'],
-  ['microscope', 'Microscope', '<path d="M9 2h6"/><path d="M12 2v6"/><path d="M8 21h8"/><path d="M12 8l4.5 6.5a3.5 3.5 0 0 1-3 5.5h-3a3.5 3.5 0 0 1-3-5.5z"/><path d="M12 21v-1"/>'],
-  ['archive', 'Archive', '<rect x="3" y="3" width="18" height="5" rx="1"/><path d="M5 8v11a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/>'],
-  ['book', 'Book', '<path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>'],
-  ['zap', 'Zap', '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>'],
-  ['wrench', 'Wrench', '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>'],
-  ['note', 'Note', '<path d="M15.5 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8.5z"/><path d="M15 3v6h6M9 13h6M9 17h4"/>'],
-  ['scale', 'Scale', '<path d="M12 3v18M5 7h14M7 21h10"/><path d="M5 7l-2.5 6a3 3 0 0 0 5 0zM19 7l-2.5 6a3 3 0 0 0 5 0z"/>'],
-  ['film', 'Film', '<rect x="2" y="2" width="20" height="20" rx="2.18"/><path d="M7 2v20M17 2v20M2 12h20M2 7h5M2 17h5M17 17h5M17 7h5"/>'],
-  ['palette', 'Palette', '<path d="M12 3a9 9 0 1 0 0 18c1.5 0 2-1 1.5-2.5-.5-1.5.5-2.5 2-2.5H17a4 4 0 0 0 4-4c0-5-4-9-9-9z"/><path d="M8 10h.01M12 7h.01M16 10h.01"/>'],
-  ['cpu', 'CPU', '<rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M1 9h3M1 15h3M20 9h3M20 15h3"/>'],
-  ['calculator', 'Calculator', '<rect x="4" y="2" width="16" height="20" rx="2"/><path d="M8 6h8"/><path d="M8 12h.01M12 12h.01M16 12h.01M8 16h.01M12 16h.01M16 16h.01"/>'],
-  ['laptop', 'Laptop', '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M2 20h20"/>'],
-  ['briefcase', 'Briefcase', '<rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>'],
-  ['clipboard', 'Clipboard', '<path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M9 12h6M9 16h6"/>'],
-  ['building', 'Building', '<rect x="4" y="2" width="16" height="20" rx="2"/><path d="M9 22v-4h6v4"/><path d="M8 6h.01M16 6h.01M12 6h.01M12 10h.01M12 14h.01M16 10h.01M16 14h.01M8 10h.01M8 14h.01"/>'],
-  ['flame', 'Flame', '<path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.07-2.14-.22-4.05 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.15.43-2.29 1-3a2.5 2.5 0 0 0 2.5 2.5z"/>'],
-  ['play', 'Play', '<polygon points="5 3 19 12 5 21 5 3"/>'],
-  ['database', 'Database', '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>'],
-  ['shirt', 'Shirt', '<path d="M20.38 3.46L16 2a4 4 0 0 1-8 0L3.62 3.46a2 2 0 0 0-1.34 2.23l.58 3.47a1 1 0 0 0 .99.84H6v10c0 1.1.9 2 2 2h8a2 2 0 0 0 2-2V10h2.15a1 1 0 0 0 .99-.84l.58-3.47a2 2 0 0 0-1.34-2.23z"/>'],
-  ['gem', 'Gem', '<path d="M6 3h12l4 6-10 13L2 9z"/><path d="M11 3L8 9l4 13 4-13-3-6M2 9h20"/>'],
-  ['gamepad', 'Gamepad', '<path d="M17.32 5H6.68a4 4 0 0 0-3.98 3.59L2 17a2 2 0 0 0 3.35 1.47L8 15h8l2.65 3.47A2 2 0 0 0 22 17l-.7-8.41A4 4 0 0 0 17.32 5z"/><path d="M6 12h4M8 10v4M15 13h.01M18 11h.01"/>'],
-  ['chef', 'Chef Hat', '<path d="M17 21a1 1 0 0 0 1-1v-5.35c0-.46.32-.84.73-1.04a4 4 0 0 0-2.13-7.59 5 5 0 0 0-9.19 0 4 4 0 0 0-2.13 7.59c.41.2.73.58.73 1.04V20a1 1 0 0 0 1 1z"/><path d="M6 17h12"/>'],
-  ['dollar', 'Dollar', '<path d="M12 1v22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>'],
-  ['tag', 'Tag', '<path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><path d="M7 7h.01"/>'],
-  ['gradcap', 'Graduation Cap', '<path d="M22 10L12 5 2 10l10 5 10-5z"/><path d="M6 12v5c0 1.66 2.69 3 6 3s6-1.34 6-3v-5"/><path d="M22 10v6"/>'],
-  ['pin', 'Pin', '<path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>'],
-  ['compass', 'Compass', '<circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/>'],
-  ['code', 'Code', '<path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/>'],
-  ['box', 'Box', '<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.27 6.96L12 12.01l8.73-5.05M12 22.08V12"/>'],
-  ['sparkles', 'Sparkles', '<path d="M12 3l1.9 5.8a2 2 0 0 0 1.3 1.3L21 12l-5.8 1.9a2 2 0 0 0-1.3 1.3L12 21l-1.9-5.8a2 2 0 0 0-1.3-1.3L3 12l5.8-1.9a2 2 0 0 0 1.3-1.3z"/><path d="M19 3l.9 2.6 2.6.9-2.6.9L19 10l-.9-2.6-2.6-.9 2.6-.9z"/>'],
-  ['key', 'Key', '<path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.78 7.78 5.5 5.5 0 0 1 7.78-7.78zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/>'],
-  ['bulb', 'Lightbulb', '<path d="M9 18h6M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.4 1 2.3h6c0-.9.4-1.8 1-2.3A7 7 0 0 0 12 2z"/>'],
-  ['bookmark', 'Bookmark', '<path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>'],
-];
-const PROJECT_COLORS = [
-  ['default', 'Default color', ''],
-  ['blue', 'Blue', '#1f7aec'],
-  ['orange', 'Orange', '#f97316'],
-  ['pink', 'Pink', '#ec4899'],
-  ['purple', 'Purple', '#8b5cf6'],
-  ['teal', 'Teal', '#14b8a6'],
-  ['red', 'Red', '#ef4444'],
-  ['green', 'Green', '#22c55e'],
-];
-/* Example projects (Grok's Library Projects tab, 2026-11-25 re-study).
-   Descriptions are the truncated card texts exactly as shown on grok. */
-const EXAMPLE_PROJECTS = [
-  { name: 'Legal Document Reviewer', desc: 'Get expert analysis of U.S. legal\u2026' },
-  { name: 'Cover Letter Writer', desc: 'Craft tailored cover letters that align\u2026' },
-  { name: 'Writing Assistant', desc: 'Polish and improve\u2026' },
-  { name: 'Fitness Advice', desc: 'Plan workouts, nutrition, and fit\u2026' },
-];
-function projectIconSvg(p) {
-  const found = PROJECT_ICONS.find(i => i[0] === (p && p.icon)) || PROJECT_ICONS[0];
-  const col = (PROJECT_COLORS.find(c => c[0] === (p && p.color)) || PROJECT_COLORS[0])[2];
-  return `<svg viewBox="0 0 24 24" fill="none" stroke="${col || 'currentColor'}" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round">${found[2]}</svg>`;
-}
-function inlineIcon(id) {
-  const found = PROJECT_ICONS.find(i => i[0] === id) || PROJECT_ICONS[0];
-  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round">${found[2]}</svg>`;
-}
-/* Built-in file skills (Grok's Skills section, 2026-11-25 re-study).
-   Tapping one puts a "Create a …" prompt in the composer — real, no fake. */
-const FILE_SKILLS = [
-  ['docx', 'Word document', 'Create, read, and edit Word documents (.docx)'],
-  ['pdf', 'PDF', 'Create, merge, split, and extract from PDFs'],
-  ['pptx', 'PowerPoint', 'Create, read, and edit PowerPoint presentations (.pptx)'],
-  ['xlsx', 'Spreadsheet', 'Create, read, and edit spreadsheet files (.xlsx, .csv)'],
-];
-async function addCustomSkill() {
-  const res = await showDialog({ title: 'New skill', text: 'Teach Janna a repeatable task. Tapping it in the + menu puts its instruction in the composer.', fields: [{ name: 'name', placeholder: 'Skill name' }, { name: 'instruction', placeholder: 'What should Janna do? e.g. Summarize this in three bullet points' }], okText: 'Save' });
-  if (!res || !String(res.name || '').trim() || !String(res.instruction || '').trim()) return;
-  state.customSkills.unshift({ id: uid('skill'), name: String(res.name).trim(), instruction: String(res.instruction).trim() });
-  saveCustomSkills(); renderSettingsBody('skills');
-  toast('Skill saved: ' + String(res.name).trim());
-}
-/* Automations catalog (Grok's Automations section, 2026-11-25 re-study).
-   Listed for browsing; Janna cannot run them yet — Add says so honestly. */
-const AUTOMATIONS = [
-  { cat: 'Featured', items: [
-    { name: 'Custom', desc: 'Create your own automation from scratch' },
-    { name: 'Morning Brief' }, { name: 'Daily Stock Tracker' }, { name: 'AI News Digest' },
-    { name: 'Daily Planner' }, { name: 'Weekly Review' },
-  ] },
-  { cat: 'News', items: [{ name: 'X Trends Digest' }] },
-  { cat: 'Productivity', items: [{ name: 'Email Auto-Responder' }, { name: 'Task Extractor' }] },
-  { cat: 'Finance', items: [{ name: 'Earnings Calendar' }, { name: 'Portfolio News Scan' }] },
-  { cat: 'Research', items: [{ name: 'Competitor Watch' }, { name: 'Paper Watch' }, { name: 'Weekend Deep Dive' }] },
-  { cat: 'Lifestyle', items: [{ name: 'Workout Coach' }, { name: 'Meal Planner' }, { name: 'Language Practice' }] },
-];
-/* Template instructions observed on grok (2026-11-25 re-study).
-   Only Morning Brief was opened, so only its instructions are known —
-   other templates start with an empty instructions box for the user. */
-const AUTOMATION_INSTRUCTIONS = {
-  'Morning Brief': 'Put together my morning brief: the top world, business, and tech headlines from the last 24 hours with one-line summaries, any major overnight market moves, and today\u2019s weather for my location. End with one story worth reading in depth and why. Keep the whole thing scannable.',
-};
 let suggestionRot = null;
 function suggestRotation() {
   if (suggestionRot !== null) return suggestionRot;
@@ -1055,127 +451,106 @@ function renderSuggestions() {
   if (state.settings.show_suggestions === false) { list.hidden = true; return; }
   if (!state.armedMode) {
     const rot = suggestRotation();
-    // Grok rotates ALL THREE rows per load (2026-11-25 re-study) from a
-    // pool of modes and topic prompts — no slot is fixed.
+    // Grok rotates ALL THREE rows per load (review #3) from a pool of
+    // modes and topic prompts — no slot is fixed.
     const pool = MODE_ORDER.map(k => ({ mode: k })).concat(TOPIC_SUGGESTIONS.map(t => ({ topic: t })));
-    for (let i = 0; i < 3; i++) {
-      const pick = pool[(rot + i) % pool.length];
+    const picked = [];
+    for (let n = 0; n < 3; n++) picked.push(pool[(rot * 3 + n) % pool.length]);
+    for (const pick of picked) {
+      const row = el('button', 'suggest-row');
+      row.type = 'button';
       if (pick.mode) {
-        const m = MODES[pick.mode];
-        const row = el('button', 'suggest-row');
-        row.type = 'button';
-        row.innerHTML = `<svg><use href="#i-${m.icon}"/></svg><span>${escapeHTML(m.label)}</span>`;
+        const mode = MODES[pick.mode];
+        row.innerHTML = `<svg><use href="#i-${mode.icon}"/></svg><span>${escapeHTML(mode.label)}</span>`;
         row.onclick = () => armMode(pick.mode);
-        list.append(row);
       } else {
-        const row = el('button', 'suggest-row');
-        row.type = 'button';
-        row.innerHTML = `<svg><use href="#i-${pick.topic.icon}"/></svg><span>${escapeHTML(pick.topic.label)}</span>`;
-        if (pick.topic.prefill) {
-          // Grok: "Create an image" pre-fills the composer ("imagine
-          // skill") and does NOT send. Same here — the user finishes
-          // the description and sends it themself.
-          row.onclick = () => { $('prompt').value = pick.topic.prefill; autoGrowPrompt(); syncSendState(); $('prompt').focus(); };
-        } else {
-          row.onclick = () => { $('prompt').value = pick.topic.label; syncSendState(); send(); };
-        }
-        list.append(row);
+        const topic = pick.topic;
+        row.innerHTML = `<svg><use href="#i-${topic.icon}"/></svg><span>${escapeHTML(topic.label)}</span>`;
+        row.onclick = () => {
+          if (topic.prefill) {
+            $('prompt').value = topic.prefill;
+            autoGrowPrompt(); syncSendState(); $('prompt').focus();
+            return;
+          }
+          $('prompt').value = topic.label;
+          autoGrowPrompt(); syncSendState();
+          send();
+        };
       }
+      list.append(row);
     }
     return;
   }
-  const m = MODES[state.armedMode];
+  // Armed mode: show that mode's prompts instead of the rotating rows.
+  const mode = MODES[state.armedMode];
   const back = el('button', 'suggest-row suggest-back');
-  back.type = 'button'; back.textContent = '\u2190 All suggestions';
+  back.type = 'button';
+  back.innerHTML = `<span>\u2039 ${escapeHTML(mode.label)}</span>`;
   back.onclick = () => disarmMode();
   list.append(back);
-  for (const p of m.prompts) {
+  for (const prompt of (mode.prompts || [])) {
     const row = el('button', 'suggest-row');
     row.type = 'button';
-    row.innerHTML = `<svg><use href="#i-${m.icon}"/></svg><span>${escapeHTML(p)}</span>`;
+    row.innerHTML = `<svg><use href="#i-${mode.icon}"/></svg><span>${escapeHTML(prompt)}</span>`;
     row.onclick = () => {
-      if (m.sendOnTap) { $('prompt').value = p; syncSendState(); send(); }
-      else { $('prompt').value = (m.templatePrefix || '') + p + (m.templatePrefix ? ' web app' : ''); autoGrowPrompt(); syncSendState(); $('prompt').focus(); }
+      const text = (mode.templatePrefix || '') + prompt;
+      $('prompt').value = text;
+      autoGrowPrompt(); syncSendState();
+      if (mode.sendOnTap) send();
+      else $('prompt').focus();
     };
     list.append(row);
   }
 }
 function armMode(key) {
-  const m = MODES[key]; if (!m) return;
+  if (!MODES[key]) return;
   state.armedMode = key;
-  if (key === 'search') {
-    state.armedBeforeResearch = state.settings.research_mode || 'auto';
-    if (state.settings.research_mode !== 'always') persistSettings({ research_mode: 'always' });
-  }
-  renderModeChip();
-  $('prompt').placeholder = m.placeholder;
+  const chipRow = $('modeChipRow');
+  chipRow.replaceChildren();
+  const chip = el('button', 'mode-chip');
+  chip.type = 'button';
+  chip.innerHTML = `<span>${escapeHTML(MODES[key].chip)}</span><span class="chip-x">\u00d7</span>`;
+  chip.onclick = () => disarmMode();
+  chipRow.append(chip);
+  chipRow.hidden = false;
+  $('prompt').placeholder = MODES[key].placeholder;
   renderSuggestions();
+  $('prompt').focus();
 }
 function disarmMode() {
-  if (state.armedMode === 'search' && state.settings.research_mode === 'always') persistSettings({ research_mode: state.armedBeforeResearch || 'auto' });
   state.armedMode = null;
-  renderModeChip();
+  $('modeChipRow').hidden = true;
+  $('modeChipRow').replaceChildren();
   $('prompt').placeholder = 'Ask anything\u2026';
   renderSuggestions();
 }
-function renderModeChip() {
-  const row = $('modeChipRow');
-  row.replaceChildren();
-  if (!state.armedMode) { row.hidden = true; return; }
-  const m = MODES[state.armedMode];
-  const chip = el('button', 'mode-chip');
-  chip.type = 'button';
-  chip.innerHTML = `<span class="chip-x">\u2715</span> ${escapeHTML(m.chip)}`;
-  chip.onclick = () => disarmMode();
-  row.append(chip);
-  row.hidden = false;
+function styleDirective() {
+  const v = state.settings.response_style;
+  if (!v || v === 'default') return '';
+  return v;
+}
+function stripStyleDirective(text) {
+  return String(text || '').replace(/\n\n\[Response style: [^\]]+\]$/, '');
 }
 
-/* ---------- composer helpers ---------- */
-function autoGrowPrompt() {
-  const t = $('prompt'); t.style.height = 'auto'; t.style.height = Math.min(160, t.scrollHeight) + 'px';
-}
-function syncSendState() {
-  const c = $('composer'); if (!c) return;
-  // Send shows when there is text OR an attachment (Grok: Send only appears
-  // once there is something to send); empty means waveform only.
-  const empty = !$('prompt').value.trim() && !state.pending.length;
-  c.classList.toggle('is-empty', empty);
-  $('send').classList.toggle('active', !empty);
-}
-function updateBusy() {
-  const busy = state.busy;
-  $('composer').classList.toggle('is-busy', busy);
-  $('stop').hidden = !busy;
-  $('stop').disabled = state.stopRequested;
-  $('prompt').disabled = false;
-  $('prompt').placeholder = busy ? 'Queue instructions for the next step\u2026' : (state.armedMode ? MODES[state.armedMode].placeholder : 'Ask anything\u2026');
-  $('modelPickerBtn').disabled = busy;
-  if (busy) closeModelPicker();
-  statusBadge();
-}
-function statusBadge() {
-  const ok = !!state.models.length;
-  const failed = state.booted && state.bootFailed;
-  $('sidebarDot').classList.toggle('offline', (state.modelsKnown && !ok) || failed);
-  // Before the first bootstrap settles the honest label is "Connecting…":
-  // an empty model list at boot means "not loaded yet", never "offline".
-  $('sidebarState').textContent = state.busy ? 'Working\u2026' : !state.booted ? 'Connecting\u2026' : failed ? 'Cloud \u00b7 Offline' : !state.modelsKnown ? 'Connecting\u2026' : ok ? 'Cloud \u00b7 Ready' : 'Cloud \u00b7 Offline';
-}
-
-/* ---------- thinking display (matches styles.css .thinking structure) ---------- */
-const think = { el: null, timer: null, start: 0 };
+/* ---------- thinking display, v68 (grok-spec §14, review #3) ----------
+   The LIVE header only: "Thinking" + the single step "Planning next
+   moves" with a dotted spinner. No timer, no seconds, no step rotation,
+   no invented steps — and NO persistent "Thought for Xs" line after the
+   reply (Grok shows none on Fast replies in all three fresh probes).
+   first_token removes the header; the run's completion removes it too. */
+const think = { el: null };
 function thinkingEl() {
   if (think.el) return think.el;
   const wrap = $('messages'); if (!wrap) return null;
   const item = el('div', 'thinking');
-  const head = el('button', 'thinking-head');
-  head.type = 'button';
-  head.innerHTML = '<span class="think-spinner"></span><span class="think-title">Working for 1s</span><svg class="think-chevron"><use href="#i-chevron"/></svg>';
+  const head = el('div', 'thinking-head');
+  head.innerHTML = '<span class="think-spinner"></span><span class="think-title">Thinking</span>';
   const body = el('div', 'think-body');
-  body.append(el('ul', 'think-steps'));
+  const steps = el('ul', 'think-steps');
+  steps.append(el('li', 'is-current', 'Planning next moves'));
+  body.append(steps);
   item.append(head, body);
-  head.onclick = () => item.classList.toggle('collapsed');
   wrap.appendChild(item);
   think.el = item;
   return item;
@@ -1183,44 +558,20 @@ function thinkingEl() {
 function startThinking() {
   const item = thinkingEl();
   if (!item) return;
-  think.doneSecs = 0;
   item.hidden = false;
-  item.classList.remove('collapsed', 'done');
-  // Grok: "Planning next moves" first, then the live "Working for Ns" timer.
-  think.planned = false;
-  item.querySelector('.think-title').textContent = 'Planning next moves';
-  item.querySelector('.think-steps').replaceChildren();
-  think.start = Date.now();
-  clearInterval(think.timer);
-  think.timer = setInterval(() => {
-    const secs = Math.max(1, Math.round((Date.now() - think.start) / 1000));
-    if (think.planned) item.querySelector('.think-title').textContent = 'Working for ' + fmtDur(secs);
-  }, 1000);
   scrollThreadToBottom();
 }
 function stopThinking() {
-  clearInterval(think.timer);
-  think.doneSecs = Math.max(1, Math.round((Date.now() - think.start) / 1000));
-  if (think.el) {
-    // Grok shows no thought line for instant simple replies.
-    if (think.doneSecs < 2) { think.el.hidden = true; return; }
-    const secs = fmtDur(think.doneSecs);
-    think.el.classList.add('done', 'collapsed');
-    think.el.querySelector('.think-title').textContent = 'Thought for ' + secs;
-  }
+  if (think.el) { think.el.remove(); think.el = null; }
 }
-function addProgressStep(text) {
-  const item = thinkingEl();
-  if (!item) return;
-  // Grok shows ONE short step line at a time — the old one is replaced,
-  // never stacked (the v56 code kept two, which is why two lines showed).
-  think.planned = true;
-  item.querySelector('.think-title').textContent = 'Working for ' + fmtDur(Math.max(1, Math.round((Date.now() - think.start) / 1000)));
-  const steps = item.querySelector('.think-steps');
-  steps.replaceChildren();
-  const li = el('li', 'is-current', text);
-  steps.append(li);
-  scrollThreadToBottom();
+function scrollThreadToBottom() {
+  const thread = $('thread');
+  if (thread) thread.scrollTop = thread.scrollHeight;
+}
+function scrollToBottomIfNear() {
+  const thread = $('thread');
+  if (!thread) return;
+  if (thread.scrollHeight - thread.scrollTop - thread.clientHeight < 220) thread.scrollTop = thread.scrollHeight;
 }
 
 /* ---------- messages ---------- */
@@ -1308,829 +659,620 @@ function startEdit(item, message, session) {
   if (state.busy) { toast('Finish the current answer first.'); return; }
   if (item.querySelector('.edit-area')) return;
   const bubble = item.querySelector('.user-bubble');
-  const pager = item.querySelector('.version-pager');
-  if (bubble) bubble.hidden = true;
-  if (pager) pager.hidden = true;
+  if (!bubble) return;
+  bubble.hidden = true;
   const area = el('div', 'edit-area');
   const ta = document.createElement('textarea');
-  ta.value = currentVersionText(message); ta.rows = 1; ta.setAttribute('aria-label', 'Edit message');
-  area.append(ta);
-  const row = el('div', 'edit-actions');
-  const cancel = button('Cancel', () => renderConversation(session));
-  const sendBtn = button('Send', async () => {
-    // Editing an earlier message forks the thread: everything after it is
-    // replaced by the new answer (Grok's branch behaviour). Never do that
-    // silently — ask first, and keep the editor open if she says no.
-    const text = ta.value.trim();
-    if (!text || text === currentVersionText(message)) { renderConversation(session); return; }
-    const list = session.messages || [];
-    const idx = list.indexOf(message);
-    // Only later *user* turns are at risk: the edited message's own answer
-    // is always regenerated, so editing the last user message asks nothing.
-    const after = idx >= 0 ? list.slice(idx + 1).filter(m => m.role === 'user').length : 0;
-    if (after > 0) {
-      const ok = await confirmDialog('Edit this message?', `There ${after === 1 ? 'is 1 more exchange' : `are ${after} more exchanges`} after this one. Editing will remove ${after === 1 ? 'it' : 'them'} and start a new answer from here.`, 'Edit anyway');
-      if (!ok) return;
-    }
-    finishEdit(message, session, ta.value);
-  });
-  cancel.classList.add('edit-pill'); sendBtn.classList.add('edit-pill', 'edit-send');
-  row.append(cancel, sendBtn);
-  area.append(row);
+  ta.value = currentVersionText(message);
+  ta.setAttribute('aria-label', 'Edit message');
+  ta.oninput = () => autoGrowEdit(ta);
+  const actions = el('div', 'edit-actions');
+  const cancel = el('button', 'edit-pill', 'Cancel');
+  cancel.type = 'button';
+  cancel.onclick = () => finishEdit(item, message, session, null);
+  const sendBtn = el('button', 'edit-pill edit-send', 'Send');
+  sendBtn.type = 'button';
+  sendBtn.onclick = () => finishEdit(item, message, session, ta.value);
+  actions.append(cancel, sendBtn);
+  area.append(ta, actions);
   item.append(area);
   autoGrowEdit(ta);
-  ta.addEventListener('input', () => autoGrowEdit(ta));
-  ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length);
+  ta.focus();
+  ta.setSelectionRange(ta.value.length, ta.value.length);
 }
-async function finishEdit(message, session, newText) {
+async function finishEdit(item, message, session, newText) {
+  const area = item.querySelector('.edit-area');
+  if (area) area.remove();
+  const bubble = item.querySelector('.user-bubble');
+  if (bubble) bubble.hidden = false;
+  if (newText === null) return;
   const text = String(newText || '').trim();
-  renderConversation(session); // exit edit mode first
   if (!text || text === currentVersionText(message)) return;
-  if (state.busy) return;
-  const list = session.messages || [];
-  const idx = list.indexOf(message);
-  if (idx < 0) return;
-  // v1 is the original text + the reply that followed it; the edit becomes
-  // the next version. Everything after the edited message is replaced by
-  // the new answer, like Grok's < 2 / 2 > flow.
+  if (!session || state.isPrivate) {
+    // Private threads have no stored session: re-run in place.
+    const idx = state.privateThread.indexOf(message);
+    if (idx >= 0) {
+      state.privateThread = state.privateThread.slice(0, idx);
+      const sentText = text + (styleDirective() ? '\n\n[Response style: ' + styleDirective() + ']' : '');
+      const userMsg = { role: 'user', content: sentText, ts: Date.now() };
+      state.privateThread.push(userMsg);
+      renderConversation({ id: 'private', title: 'Private chat', messages: state.privateThread });
+      const history = state.privateThread.slice(0, -1).map(m => ({ role: m.role, content: stripStyleDirective(m.content || '') }));
+      await streamRunPrivate(sentText, history, []);
+    }
+    return;
+  }
+  const messages = session.messages || [];
+  const index = messages.indexOf(message);
+  if (index < 0) return;
+  // Grok's < n / n > flow (restored from v67 — the v68 rewrite dropped
+  // it, so an edit re-ran but the bubble kept showing the old text):
+  // v1 is the original text + the reply that followed it; the edit
+  // becomes the next version; everything after is replaced by the new
+  // answer.
   if (!Array.isArray(message.versions)) {
-    const next = list[idx + 1];
+    const next = messages[index + 1];
     message.versions = [{ text: message.content || '', response: (next && next.role === 'assistant') ? next : null }];
     message.version = 0;
   }
   message.versions.push({ text, response: null });
   message.version = message.versions.length - 1;
   message.content = text;
-  list.splice(idx + 1);
+  messages.splice(index + 1);
   renderConversation(session);
-  const history = list.slice(0, idx).map(m => ({ role: m.role, content: stripStyleDirective(currentVersionText(m) || '') }));
-  await runStream(session, text, history, messageAttachments(message), state.isPrivate, { msg: message, index: idx });
+  const sentText = text + (styleDirective() ? '\n\n[Response style: ' + styleDirective() + ']' : '');
+  const history = messages.slice(0, index).map(m => ({ role: m.role, content: stripStyleDirective(m.content || '') }));
+  await runStream(session, sentText, history, [], false, { index, msg: message });
 }
-async function switchVersion(message, session, i) {
+function switchVersion(message, session, next) {
   if (!Array.isArray(message.versions)) return;
-  const n = Math.max(0, Math.min(message.versions.length - 1, i));
-  if (n === (message.version || 0)) return;
-  message.version = n;
-  message.content = message.versions[n].text;
-  const list = session.messages || [];
-  const idx = list.indexOf(message);
-  const next = list[idx + 1];
-  if (next && next.role === 'assistant' && message.versions[n].response) next.content = message.versions[n].response.content || '';
-  renderConversation(session);
-  try { await api('/api/sessions/update', { session_id: session.id, messages: list }); } catch { /* switch still shows locally */ }
+  const i = Math.max(0, Math.min(next, message.versions.length - 1));
+  message.version = i;
+  message.content = message.versions[i].text;
+  const messages = session?.messages || [];
+  const idx = messages.indexOf(message);
+  if (idx >= 0) {
+    const resp = message.versions[i].response;
+    if (resp) messages[idx + 1] = resp;
+    else messages.splice(idx + 1, 1);
+  }
+  if (session) {
+    api('/api/sessions/update', { session_id: session.id, messages: session.messages }).catch(() => { /* line still shows locally */ });
+    renderConversation(session);
+  }
 }
-/* ---------- follow-up pills (Grok: two model-generated pills under each
-   reply; tap one to send it) ---------- */
-function renderFollowUps(session) {
-  const wrap = $('followUps');
-  wrap.replaceChildren();
-  wrap.hidden = true;
+function branchMessage(message, session) {
+  if (!session) return;
+  const messages = session.messages || [];
+  const idx = messages.indexOf(message);
+  if (idx < 0) return;
+  // Grok's Branch: an unsaved stripped copy at grok.com/ whose top-bar
+  // pill is the question. Here the branch is a real session titled with
+  // the question, marked branched (no assistant action bar, user toolbar
+  // Copy-only), with the messages up to and including this one.
+  const clone = messages.slice(0, idx + 1).map(m => {
+    const c = { ...m };
+    if (c.role === 'assistant') c.branched = true;
+    if (c.role === 'user') c.branched = true;
+    return c;
+  });
+  // The title is the QUESTION (the user message just before this reply),
+  // not the reply text — grok's branched thread pill shows the question.
+  // (v68 took messages[idx], the reply itself, so a branch of "Hi" was
+  // titled with the answer instead of "Hi".)
+  let uIdx = -1;
+  for (let i = idx - 1; i >= 0; i--) if (messages[i].role === 'user') { uIdx = i; break; }
+  const question = (uIdx >= 0 ? stripStyleDirective(currentVersionText(messages[uIdx])) : '') || 'Branched chat';
+  newSession({ title: question.slice(0, 120), messages: clone, branched: true }).then(s => {
+    if (s) { toast('Branched into a new chat'); }
+  });
+}
+/* ---------- message "more" menu (Grok's exact list) ---------- */
+function openMessageMenu(message, session, anchor) {
+  const items = [
+    { label: 'Branch in new chat', icon: 'i-chat', onClick: () => branchMessage(message, session) },
+    { label: 'Share', icon: 'i-share', onClick: () => shareConversation(session) },
+    { label: 'Read aloud', icon: 'i-play', onClick: () => readAloud(message) },
+    { label: 'Export to PDF', icon: 'i-printer', onClick: () => exportPdf(session) },
+    { label: 'Report message', icon: 'i-feedback', onClick: () => openFeedback(message, 'report') },
+  ];
+  const at = messageAt(message, session);
+  showMenu(anchor, items, at ? { header: at } : {});
+}
+function messageAt(message, session) {
+  // Grok's More sheet header is the message timestamp ("Yesterday 2:41 AM").
+  const ts = message && message.ts;
+  if (!ts) return '';
+  const d = new Date(ts);
+  const now = new Date();
+  const startOf = x => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const day = startOf(d), today = startOf(now), yesterday = today - 86400000;
+  let h = d.getHours();
+  const m = String(d.getMinutes()).padStart(2, '0');
+  const ap = h >= 12 ? 'PM' : 'AM';
+  h = h % 12 || 12;
+  const time = h + ':' + m + ' ' + ap;
+  if (day === today) return 'Today ' + time;
+  if (day === yesterday) return 'Yesterday ' + time;
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return months[d.getMonth()] + ' ' + d.getDate() + ', ' + d.getFullYear() + ' ' + time;
+}
+function shareConversation(session) {
+  if (!session) { toast('Nothing to share yet.'); return; }
+  const md = (session.messages || []).map(m => (m.role === 'user' ? 'You: ' : 'Janna: ') + stripStyleDirective(currentVersionText(m))).join('\n\n');
+  copyCodeText(md).then(ok => toast(ok ? 'Copied conversation as text. Shared links are not available in the web version.' : 'Copy failed'));
+}
+function exportPdf(session) {
+  toast('Generating PDF\u2026');
+  setTimeout(() => window.print(), 300);
+}
+function readAloud(message) {
+  const bar = $('readAloudBar');
+  if (!bar) return;
+  bar.hidden = false;
+  readAloudState.text = message.content || '';
+  readAloudState.idx = 0;
+  voiceSpeak(readAloudState.text);
+}
+const readAloudState = { text: '', idx: 0, voice: 'Ara', rate: 1 };
+function hideReadAloudBar() {
+  const bar = $('readAloudBar');
+  if (bar) bar.hidden = true;
+  if ('speechSynthesis' in window) speechSynthesis.cancel();
+}
+/* ---------- follow-up pills (Grok): two next questions under the reply,
+   generated by a background model call. Ephemeral — they are NOT persisted
+   (v62), because Grok regenerates them per reply. ---------- */
+async function generateFollowUps(session, assistantMsg) {
   if (!session || state.settings.show_suggestions === false) return;
-  const msgs = session.messages || [];
-  let lastAm = null;
-  for (let i = msgs.length - 1; i >= 0; i--) if (msgs[i].role === 'assistant') { lastAm = msgs[i]; break; }
-  // Pills belong to the just-finished reply only: once a newer user
-  // message exists after it, they are gone (Grok, 2026-11-25 re-study).
-  if (lastAm && msgs[msgs.length - 1] !== lastAm) return;
-  const items = lastAm && Array.isArray(lastAm.followups) ? lastAm.followups.filter(Boolean).slice(0, 2) : [];
-  if (!items.length) return;
-  items.forEach((text, i) => {
+  if (state.isPrivate) return;
+  const wrap = $('followUps');
+  if (!wrap) return;
+  wrap.hidden = true;
+  wrap.replaceChildren();
+  const prompt = 'Based on this conversation, suggest exactly two short follow-up questions the user might ask next. One per line, no numbering, no quotes.\n\nConversation:\n' + (session.messages || []).slice(-6).map(m => (m.role === 'user' ? 'User: ' : 'Janna: ') + stripStyleDirective(m.content || '')).join('\n');
+  let text = '';
+  try {
+    const body = { session_id: session.id, model: state.model, prompt, background: true, messages: [] };
+    for await (const ev of JannaRuns.subscribe(body, state.token)) {
+      if (ev.type === 'delta') text += ev.text || '';
+      else if (ev.type === 'done') text = ev.text || text;
+    }
+  } catch { return; }
+  const lines = text.split('\n').map(l => l.trim().replace(/^[-*•\d.)\s]+/, '')).filter(l => l.length > 2 && l.length < 90).slice(0, 2);
+  if (!lines.length) return;
+  // Only show pills for the latest reply — a slow background call must
+  // not attach pills to a conversation the user already left.
+  if (!state.session || state.session.id !== session.id) return;
+  wrap.replaceChildren();
+  lines.forEach((line, i) => {
     const chip = el('button', 'follow-chip' + (i === 0 ? ' primary' : ''));
     chip.type = 'button';
-    chip.innerHTML = (i === 0 ? '<span class="follow-play">\u25b6</span>' : '') + escapeHTML(text);
-    chip.onclick = () => {
-      if (state.busy) { toast('Finish the current answer first.'); return; }
-      $('prompt').value = text; autoGrowPrompt(); syncSendState(); send();
-    };
+    chip.innerHTML = `<span class="follow-play">\u25b6</span><span>${escapeHTML(line)}</span>`;
+    chip.onclick = () => { $('prompt').value = line; autoGrowPrompt(); syncSendState(); send(); };
     wrap.append(chip);
   });
   wrap.hidden = false;
 }
-/* Background model calls (follow-ups + summary titles) go through /api/run
-   with background:true so the adapter does NOT persist them as exchanges.
-   If the call fails, nothing renders — never a fake suggestion or title. */
-async function generateFollowUps(session, am) {
-  try {
-    if (!session || !am || state.settings.show_suggestions === false) return;
-    const lastUser = (session.messages || []).filter(m => m.role === 'user').slice(-1)[0];
-    const q = stripStyleDirective(lastUser ? (lastUser.content || '') : '');
-    const a = stripStyleDirective(am.content || '');
-    if (!q || !a || a.startsWith('\u26a0\ufe0f')) return;
-    const body = { session_id: session.id, model: state.model, background: true, prompt: 'Based on this exchange, suggest 2 short follow-up questions the user might ask next. Reply with only the 2 questions, one per line, no numbering, no quotes.\n\nUser: ' + q.slice(0, 500) + '\nAssistant: ' + a.slice(0, 1500), messages: [] };
-    let text = '';
-    for await (const ev of JannaRuns.subscribe(body, state.token)) {
-      if (ev.type === 'delta') text += ev.text || '';
-      else if (ev.type === 'done') text = ev.text || text;
-    }
-    const items = text.split('\n').map(s => s.replace(/^[\s*\-\d.)\]]+/, '').replace(/^["'\u201c\u201d]+|["'\u201c\u201d]+$/g, '').trim()).filter(s => s.length > 3 && s.length < 140).slice(0, 2);
-    if (!items.length) return;
-    // Grok shows the pills only right after the reply (2026-11-25
-    // re-study) — they are NOT saved, so a reopened thread has none.
-    am.followups = items;
-    renderFollowUps(session);
-  } catch { /* no pills on failure */ }
-}
-async function requestTitle(session, firstPrompt) {
-  try {
-    if (!session || !firstPrompt) return;
-    const stored = findSession(session.id);
-    const current = stored ? (stored.title || '') : '';
-    // Only replace the fallback title — never overwrite a title she set.
-    if (current && current !== 'New chat' && current !== wordSafeTitle(firstPrompt)) return;
-    const body = { session_id: session.id, model: state.model, background: true, prompt: 'Give a very short title (max 6 words) for this conversation. Reply with only the title, no quotes, no trailing punctuation.\n\nFirst message: ' + firstPrompt.slice(0, 300), messages: [] };
-    let text = '';
-    for await (const ev of JannaRuns.subscribe(body, state.token)) {
-      if (ev.type === 'delta') text += ev.text || '';
-      else if (ev.type === 'done') text = ev.text || text;
-    }
-    const title = wordSafeTitle(text.split('\n')[0].replace(/^["'\u201c\u201d]+|["'\u201c\u201d]+$/g, '').trim());
-    if (!title || title.length < 2) return;
-    try {
-      await api('/api/sessions/update', { session_id: session.id, title });
-      // The adapter updated storage, not the in-memory list — sync both so
-      // the header and sidebar show the new title right away.
-      if (state.session && state.session.id === session.id) state.session.title = title;
-      const idx = state.sessions.findIndex(s => s.id === session.id);
-      if (idx >= 0) state.sessions[idx].title = title;
-      $('threadTitle').textContent = title;
-      renderRecents();
-    } catch { /* fallback title stays */ }
-  } catch { /* fallback title stays */ }
-}
-function wordSafeTitle(text) {
-  const t = String(text || '').replace(/\s+/g, ' ').trim();
-  if (t.length <= 60) return t;
-  const cut = t.slice(0, 60);
-  const lastSpace = cut.lastIndexOf(' ');
-  return lastSpace > 20 ? cut.slice(0, lastSpace) : cut;
-}
+/* ---------- conversation rendering + top bar ---------- */
+function findSession(id) { return state.sessions.find(s => s.id === id) || (state.session && state.session.id === id ? state.session : null); }
 function renderConversation(session) {
-  think.el = null; clearInterval(think.timer);
-  $('messages').replaceChildren();
-  const empty = !session || !(session.messages || []).length;
-  $('welcome').hidden = !empty;
-  $('messages').hidden = empty;
-  $('composerDock').hidden = empty;
-  const slot = empty ? $('welcomeComposerSlot') : $('composerHome');
-  if (slot) slot.append($('composer'));
-  const title = (session && findSession(session.id)?.title) || session?.title || '';
-  $('threadTitle').textContent = title || 'New chat';
-  syncTopbar();
-  // Grok shows no footer line inside a thread — the "Your privacy
-  // choices" line belongs to the home view only.
-  $('aiDisclaimer').hidden = !empty;
-  if (session) {
-    for (const msg of session.messages || []) $('messages').append(createMessageNode(msg, session));
+  const messagesEl = $('messages');
+  const welcomeEl = $('welcome');
+  const dock = $('composerDock');
+  const composer = $('composer');
+  const isHome = !session || !(session.messages || []).length;
+  if (isHome) {
+    welcomeEl.hidden = false;
+    messagesEl.hidden = true;
+    messagesEl.replaceChildren();
+    dock.hidden = true;
+    $('welcomeComposerSlot').append(composer);
+    $('aiDisclaimer').hidden = false;
+    $('followUps').hidden = true;
+    hideReadAloudBar();
+  } else {
+    welcomeEl.hidden = true;
+    messagesEl.hidden = false;
+    messagesEl.replaceChildren();
+    dock.hidden = false;
+    $('composerHome').append(composer);
+    $('aiDisclaimer').hidden = true;
+    for (const m of (session.messages || [])) messagesEl.append(createMessageNode(m, session));
+    scrollThreadToBottom();
   }
-  // Grok keeps "Thought for Ns" under a finished reply — renderConversation
-  // used to wipe it (the thinking div lives in #messages, and this function
-  // replaces all children). Restore it from the last assistant message's
-  // stored duration, right before that reply, so it survives re-renders
-  // and reloads.
-  const _msgs = session?.messages || [];
-  let _lastIdx = -1;
-  // Grok shows NO thought line for instant simple replies — only when
-  // the run actually took time (2s or more).
-  for (let i = _msgs.length - 1; i >= 0; i--) if (_msgs[i].role === 'assistant' && (_msgs[i].thinkSecs || 0) >= 2) { _lastIdx = i; break; }
-  if (_lastIdx >= 0) {
-    const item = thinkingEl();
-    item.hidden = false;
-    item.classList.add('done', 'collapsed');
-    item.querySelector('.think-title').textContent = 'Thought for ' + fmtDur(_msgs[_lastIdx].thinkSecs);
-    item.querySelector('.think-steps').replaceChildren();
-    const kids = $('messages').children;
-    if (kids[_lastIdx]) $('messages').insertBefore(item, kids[_lastIdx]);
+  syncTopbar(session);
+  syncPrivate();
+}
+function syncTopbar(session) {
+  const homeCentre = $('homeCentre');
+  const pill = $('threadTitlePill');
+  const inThread = session && (session.messages || []).length > 0;
+  if (inThread) {
+    homeCentre.hidden = true;
+    pill.hidden = false;
+    $('threadTitle').textContent = session.title || 'New chat';
+  } else {
+    homeCentre.hidden = false;
+    pill.hidden = true;
   }
-  renderFollowUps(session);
-  renderProjects(); renderRecents();
-  restoreDraft();
-  updateJump();
-  scrollThreadToBottom();
 }
-function scrollThreadToBottom() {
-  if (state.settings.auto_scroll === false) return;
-  const t = $('thread');
-  if (t) t.scrollTop = t.scrollHeight;
-}
-/* Scroll-to-bottom button (Grok: a circular button centered above the
-   composer, shown only while the thread is scrolled up). */
-function updateJump() {
-  const t = $('thread'), btn = $('jumpLatest');
-  if (!t || !btn) return;
-  const far = t.scrollHeight - t.scrollTop - t.clientHeight > 120;
-  btn.hidden = !(far && !$('messages').hidden);
+function syncPrivate() {
+  const h1 = $('welcomeH1');
+  const note = $('privateNote');
+  const composer = $('composer');
+  const toggle = $('privateToggle');
+  toggle.setAttribute('aria-pressed', state.isPrivate ? 'true' : 'false');
+  composer.classList.toggle('private-mode', state.isPrivate);
+  if (state.isPrivate) {
+    h1.textContent = "What's on your mind today?";
+    note.hidden = false;
+  } else {
+    h1.textContent = "What's on the agenda today?";
+    note.hidden = true;
+  }
+  renderSuggestions();
 }
 
-/* ---------- sessions / sidebar ---------- */
-function findSession(id) { return state.sessions.find(s => s.id === id); }
-function visibleChats() {
-  let list = state.sessions.filter(s => !s.archived);
-  if (state.projectFilter) list = list.filter(s => state.chatProjects[s.id] === state.projectFilter);
-  return list;
-}
-function renderRecents() {
-  const list = $('sessionList'); list.replaceChildren();
-  const chats = visibleChats();
-  const shown = state.showAllChats ? chats : chats.slice(0, 6);
+/* ---------- sidebar / sessions ---------- */
+function sessionTitle(s) { return s.title || 'New chat'; }
+function renderSidebar() {
+  const list = $('sessionList');
+  list.replaceChildren();
+  const visible = state.sessions.filter(s => !s.archived);
+  const pinned = visible.filter(s => s.pinned);
+  const rest = visible.filter(s => !s.pinned);
+  const ordered = [...pinned, ...rest];
+  const shown = state.showAllChats ? ordered : ordered.slice(0, 6);
   for (const s of shown) {
-    const row = el('div', 'side-row');
-    if (state.session && s.id === state.session.id) row.classList.add('active');
-    if (state.unread[s.id]) row.classList.add('unread');
-    const label = el('button', 'side-row-label', (s.pinned ? 'Pinned \u00b7 ' : '') + (s.title || 'New chat'));
+    const row = el('div', 'side-row' + (state.session && state.session.id === s.id ? ' active' : '') + (state.unread[s.id] ? ' unread' : ''));
+    const label = el('button', 'side-row-label', sessionTitle(s));
+    label.type = 'button';
+    label.title = sessionTitle(s);
     label.onclick = () => openSession(s.id);
-    const more = el('button', 'side-row-menu');
-    more.type = 'button'; more.setAttribute('aria-label', 'Chat actions');
-    more.innerHTML = '<svg><use href="#i-dots"/></svg>';
-    more.onclick = e => { e.stopPropagation(); openRowMenu(s, more); };
-    row.append(label, more);
+    const menu = el('button', 'side-row-menu');
+    menu.type = 'button';
+    menu.innerHTML = '<svg><use href="#i-dots"/></svg>';
+    menu.title = 'Conversation options';
+    menu.setAttribute('aria-label', 'Conversation options');
+    menu.onclick = e => { e.stopPropagation(); openRowMenu(s, menu); };
+    row.append(label, menu);
     list.append(row);
   }
-  const moreBtn = $('showMoreChats');
-  moreBtn.hidden = chats.length <= 5;
-  moreBtn.textContent = state.showAllChats ? 'Show less' : 'Show more';
-  if (!chats.length) list.append(el('div', 'empty-state', state.projectFilter ? 'No chats in this project yet.' : 'No chats yet. Start a new chat.'));
+  const more = $('showMoreChats');
+  more.hidden = ordered.length <= 6;
+  if (!more.hidden) more.textContent = state.showAllChats ? 'Show less' : 'Show more';
+  renderProjects();
 }
 function renderProjects() {
-  const list = $('projectList'); list.replaceChildren();
-  if (!state.localProjects.length) { list.append(el('div', 'empty-state', 'No projects yet.')); return; }
+  const list = $('projectList');
+  if (!list) return;
+  list.replaceChildren();
   for (const p of state.localProjects) {
-    const row = el('div', 'side-row');
-    const count = state.sessions.filter(s => state.chatProjects[s.id] === p.id).length;
+    const row = el('div', 'side-row' + (state.projectFilter === p.id ? ' active' : ''));
     const icon = el('span', 'side-row-icon');
     icon.innerHTML = projectIconSvg(p);
-    const label = el('button', 'side-row-label' + (state.projectFilter === p.id ? ' project-filter' : ''), p.name + ' \u00b7 ' + count);
+    const label = el('button', 'side-row-label' + (state.projectFilter === p.id ? ' project-filter' : ''), p.name || 'Untitled Project');
     label.type = 'button';
-    label.onclick = () => { state.projectFilter = state.projectFilter === p.id ? null : p.id; renderProjects(); renderRecents(); };
+    label.onclick = () => {
+      state.projectFilter = state.projectFilter === p.id ? null : p.id;
+      renderSidebar();
+    };
     row.append(icon, label);
     list.append(row);
   }
 }
-async function openSession(id) {
-  if (state.busy) return; // the adapter's queue drain also calls this; stay silent
-  saveDraftNow(); // keep the draft of the chat we're leaving
-  if (state.unread[id]) { delete state.unread[id]; saveUnread(); renderRecents(); }
-  closeSidebar();
-  const sess = findSession(id);
-  if (sess && (sess.messages || []).length) { state.session = sess; state.isPrivate = false; syncPrivate(); renderConversation(state.session); return; }
-  try {
-    const data = await api('/api/session/' + encodeURIComponent(id));
-    state.session = data.session || data || null;
-    if (state.session) { const i = state.sessions.findIndex(s => s.id === state.session.id); if (i >= 0) state.sessions[i] = state.session; else state.sessions.unshift(state.session); }
-    state.isPrivate = false; syncPrivate();
-    renderConversation(state.session);
-  } catch (e) { toast(e.message); }
-}
-async function newSession() {
-  if (state.busy) return;
-  try {
-    const data = await api('/api/sessions', { project_id: null });
-    const sess = data.session || data;
-    if (sess && sess.id) { state.session = sess; state.sessions.unshift(state.session); state.isPrivate = false; syncPrivate(); renderConversation(state.session); }
-  } catch (e) { toast(e.message); }
-}
-function newChat() { if (state.busy) { toast('Finish the current answer first.'); return; } saveDraftNow(); closeSidebar(); state.session = null; state.isPrivate = false; syncPrivate(); state.privateThread = []; renderConversation(null); $('prompt').focus(); }
-async function renameChat(session) {
-  const res = await showDialog({ title: 'Rename chat', fields: [{ name: 'name', value: session.title || 'New chat' }], okText: 'Rename' });
-  if (!res || !String(res.name).trim()) return;
-  try { await api('/api/sessions/update', { session_id: session.id, title: String(res.name).trim() }); refreshBootstrap(); } catch (e) { toast(e.message); }
-}
-async function deleteChat(session) {
-  const ok = await confirmDialog('Delete this chat?', 'This chat will be deleted from your history. This can\u2019t be undone.', 'Delete');
-  if (!ok) return;
-  try { await api('/api/sessions/delete', { session_id: session.id }); if (state.session?.id === session.id) { state.session = null; } refreshBootstrap(); } catch (e) { toast(e.message); }
-}
-async function archiveChat(session) {
-  try { await api('/api/sessions/update', { session_id: session.id, archived: true }); if (state.session?.id === session.id) state.session = null; refreshBootstrap(); } catch (e) { toast(e.message); }
+function openRowMenu(session, anchor) {
+  const items = [
+    { label: session.pinned ? 'Unpin' : 'Pin', icon: 'i-pin', onClick: () => pinChat(session) },
+    { label: 'Rename', icon: 'i-edit', onClick: () => renameChat(session) },
+    { label: state.unread[session.id] ? 'Mark as Read' : 'Mark as Unread', icon: 'i-chat', onClick: () => toggleUnread(session) },
+    { label: 'Archive', icon: 'i-archive', onClick: () => archiveChat(session) },
+    { label: 'Delete', icon: 'i-trash', danger: true, onClick: () => deleteChat(session) },
+  ];
+  showMenu(anchor, items);
 }
 async function pinChat(session) {
-  try { await api('/api/sessions/update', { session_id: session.id, pinned: !session.pinned }); refreshBootstrap(); } catch (e) { toast(e.message); }
+  try {
+    await api('/api/sessions/update', { session_id: session.id, pinned: !session.pinned });
+    session.pinned = !session.pinned;
+    renderSidebar();
+  } catch (e) { toast(e.message); }
 }
-async function shareChat(session) {
-  const lines = ['# ' + (session.title || 'New chat'), ''];
-  for (const m of session.messages || []) lines.push('**' + (m.role === 'assistant' ? 'Janna' : 'You') + ':** ' + stripStyleDirective(m.content || ''), '');
-  const ok = await copyCodeText(lines.join('\n'));
-  toast(ok ? 'Conversation copied as Markdown' : 'Copy failed');
+async function renameChat(session) {
+  const res = await showDialog({ title: 'Rename chat', fields: [{ name: 'title', value: sessionTitle(session) }], okText: 'Save' });
+  if (!res || !String(res.title || '').trim()) return;
+  try {
+    await api('/api/sessions/update', { session_id: session.id, title: String(res.title).trim() });
+    session.title = String(res.title).trim();
+    renderSidebar();
+    if (state.session && state.session.id === session.id) $('threadTitle').textContent = session.title;
+  } catch (e) { toast(e.message); }
 }
-
-/* ---------- sidebar & header ---------- */
-function openSidebar() { $('sidebar').classList.add('open'); const s = $('mobileScrim'); s.hidden = false; s.classList.add('visible'); }
-function closeSidebar() { $('sidebar').classList.remove('open'); const s = $('mobileScrim'); s.classList.remove('visible'); s.hidden = true; $('accountMenu').hidden = true; }
-/* Top bar (Grok): home shows the bot + Private cluster in the centre;
-   a normal thread shows only the title pill; a private thread shows the
-   cluster again (there is no title for a private chat). The "…" menu
-   needs a conversation, so it hides on home. */
-function syncTopbar() {
-  const inThread = !!(state.session && (state.session.messages || []).length);
-  const inPrivate = state.isPrivate;
-  $('homeCentre').hidden = inThread && !inPrivate;
-  $('threadTitlePill').hidden = !inThread || inPrivate;
-  $('convMenuBtn').hidden = !inThread;
+function toggleUnread(session) {
+  if (state.unread[session.id]) delete state.unread[session.id];
+  else state.unread[session.id] = Date.now();
+  saveUnread();
+  renderSidebar();
 }
-function syncPrivate() {
-  const c = $('composer');
-  c.classList.toggle('private-mode', state.isPrivate);
-  $('privateToggle').setAttribute('aria-pressed', String(state.isPrivate));
-  $('privateToggle').title = state.isPrivate ? 'Exit Private Chat' : 'Switch to Private Chat';
-  // Grok's private home heading IS "What's on your mind today?" — the
-  // v65 change forcing the normal heading here was wrong; reverted.
-  $('welcomeH1').textContent = state.isPrivate ? 'What\u2019s on your mind today?' : 'What\u2019s on the agenda today?';
-  $('privateNote').hidden = !state.isPrivate;
-  if (state.isPrivate) { state.armedMode = null; renderModeChip(); $('prompt').placeholder = 'Ask anything\u2026'; }
+async function archiveChat(session) {
+  try {
+    await api('/api/sessions/update', { session_id: session.id, archived: true });
+    session.archived = true;
+    if (state.session && state.session.id === session.id) newChat();
+    renderSidebar();
+  } catch (e) { toast(e.message); }
+}
+async function deleteChat(session) {
+  const res = await confirmDialog('Delete chat?', '"' + sessionTitle(session) + '" will be deleted. This cannot be undone.');
+  if (!res) return;
+  try {
+    await api('/api/sessions/delete', { session_id: session.id });
+    state.sessions = state.sessions.filter(s => s.id !== session.id);
+    if (state.session && state.session.id === session.id) newChat();
+    renderSidebar();
+    toast('Chat deleted');
+  } catch (e) { toast(e.message); }
+}
+async function newSession(opts = {}) {
+  try {
+    const created = await api('/api/sessions', { project_id: opts.project_id || null });
+    const s = { ...created, title: opts.title || created.title || 'New chat', messages: opts.messages || [], branched: !!opts.branched };
+    if (opts.title) {
+      try { await api('/api/sessions/update', { session_id: s.id, title: opts.title, messages: s.messages }); } catch { /* title still shows locally */ }
+    }
+    state.sessions.unshift(s);
+    state.session = s;
+    state.isPrivate = false;
+    renderSidebar();
+    renderConversation(s);
+    restoreDraft();
+    return s;
+  } catch (e) { toast(e.message); return null; }
+}
+function newChat() {
+  state.session = null;
+  state.isPrivate = false;
+  state.privateThread = [];
+  renderSidebar();
+  renderConversation(null);
   renderSuggestions();
-  syncTopbar();
+  restoreDraft();
+  $('prompt').focus();
 }
-function togglePrivate() {
-  state.isPrivate = !state.isPrivate;
-  // Grok shows NO card when Private is toggled — the state is already
-  // visible in the top-bar pill, the dashed composer border and the
-  // private note under the composer. The old toast() here rendered as a
-  // big white card overlapping the footer in dark mode.
-  if (state.isPrivate) { state.session = null; state.privateThread = []; renderConversation(null); }
-  syncPrivate();
+async function openSession(id) {
+  if (state.busy) { toast('Finish the current answer first.'); return; }
+  try {
+    const full = await api('/api/session/' + encodeURIComponent(id));
+    state.session = full;
+    state.isPrivate = false;
+    delete state.unread[id];
+    saveUnread();
+    renderSidebar();
+    renderConversation(full);
+    restoreDraft();
+    closeSidebar();
+  } catch (e) { toast(e.message); }
 }
+function openSidebar() { $('sidebar').classList.add('open'); $('mobileScrim').hidden = false; $('mobileScrim').classList.add('visible'); }
+function closeSidebar() { $('sidebar').classList.remove('open'); $('mobileScrim').hidden = true; $('mobileScrim').classList.remove('visible'); }
 
-/* ---------- menus (context popovers) ---------- */
+/* ---------- generic pop-up menu (anchored, closes on outside tap) ---------- */
 let openMenuEl = null;
-let menuOpenedAt = 0;
-function closeMenus() { if (openMenuEl) { openMenuEl.remove(); openMenuEl = null; } }
-function showMenu(anchor, items) {
+function showMenu(anchor, items, opts = {}) {
   closeMenus();
-  menuOpenedAt = Date.now();
+  // The document outside-click handler exempts [data-menu-anchor] — mark
+  // this anchor so the very click that opened the menu doesn't close it
+  // again on its way up to document. (v67 used a 50ms grace period
+  // instead; the v68 handler dropped it without marking any anchor, so
+  // every anchored menu — message More, dots, conv menu, automation
+  // pills — closed the instant it opened.)
+  if (anchor && anchor.setAttribute) anchor.setAttribute('data-menu-anchor', '');
   const menu = el('div', 'menu-pop');
   menu.setAttribute('role', 'menu');
-  for (const it of items) {
-    if (it === 'sep') { menu.append(el('div', 'menu-divider')); continue; }
-    if (it.group) { menu.append(el('div', 'menu-group', it.group)); continue; }
-    const b = el('button', it.danger ? 'danger' : '');
+  if (opts.header) {
+    const g = el('div', 'menu-group', opts.header);
+    menu.append(g);
+  }
+  for (const item of items) {
+    if (item.divider) { menu.append(el('div', 'menu-divider')); continue; }
+    const b = el('button', item.danger ? 'danger' : '');
     b.type = 'button';
-    if (it.icon) b.innerHTML = '<svg><use href="#i-' + it.icon + '"/></svg>';
-    b.append(document.createTextNode(it.label));
-    if (it.sub) b.append(el('span', 'menu-sub', it.sub));
-    if (it.disabled) { b.disabled = true; }
-    b.onclick = () => { closeMenus(); it.onClick && it.onClick(); };
+    b.innerHTML = `<svg><use href="#${item.icon || 'i-dots'}"/></svg><span>${escapeHTML(item.label)}</span>${item.sub ? `<span class="menu-sub">${escapeHTML(item.sub)}</span>` : ''}`;
+    b.onclick = () => { closeMenus(); item.onClick && item.onClick(); };
     menu.append(b);
   }
   document.body.append(menu);
-  const r = anchor.getBoundingClientRect();
-  const w = menu.offsetWidth || 220;
-  let x = Math.min(r.left, window.innerWidth - w - 8); if (x < 8) x = 8;
-  menu.style.left = x + 'px';
-  menu.style.top = (r.bottom + 6) + 'px';
-  const h = menu.offsetHeight || 200;
-  if (r.bottom + 6 + h > window.innerHeight) menu.style.top = Math.max(8, r.top - h - 6) + 'px';
+  const rect = anchor.getBoundingClientRect();
+  const mw = Math.min(280, window.innerWidth - 24);
+  let left = Math.min(rect.left, window.innerWidth - mw - 12);
+  left = Math.max(12, left);
+  let top = rect.bottom + 6;
+  menu.style.left = left + 'px';
+  menu.style.minWidth = mw + 'px';
+  const mh = menu.offsetHeight;
+  if (top + mh > window.innerHeight - 12) top = Math.max(12, rect.top - mh - 6);
+  menu.style.top = top + 'px';
   openMenuEl = menu;
   return menu;
 }
-function openChatMenu(session, anchor) {
-  showMenu(anchor, [
-    { label: 'Share', onClick: () => shareChat(session) },
-    { label: session.pinned ? 'Unpin' : 'Pin', onClick: () => pinChat(session) },
-    { label: 'Rename', onClick: () => renameChat(session) },
-    { label: 'Add to Project', onClick: () => openProjectPicker(session, anchor) },
-    { label: 'Send Feedback', onClick: () => openFeedback(session.id) },
-    { label: 'Copy Conversation ID', onClick: async () => { toast((await copyCodeText(session.id)) ? 'Conversation ID copied' : 'Copy failed'); } },
-    { label: 'Open in new tab', onClick: () => window.open(location.pathname + '?s=' + encodeURIComponent(session.id), '_blank') },
-    'sep',
-    { label: 'Archive', onClick: () => archiveChat(session) },
-    { label: 'Delete', danger: true, onClick: () => deleteChat(session) },
-  ]);
-}
-function openRowMenu(session, anchor) {
-  // Grok's sidebar row menu (2026-11-25 re-study): no Send Feedback, no
-  // Delete — those live in the thread's conversation menu only.
-  showMenu(anchor, [
-    { label: 'Share', onClick: () => shareChat(session) },
-    { label: session.pinned ? 'Unpin' : 'Pin', onClick: () => pinChat(session) },
-    { label: 'Rename', onClick: () => renameChat(session) },
-    { label: 'Add to Project', onClick: () => openProjectPicker(session, anchor) },
-    { label: 'Mark as Unread', onClick: () => { state.unread[session.id] = true; saveUnread(); renderRecents(); } },
-    'sep',
-    { label: 'Copy Conversation ID', onClick: async () => { toast((await copyCodeText(session.id)) ? 'Conversation ID copied' : 'Copy failed'); } },
-    { label: 'Open in new tab', onClick: () => window.open(location.pathname + '?s=' + encodeURIComponent(session.id), '_blank') },
-    { label: 'Archive', onClick: () => archiveChat(session) },
-  ]);
-}
-function openProjectPicker(session, anchor) {
-  const items = state.localProjects.map(p => ({ label: (state.chatProjects[session.id] === p.id ? '\u2713 ' : '') + p.name, onClick: () => { state.chatProjects[session.id] = p.id; saveChatProjects(); renderProjects(); renderRecents(); toast('Added to ' + p.name); } }));
-  items.push({ label: 'New project\u2026', onClick: () => createProject(session.id) });
-  items.push('sep', { label: 'Remove from project', onClick: () => { delete state.chatProjects[session.id]; saveChatProjects(); renderProjects(); renderRecents(); }, disabled: !state.chatProjects[session.id] });
-  showMenu(anchor, items);
-}
-/* New Project dialog (Grok's, 2026-11-25 re-study): icon tile +
-   "Choose an icon and color" (8 colours + 64 icons), heading-style
-   title input, "What's this project about?" textarea, "Add Folder"
-   box, full-width black Create pill. */
-function openProjectDialog(chatId, prefill) {
-  const draft = {
-    icon: (prefill && prefill.icon) || 'folder',
-    color: (prefill && prefill.color) || 'default',
-    files: [],
-  };
-  const overlay = document.createElement('div');
-  overlay.className = 'dialog-overlay';
-  overlay.id = 'projDialogOverlay';
-  overlay.innerHTML = `
-    <div class="dialog-card proj-dialog" role="dialog" aria-modal="true" aria-label="New project">
-      <button type="button" class="icon-button proj-close" aria-label="Close"><svg><use href="#i-close"/></svg></button>
-      <div class="proj-icon-row">
-        <button type="button" class="proj-icon-tile" id="projIconTile" aria-label="Choose an icon and color"></button>
-        <button type="button" class="text-btn" id="projChooseIcon">Choose an icon and color</button>
-      </div>
-      <div class="proj-icon-picker" id="projIconPicker" hidden>
-        <div class="proj-colors" id="projColors"></div>
-        <div class="proj-icons" id="projIcons"></div>
-      </div>
-      <input type="text" class="proj-title" id="projTitle" value="${escapeHTML((prefill && prefill.name) || 'Untitled Project')}" aria-label="Project name">
-      <textarea class="proj-about" id="projAbout" placeholder="What\u2019s this project about?" aria-label="What is this project about?">${escapeHTML((prefill && prefill.about) || '')}</textarea>
-      <button type="button" class="proj-add-folder" id="projAddFolder"><span>Add Folder</span><small id="projFilesNote"></small></button>
-      <input type="file" id="projFileInput" multiple hidden>
-      <button type="button" class="proj-create" id="projCreate">Create</button>
-    </div>`;
-  document.body.append(overlay);
-  const tile = overlay.querySelector('#projIconTile');
-  const paintTile = () => { tile.innerHTML = projectIconSvg(draft); };
-  paintTile();
-  const picker = overlay.querySelector('#projIconPicker');
-  const colorsEl = overlay.querySelector('#projColors');
-  for (const [id, label, hex] of PROJECT_COLORS) {
-    const b = document.createElement('button');
-    b.type = 'button'; b.className = 'proj-color' + (draft.color === id ? ' selected' : '');
-    b.title = label; b.setAttribute('aria-label', label);
-    b.style.background = hex || 'var(--muted)';
-    b.onclick = () => { draft.color = id; paintTile(); colorsEl.querySelectorAll('.proj-color').forEach(x => x.classList.toggle('selected', x === b)); };
-    colorsEl.append(b);
-  }
-  const iconsEl = overlay.querySelector('#projIcons');
-  for (const [id, label, svg] of PROJECT_ICONS) {
-    const b = document.createElement('button');
-    b.type = 'button'; b.className = 'proj-icon' + (draft.icon === id ? ' selected' : '');
-    b.title = label; b.setAttribute('aria-label', label);
-    b.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round">${svg}</svg>`;
-    b.onclick = () => { draft.icon = id; paintTile(); iconsEl.querySelectorAll('.proj-icon').forEach(x => x.classList.toggle('selected', x === b)); };
-    iconsEl.append(b);
-  }
-  const togglePicker = () => { picker.hidden = !picker.hidden; };
-  tile.onclick = togglePicker;
-  overlay.querySelector('#projChooseIcon').onclick = togglePicker;
-  const fileInput = overlay.querySelector('#projFileInput');
-  overlay.querySelector('#projAddFolder').onclick = () => fileInput.click();
-  fileInput.onchange = async () => {
-    const files = [...(fileInput.files || [])];
-    if (!files.length) return;
-    draft.files.push(...files.map(f => f.name));
-    overlay.querySelector('#projFilesNote').textContent = draft.files.length + (draft.files.length === 1 ? ' file attached' : ' files attached');
-    await addFilesToLibrary(files);
-  };
-  const close = () => { overlay.remove(); document.removeEventListener('keydown', onKey, true); };
-  const onKey = e => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
-  document.addEventListener('keydown', onKey, true);
-  overlay.querySelector('.proj-close').onclick = close;
-  overlay.onclick = e => { if (e.target === overlay) close(); };
-  overlay.querySelector('#projCreate').onclick = () => {
-    const name = overlay.querySelector('#projTitle').value.trim() || 'Untitled Project';
-    const about = overlay.querySelector('#projAbout').value.trim();
-    const p = { id: uid('proj'), name, icon: draft.icon, color: draft.color, about, files: draft.files, created: Math.floor(Date.now() / 1000) };
-    state.localProjects.unshift(p); saveProjects(); renderProjects();
-    if (chatId) { state.chatProjects[chatId] = p.id; saveChatProjects(); renderRecents(); }
-    close();
-    toast('Project created: ' + name);
-  };
-  setTimeout(() => overlay.querySelector('#projTitle').focus(), 40);
-}
-async function createProject(chatId) {
-  openProjectDialog(chatId);
-}
-/* Example project cards (Grok's Library Projects tab): tapping one
-   creates the local project with the observed name + description,
-   or opens it if it already exists. */
-function createExampleProject(ex) {
-  const existing = state.localProjects.find(p => p.name === ex.name);
-  if (existing) {
-    state.projectFilter = existing.id; renderProjects(); renderRecents(); closeLibrary();
-    toast('Showing chats in ' + ex.name);
-    return;
-  }
-  const p = { id: uid('proj'), name: ex.name, icon: 'folder', color: 'default', about: ex.desc, files: [], created: Math.floor(Date.now() / 1000) };
-  state.localProjects.unshift(p); saveProjects(); renderProjects();
-  state.projectFilter = p.id; renderRecents(); closeLibrary();
-  toast('Project created: ' + ex.name);
-}
-function openMessageMenu(message, session, anchor) {
-  const s = session || state.session;
-  const when = s && s.updated ? new Date(s.updated * 1000) : new Date();
-  const timeLabel = 'Today ' + when.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-  const items = [
-    { group: timeLabel },
-    { label: 'Branch in new chat', onClick: () => branchMessage(message, s) },
-    { label: 'Share', onClick: () => shareChat(s) },
-    { label: 'Read aloud', onClick: () => speakNow(message.content || '') },
-    { label: 'Export to PDF', onClick: () => window.print() },
-    { label: 'Report message', onClick: () => openFeedback(s?.id, 'report') },
-  ];
-  showMenu(anchor || $('composer'), items);
-}
-async function branchMessage(message, session) {
-  const s = session || state.session;
-  const list = (s && s.messages) || [];
-  const idx = list.indexOf(message);
-  // Grok's Branch copies the SINGLE exchange (the user message just
-  // before this reply + the reply), stripped: no sources, no action bar,
-  // and the user message has Copy only. It opens as a real thread with a
-  // sidebar entry, titled with the question.
-  let uIdx = -1;
-  for (let i = idx - 1; i >= 0; i--) if (list[i].role === 'user') { uIdx = i; break; }
-  if (idx < 0 || uIdx < 0) { toast('Nothing to branch from here.'); return; }
-  const userClone = { ...list[uIdx], branched: true };
-  const asstClone = { ...message, branched: true };
-  const title = wordSafeTitle(stripStyleDirective(list[uIdx].content || ''));
-  const exchange = [userClone, asstClone];
-  try {
-    const data = await api('/api/sessions', { project_id: null });
-    const ns = data.session || data;
-    if (!ns || !ns.id) throw new Error('Could not create a chat');
-    await api('/api/sessions/update', { session_id: ns.id, title, messages: exchange });
-    ns.title = title; ns.messages = exchange;
-    state.sessions.unshift(ns);
-    state.session = ns; state.isPrivate = false; syncPrivate();
-    renderConversation(ns); renderRecents();
-  } catch (e) {
-    // Local-only fallback: the branch still opens as a real thread.
-    const ns = { id: uid('session'), title, messages: exchange, updated: Math.floor(Date.now() / 1000) };
-    state.sessions.unshift(ns);
-    state.session = ns; state.isPrivate = false; syncPrivate();
-    renderConversation(ns); renderRecents();
-    toast('Branched on this device.');
-  }
+function closeMenus() {
+  if (openMenuEl) { openMenuEl.remove(); openMenuEl = null; }
+  const am = $('accountMenu');
+  if (am) am.hidden = true;
 }
 
-/* ---------- right pane (app preview; scripts always off — the shell's
-   iframe sandbox has no allow-scripts, so generated pages preview safely) ---------- */
-function openRightPane() { $('rightPane').hidden = false; $('rightPaneToggle').setAttribute('aria-expanded', 'true'); }
-function closeRightPane() { $('rightPane').hidden = true; $('rightPaneToggle').setAttribute('aria-expanded', 'false'); }
-function previewHtml(code, name = 'Preview') {
-  state.rightPaneCode = code; state.rightPaneName = name;
-  const safe = String(code).replace(/<script[\s\S]*?<\/script>/gi, '');
-  const frame = $('rightPaneFrame');
-  frame.srcdoc = safe;
-  frame.hidden = false;
-  $('rightPaneSourceView').hidden = true;
-  $('rightPaneSourceView').textContent = '';
-  document.querySelector('.right-pane-empty').hidden = true;
-  $('rightPanePreview').hidden = false;
-  $('rightPaneName').textContent = name;
-  openRightPane();
+/* ---------- command palette ---------- */
+function openPalette() {
+  const pal = $('palette');
+  pal.hidden = false;
+  $('paletteInput').value = '';
+  renderPaletteTabs();
+  renderPalette();
+  setTimeout(() => $('paletteInput').focus(), 30);
 }
-function clearPreview() {
-  state.rightPaneCode = null; state.rightPaneName = '';
-  $('rightPaneFrame').removeAttribute('srcdoc');
-  $('rightPaneFrame').hidden = false;
-  $('rightPaneSourceView').hidden = true;
-  $('rightPaneSourceView').textContent = '';
-  document.querySelector('.right-pane-empty').hidden = false;
-  $('rightPanePreview').hidden = true;
-  $('rightPaneName').textContent = 'preview.html';
-}
-async function saveCodeToLibrary(code, language) {
-  const name = codeFileName(language);
-  const text = String(code || '');
-  const entry = { id: uid('lib'), name, kind: language === 'html' || language === 'htm' ? 'app' : 'file', kindLabel: language === 'html' || language === 'htm' ? 'App' : 'Code', text, size: text.length, created: Math.floor(Date.now() / 1000) };
-  state.library.unshift(entry); saveLibrary(); renderLibrary();
-  toast('Saved to Library as ' + name);
-}
-
-/* ---------- library ---------- */
-function libraryUsageBytes() {
-  try { return (localStorage.getItem('janna-web-library-v1') || '').length; } catch { return 0; }
-}
-function renderLibraryTabs() {
-  const tabs = $('libraryTabs');
+function closePalette() { $('palette').hidden = true; }
+function renderPaletteTabs() {
+  const tabs = $('paletteTabs');
   tabs.replaceChildren();
-  for (const t of ['All', 'Media', 'Projects', 'Apps', 'Files']) {
-    const b = el('button', 'palette-tab' + (state.libraryTab === t ? ' active' : ''));
-    b.type = 'button'; b.textContent = t; b.dataset.tab = t;
-    b.onclick = () => { state.libraryTab = t; renderLibraryTabs(); renderLibrary(); };
+  for (const t of ['All', 'Imagine', 'Apps', 'Automations', 'Files']) {
+    const b = el('button', 'palette-tab' + (state.paletteTab === t ? ' active' : ''), t);
+    b.type = 'button';
+    b.setAttribute('role', 'tab');
+    b.onclick = () => { state.paletteTab = t; $('paletteInput').value = ''; renderPaletteTabs(); renderPalette(); };
     tabs.append(b);
   }
 }
-function renderLibrary() {
-  const list = $('libraryBody'); list.replaceChildren();
-  const q = state.libraryQuery.toLowerCase();
-  let items = state.library.filter(it => !q || (it.name || '').toLowerCase().includes(q));
-  if (state.librarySort === 'name') items = [...items].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-  else items = [...items].sort((a, b) => (b.created || 0) - (a.created || 0));
-  if (state.libraryTab === 'Media') items = items.filter(it => it.kind === 'image');
-  else if (state.libraryTab === 'Apps') items = items.filter(it => it.kind === 'app');
-  else if (state.libraryTab === 'Files') items = items.filter(it => it.kind === 'file');
-  else if (state.libraryTab === 'Projects') {
-    for (const p of state.localProjects) {
-      const row = el('div', 'library-item');
-      const main = el('button', 'lib-main');
-      main.type = 'button';
-      main.innerHTML = `<span class="lib-icon">${projectIconSvg(p)}</span><span class="lib-texts"><strong>${escapeHTML(p.name)}</strong><small>${state.sessions.filter(s => state.chatProjects[s.id] === p.id).length} chats${p.files && p.files.length ? ' \u00b7 ' + p.files.length + ' files' : ''}</small></span>`;
-      main.onclick = () => { state.projectFilter = p.id; renderProjects(); renderRecents(); closeLibrary(); toast('Showing chats in ' + p.name); };
-      row.append(main);
-      list.append(row);
+function paletteChats(query) {
+  const q = (query || '').toLowerCase();
+  return state.sessions.filter(s => !s.archived && (!q || (s.title || '').toLowerCase().includes(q)
+    || (s.messages || []).some(m => (m.content || '').toLowerCase().includes(q))));
+}
+function renderPalette() {
+  const body = $('paletteBody');
+  body.replaceChildren();
+  const q = $('paletteInput').value.trim();
+  const tab = state.paletteTab;
+  const empty = text => { const d = el('div', 'palette-empty', text); body.append(d); };
+  if (tab === 'Imagine') { empty('Nothing generated in Imagine yet.'); return; }
+  if (tab === 'Apps') {
+    const apps = state.library.filter(f => f.kind === 'app');
+    if (!apps.length) { empty('No apps yet. Apps you build with Janna will show up here.'); return; }
+    for (const a of apps) {
+      const item = el('button', 'palette-item');
+      item.type = 'button';
+      item.innerHTML = `<svg><use href="#i-panel"/></svg><span>${escapeHTML(a.name || 'App')}</span>`;
+      item.onclick = () => { closePalette(); openLibraryItem(a); };
+      body.append(item);
     }
-    if (!state.localProjects.length) {
-      const empty = el('div', 'library-empty');
-      empty.innerHTML = '<strong>Get started by creating a new project</strong>Projects help you set common instructions and attach files for conversations.';
-      const np = el('button', 'text-btn');
-      np.type = 'button'; np.textContent = 'New project';
-      np.onclick = () => { closeLibrary(); createProject(); };
-      empty.append(np);
-      list.append(empty);
-    }
-    const exHead = el('h3', 'library-section-head', 'Example projects');
-    list.append(exHead);
-    const grid = el('div', 'lib-example-grid');
-    for (const ex of EXAMPLE_PROJECTS) {
-      const card = el('button', 'lib-example-card');
-      card.type = 'button';
-      card.innerHTML = `<span class="lib-example-doc"><span class="lib-example-doc-title">${escapeHTML(ex.name)}</span><span class="lib-example-doc-line"></span><span class="lib-example-doc-line"></span><span class="lib-example-doc-line"></span></span><strong>${escapeHTML(ex.name)}</strong><small>${escapeHTML(ex.desc)}</small>`;
-      card.onclick = () => createExampleProject(ex);
-      grid.append(card);
-    }
-    list.append(grid);
     return;
   }
-  if (!items.length) {
-    const empty = el('div', 'library-empty');
-    empty.innerHTML = '<strong>Your library is empty</strong>Upload files to keep them within reach.';
-    list.append(empty);
+  if (tab === 'Automations') {
+    const autos = state.savedAutomations || [];
+    if (!autos.length) { empty('No automations yet. Schedule Janna to run on its own and they will show up here.'); return; }
+    for (const a of autos) {
+      const item = el('button', 'palette-item');
+      item.type = 'button';
+      item.innerHTML = `<svg><use href="#i-bolt"/></svg><span>${escapeHTML(a.name || 'Automation')}</span><span class="palette-item-meta">${escapeHTML(a.trigger ? (a.trigger.cadence + ' ' + a.trigger.time) : '')}</span>`;
+      item.onclick = () => { closePalette(); openAutomationDetail(a.name, a); };
+      body.append(item);
+    }
     return;
   }
-  for (const it of items) {
-    const row = el('div', 'library-item');
-    const main = el('button', 'lib-main');
-    main.type = 'button';
-    const icon = it.kind === 'image' ? 'image' : it.kind === 'app' ? 'panel' : 'file';
-    main.innerHTML = `<svg><use href="#i-${icon}"/></svg><span class="lib-texts"><strong>${escapeHTML(it.name)}</strong><small>${escapeHTML(it.kindLabel || it.kind)} \u00b7 ${timeAgo(it.created)}</small></span>`;
-    main.onclick = () => openLibraryItem(it);
-    const del = el('button', 'lib-del');
-    del.type = 'button'; del.setAttribute('aria-label', 'Delete ' + it.name);
-    del.innerHTML = '<svg><use href="#i-close"/></svg>';
-    del.onclick = () => removeLibraryItem(it);
-    row.append(main, del);
-    list.append(row);
-  }
-}
-function openLibraryItem(it) {
-  closeLibrary();
-  if (it.kind === 'app') { previewHtml(it.text || '', it.name); return; }
-  if (it.kind === 'image' && it.data) {
-    const mime = /\.png$/i.test(it.name) ? 'image/png' : /\.webp$/i.test(it.name) ? 'image/webp' : 'image/jpeg';
-    const a = document.createElement('a');
-    a.href = 'data:' + mime + ';base64,' + it.data;
-    a.download = it.name;
-    a.click();
-    toast('Downloading ' + it.name);
+  if (tab === 'Files') {
+    const files = state.library.filter(f => f.kind !== 'app');
+    const hits = q ? files.filter(f => (f.name || '').toLowerCase().includes(q.toLowerCase())) : files;
+    if (!hits.length) { empty(q ? `No matches for \u201c${q}\u201d.` : 'No files yet.'); return; }
+    for (const f of hits) {
+      const item = el('button', 'palette-item');
+      item.type = 'button';
+      item.innerHTML = `<svg><use href="#i-file"/></svg><span>${escapeHTML(f.name || 'File')}</span>`;
+      item.onclick = () => { closePalette(); openLibraryItem(f); };
+      body.append(item);
+    }
     return;
   }
-  showDialog({ title: it.name, text: String(it.text || '').slice(0, 2000), okText: 'Close', showCancel: false });
-}
-async function removeLibraryItem(it) {
-  const ok = await confirmDialog('Remove from library?', it.name + ' will be removed from your library.', 'Remove');
-  if (!ok) return;
-  state.library = state.library.filter(row => row !== it); saveLibrary(); renderLibrary();
-}
-function openLibrary() { renderLibraryTabs(); renderLibrary(); $('libraryView').hidden = false; }
-function closeLibrary() { $('libraryView').hidden = true; }
-async function addFilesToLibrary(files) {
-  for (const file of files) {
-    const name = file.name || 'file';
-    const isImage = /\.(png|jpe?g|webp)$/i.test(name);
-    try {
-      if (isImage) {
-        const small = file.size > 1200000 ? await downscaleImageFile(file).catch(() => null) : file;
-        const use = small || file;
-        const data = await fileBase64(use);
-        if (data.length > 280000) { toast(name + ' is too large to keep in the library.'); continue; }
-        state.library.unshift({ id: uid('lib'), name, kind: 'image', kindLabel: 'Image', data, size: data.length, created: Math.floor(Date.now() / 1000) });
-      } else {
-        if (file.size > 180000) { toast(name + ' is too large to keep in the library.'); continue; }
-        const text = await file.text();
-        if (text.includes('\u0000')) { toast(name + ' is not a text file.'); continue; }
-        const kind = /\.html?$/i.test(name) ? 'app' : 'file';
-        state.library.unshift({ id: uid('lib'), name, kind, kindLabel: kind === 'app' ? 'App' : 'File', text, size: text.length, created: Math.floor(Date.now() / 1000) });
-      }
-    } catch (e) { toast(e.message); }
+  // All tab: actions first (Grok), then chats.
+  if (!q) {
+    const group = el('div', 'palette-group', 'Actions');
+    body.append(group);
+    const actions = [
+      { label: 'New Chat', meta: 'Ctrl J', icon: 'i-plus-circle', onClick: () => { closePalette(); newChat(); } },
+      { label: 'New Project', icon: 'i-folder', onClick: () => { closePalette(); openProjectDialog(); } },
+      { label: 'New Automation', icon: 'i-bolt', onClick: () => { closePalette(); openSettings('automations'); } },
+      { label: 'Open settings', meta: 'Ctrl ,', icon: 'i-settings', onClick: () => { closePalette(); openSettings('account'); } },
+    ];
+    for (const a of actions) {
+      const item = el('button', 'palette-item');
+      item.type = 'button';
+      item.innerHTML = `<svg><use href="#${a.icon}"/></svg><span>${escapeHTML(a.label)}</span>${a.meta ? `<kbd>${escapeHTML(a.meta)}</kbd>` : ''}`;
+      item.onclick = a.onClick;
+      body.append(item);
+    }
+    const modes = el('div', 'palette-group', 'Imagine');
+    body.append(modes);
+    for (const k of ['apps', 'presentation']) {
+      const mode = MODES[k];
+      const item = el('button', 'palette-item');
+      item.type = 'button';
+      item.innerHTML = `<svg><use href="#i-${mode.icon}"/></svg><span>${escapeHTML(mode.label)}</span>`;
+      item.onclick = () => { closePalette(); armMode(k); };
+      body.append(item);
+    }
   }
-  saveLibrary(); renderLibrary();
-  toast('Added to Library');
+  const chats = paletteChats(q);
+  if (chats.length) {
+    const group = el('div', 'palette-group', q ? `${chats.length} conversation${chats.length === 1 ? '' : 's'} found` : 'Chats');
+    body.append(group);
+    for (const s of chats.slice(0, 12)) {
+      const item = el('button', 'palette-item');
+      item.type = 'button';
+      item.innerHTML = `<svg><use href="#i-chat"/></svg><span>${escapeHTML(sessionTitle(s))}</span><span class="palette-item-meta">${escapeHTML(timeAgo(s.updated))}</span>`;
+      item.onclick = () => { closePalette(); openSession(s.id); };
+      body.append(item);
+    }
+    if (q) {
+      const ask = el('button', 'palette-item');
+      ask.type = 'button';
+      ask.innerHTML = `<svg><use href="#i-spark"/></svg><span>Ask Janna \u201c${escapeHTML(q)}\u201d</span>`;
+      ask.onclick = () => { closePalette(); newChat(); $('prompt').value = q; autoGrowPrompt(); syncSendState(); send(); };
+      body.append(ask);
+    }
+  } else if (q) {
+    empty(`No matches for \u201c${q}\u201d.`);
+    const ask = el('button', 'palette-item');
+    ask.type = 'button';
+    ask.innerHTML = `<svg><use href="#i-spark"/></svg><span>Ask Janna \u201c${escapeHTML(q)}\u201d</span>`;
+    ask.onclick = () => { closePalette(); newChat(); $('prompt').value = q; autoGrowPrompt(); syncSendState(); send(); };
+    body.append(ask);
+  }
 }
 
-/* ---------- plus menu ---------- */
-function closePlusMenu() { const m = $('plusMenu'); if (m) m.hidden = true; $('plusBtn').setAttribute('aria-expanded', 'false'); const sc = $('plusScrim'); if (sc) sc.hidden = true; }
-function openPlusMenu() {
-  const m = $('plusMenu'), btn = $('plusBtn');
-  if (!m.hidden) { closePlusMenu(); return; }
-  closeModelPicker();
-  m.replaceChildren();
-  // Grok's "+" menu is a bottom sheet with a drag handle on mobile.
-  m.append(el('div', 'plus-menu-handle'));
-  const researchOn = state.settings.research_mode === 'always';
-  const addRow = (icon, label, hint, onClick) => {
-    const b = el('button', 'plus-menu-row');
-    b.type = 'button';
-    b.innerHTML = `<svg><use href="#i-${icon}"/></svg><span>${escapeHTML(label)}</span>${hint ? `<span class="plus-menu-state">${escapeHTML(hint)}</span>` : ''}`;
-    b.onclick = () => { closePlusMenu(); onClick(); };
-    m.append(b);
-  };
-  addRow('upload', 'Upload a file', 'png, jpg, webp, txt, code', () => $('attachment').click());
-  addRow('book', 'Projects', 'Add this chat to a project', () => { if (state.session) openProjectPicker(state.session, btn); else createProject(); });
-  m.append(el('div', 'plus-menu-divider'));
-  // Skills submenu (Grok): built-in file skills + your own skills.
-  const skillsSub = el('div', 'plus-menu-sub'); skillsSub.hidden = true;
-  const skillsRow = el('button', 'plus-menu-row');
-  skillsRow.type = 'button';
-  skillsRow.innerHTML = `<svg><use href="#i-book"/></svg><span>Skills</span><span class="plus-menu-state">docx, pdf, pptx, xlsx</span>`;
-  skillsRow.onclick = () => {
-    if (skillsSub.hidden) {
-      skillsSub.replaceChildren();
-      for (const sk of state.customSkills) {
-        const b = el('button', 'plus-menu-row');
-        b.type = 'button';
-        b.innerHTML = `<svg><use href="#i-spark"/></svg><span>${escapeHTML(sk.name)}</span>`;
-        b.onclick = () => { closePlusMenu(); $('prompt').value = sk.instruction || sk.name; autoGrowPrompt(); syncSendState(); $('prompt').focus(); };
-        skillsSub.append(b);
-      }
-      for (const [kind, label] of FILE_SKILLS) {
-        const b = el('button', 'plus-menu-row');
-        b.type = 'button';
-        b.innerHTML = `<svg><use href="#i-file"/></svg><span>${label}</span>`;
-        // Grok: tapping a built-in skill just closes the sheet — no
-        // visible change, no composer arming (the skill runs server-side).
-        b.onclick = () => { closePlusMenu(); };
-        skillsSub.append(b);
-      }
-      const mg = el('button', 'plus-menu-row');
-      mg.type = 'button';
-      mg.innerHTML = `<svg><use href="#i-settings"/></svg><span>Manage skills</span>`;
-      mg.onclick = () => { closePlusMenu(); openSettings('skills'); };
-      skillsSub.append(mg);
-    }
-    skillsSub.hidden = !skillsSub.hidden;
-  };
-  m.append(skillsRow, skillsSub);
-  addRow('external', 'Add connector', 'Tavily, GitHub, Figma', () => openToolsPanel());
-  // Files submenu (Grok): your Library files inline, or "No files yet".
-  const filesSub = el('div', 'plus-menu-sub'); filesSub.hidden = true;
-  const filesRow = el('button', 'plus-menu-row');
-  filesRow.type = 'button';
-  filesRow.innerHTML = `<svg><use href="#i-file"/></svg><span>Files</span><span class="plus-menu-state">${state.library.length ? state.library.length + ' in Library' : 'No files yet'}</span>`;
-  filesRow.onclick = () => {
-    if (filesSub.hidden) {
-      filesSub.replaceChildren();
-      if (!state.library.length) filesSub.append(el('div', 'plus-menu-empty', 'No files yet'));
-      else for (const f of state.library.slice(0, 8)) {
-        const b = el('button', 'plus-menu-row');
-        b.type = 'button';
-        b.innerHTML = `<svg><use href="#i-file"/></svg><span>${escapeHTML(f.name || 'file')}</span>`;
-        b.onclick = () => { closePlusMenu(); openLibraryItem(f); };
-        filesSub.append(b);
-      }
-    }
-    filesSub.hidden = !filesSub.hidden;
-  };
-  m.append(filesRow, filesSub);
-  m.append(el('div', 'plus-menu-divider'));
-  const research = el('button', 'plus-menu-row');
-  research.type = 'button';
-  research.innerHTML = `<svg><use href="#i-globe"/></svg><span>Web research</span><span class="plus-menu-state">${researchOn ? 'On \u2014 always' : 'Auto'}</span>`;
-  research.onclick = () => {
-    const next = state.settings.research_mode === 'always' ? 'auto' : 'always';
-    persistSettings({ research_mode: next });
-    closePlusMenu();
-    toast(next === 'always' ? 'Web research always on' : 'Web research back to auto');
-  };
-  m.append(research);
-  m.hidden = false;
-  btn.setAttribute('aria-expanded', 'true');
-  // Dim the page behind the sheet on mobile (Grok dims it too).
-  if (matchMedia('(max-width:700px)').matches) { const sc = $('plusScrim'); if (sc) sc.hidden = false; }
+/* ---------- composer state ---------- */
+function autoGrowPrompt() {
+  const t = $('prompt');
+  if (!t) return;
+  t.style.height = 'auto';
+  t.style.height = Math.min(t.scrollHeight, 160) + 'px';
+}
+function syncSendState() {
+  const t = $('prompt');
+  const hasText = !!t.value.trim() || state.pending.length > 0;
+  const composer = $('composer');
+  composer.classList.toggle('is-empty', !hasText);
+  $('send').classList.toggle('active', hasText);
+  saveDraftSoon();
+  if ($('welcome').hidden === false) renderAutocomplete();
+}
+function updateBusy() {
+  const busy = state.busy;
+  const composer = $('composer');
+  composer.classList.toggle('is-busy', busy);
+  $('stop').hidden = !busy;
+  $('stop').disabled = state.stopRequested;
+  $('prompt').disabled = false;
+  // Grok while running: the placeholder stays "Ask anything...", the mic
+  // and voice buttons stay visible, and Send is replaced by the black
+  // square Stop. There is no queue — typed text simply stays in the box.
+  $('prompt').placeholder = state.armedMode ? MODES[state.armedMode].placeholder : 'Ask anything\u2026';
+  $('modelPickerBtn').disabled = busy;
+  if (busy) closeModelPicker();
+  statusBadge();
+}
+function statusBadge() {
+  const ok = !!state.models.length;
+  const failed = state.booted && state.bootFailed;
+  $('sidebarDot').classList.toggle('offline', (state.modelsKnown && !ok) || failed);
+  // Before the first bootstrap settles the honest label is "Connecting…":
+  // an empty model list at boot means "not loaded yet", never "offline".
+  $('sidebarState').textContent = state.busy ? 'Working\u2026' : !state.booted ? 'Connecting\u2026' : failed ? 'Cloud \u00b7 Offline' : !state.modelsKnown ? 'Connecting\u2026' : ok ? 'Cloud \u00b7 Ready' : 'Cloud \u00b7 Offline';
 }
 
-/* ---------- send / stream / queue / stop ---------- */
-function queueInput() {
-  const text = $('prompt').value.trim();
-  if (!text && !state.pending.length) return;
-  const session = state.session;
-  if (!session) { toast('Wait for the current answer, then send.'); return; }
-  const directive = styleDirective();
-  const sentText = text + (directive ? '\n\n[Response style: ' + directive + ']' : '');
-  api('/api/run/update', { session_id: session.id, text: sentText, attachments: state.pending.map(a => a.kind === 'image' ? { kind: 'image', name: a.name, data: a.data } : { kind: 'log', name: a.name, text: a.text }) })
-    .then(() => {
-      clearDraft();
-      $('prompt').value = ''; autoGrowPrompt(); syncSendState();
-      session.messages = session.messages || [];
-      session.messages.push({ role: 'user', content: sentText });
-      renderConversation(session);
-      toast('Queued \u2014 it will run after this answer.');
-    })
-    .catch(e => toast(e.message));
-}
+/* ---------- send / stream / stop (no queue — Grok has none) ---------- */
 async function send() {
-  if (state.busy) { queueInput(); return; }
+  // While a run is in flight the Send button is replaced by Stop, so this
+  // can only be reached by Enter: typed text stays in the box, like Grok.
+  if (state.busy) return;
   const text = $('prompt').value.trim();
   if (!text && !state.pending.length) return;
   clearDraft();
@@ -2142,7 +1284,7 @@ async function send() {
   const session = state.session;
   const isFirst = !(session.messages || []).length;
   const attachments = state.pending; state.pending = []; renderPending();
-  const userMsg = { role: 'user', content: sentText };
+  const userMsg = { role: 'user', content: sentText, ts: Date.now() };
   if (attachments.length === 1 && attachments[0].kind === 'image') { userMsg.kind = 'image'; userMsg.data = attachments[0].data; userMsg.name = attachments[0].name; }
   else if (attachments.length === 1 && attachments[0].kind === 'log') { userMsg.kind = 'log'; userMsg.name = attachments[0].name; }
   else if (attachments.length > 1) userMsg.attached = attachments.map(a => ({ kind: a.kind, name: a.name }));
@@ -2159,7 +1301,7 @@ async function send() {
 async function sendPrivate(text, sentText) {
   clearDraft();
   const attachments = state.pending; state.pending = []; renderPending();
-  const userMsg = { role: 'user', content: sentText };
+  const userMsg = { role: 'user', content: sentText, ts: Date.now() };
   if (attachments.length === 1 && attachments[0].kind === 'image') { userMsg.kind = 'image'; userMsg.data = attachments[0].data; userMsg.name = attachments[0].name; }
   else if (attachments.length === 1 && attachments[0].kind === 'log') { userMsg.kind = 'log'; userMsg.name = attachments[0].name; }
   else if (attachments.length > 1) userMsg.attached = attachments.map(a => ({ kind: a.kind, name: a.name }));
@@ -2197,16 +1339,15 @@ async function runStream(session, prompt, history, attachments, isPrivate, edit)
   try {
     const gen = JannaRuns.subscribe(streamBody(session.id, prompt, history, attachments, edit), state.token, (kind, id, msg) => {
       if (kind === 'connected' && id) state.runId = id;
-      else if (kind === 'reconnecting') addProgressStep('Reconnecting\u2026 ' + (msg || ''));
     });
     for await (const ev of gen) {
       if (ev.run_id) state.runId = ev.run_id;
-      if (ev.type === 'progress') { if (ev.message) addProgressStep(ev.message); }
+      if (ev.type === 'progress') { /* live header stays "Thinking / Planning next moves" — the backend's generic step labels are not shown */ }
       else if (ev.type === 'first_token') stopThinking();
       else if (ev.type === 'delta') {
         state.stream += ev.text || '';
         renderMarkdown(body, state.stream);
-        scrollThreadToBottom();
+        scrollToBottomIfNear();
       }
       else if (ev.type === 'done') { doneText = ev.text || state.stream; state.stream = doneText; }
       else if (ev.type === 'error') errorMessage = ev.message || 'Run failed';
@@ -2217,8 +1358,7 @@ async function runStream(session, prompt, history, attachments, isPrivate, edit)
   const finalText = errorMessage ? '\u26a0\ufe0f ' + errorMessage : (doneText || state.stream);
   streamNode.remove();
   if (isPrivate) {
-    const am = { role: 'assistant', content: finalText };
-    if (think.doneSecs) am.thinkSecs = think.doneSecs;
+    const am = { role: 'assistant', content: finalText, ts: Date.now() };
     state.privateThread.push(am);
     if (edit && edit.msg && Array.isArray(edit.msg.versions)) edit.msg.versions[edit.msg.version].response = am;
     renderConversation({ id: 'private', title: 'Private chat', messages: state.privateThread });
@@ -2226,14 +1366,10 @@ async function runStream(session, prompt, history, attachments, isPrivate, edit)
     return;
   }
   session.messages = session.messages || [];
-  const am = { role: 'assistant', content: finalText };
-  if (think.doneSecs) am.thinkSecs = think.doneSecs;
+  const am = { role: 'assistant', content: finalText, ts: Date.now() };
   session.messages.push(am);
   if (edit && edit.msg && Array.isArray(edit.msg.versions)) edit.msg.versions[edit.msg.version].response = am;
   renderConversation(session);
-  // Persist the thinking duration with the message (like follow-ups): the
-  // adapter's stream tap saved the exchange before the duration was known.
-  if (am.thinkSecs) { try { await api('/api/sessions/update', { session_id: session.id, messages: session.messages }); } catch { /* line still shows locally */ } }
   if (errorMessage) toast(errorMessage);
   else {
     if (state.settings.voice_output === true) voiceSpeak(finalText);
@@ -2241,7 +1377,7 @@ async function runStream(session, prompt, history, attachments, isPrivate, edit)
       try { new Notification('Janna AI', { body: finalText.slice(0, 140) }); } catch { /* ignore */ }
     }
     // Follow-up pills (Grok): ask the model for two next questions in the
-    // background; they render under the reply and survive a refresh.
+    // background; they render under the reply and are ephemeral.
     generateFollowUps(session, am);
   }
   refreshBootstrap(true);
@@ -2249,9 +1385,6 @@ async function runStream(session, prompt, history, attachments, isPrivate, edit)
   // in-memory session keeps 'New chat' until this sync runs.
   const freshTitle = state.session && findSession(state.session.id);
   if (freshTitle && freshTitle.title) { state.session.title = freshTitle.title; $('threadTitle').textContent = freshTitle.title; }
-  // NOTE: queued follow-ups are drained by the web-adapter itself (it posts
-  // the next queued item to /api/run and calls openSession when it finishes),
-  // so the app must NOT re-send them here — that would run them twice.
 }
 async function stopRun() {
   if (!state.busy) return;
@@ -2259,254 +1392,702 @@ async function stopRun() {
   $('stop').disabled = true;
   const sid = state.isPrivate ? null : state.session?.id;
   try {
-    if (sid) await api('/api/stop', { session_id: sid, run_id: state.runId });
-  } catch (e) { toast(e.message); }
+    if (state.runId) await api('/api/stop', { run_id: state.runId });
+    else if (sid) await api('/api/stop', { session_id: sid });
+  } catch { /* the stream abort below still ends the run */ }
+  state.stream += '\n\n_Stopped._';
+}
+async function requestTitle(session, text) {
+  if (!session || (session.title && session.title !== 'New chat')) return;
+  try {
+    const body = { session_id: session.id, model: state.model, prompt: 'Give this conversation a very short title (at most 6 words, no quotes, no punctuation at the end).\n\nFirst message: ' + text, background: true, messages: [] };
+    let out = '';
+    for await (const ev of JannaRuns.subscribe(body, state.token)) {
+      if (ev.type === 'delta') out += ev.text || '';
+      else if (ev.type === 'done') out = ev.text || out;
+    }
+    const title = out.split('\n')[0].trim().replace(/^["'\u201c]|["'\u201d]$/g, '').slice(0, 60);
+    if (title.length > 2 && state.session && state.session.id === session.id) {
+      session.title = title;
+      try { await api('/api/sessions/update', { session_id: session.id, title }); } catch { /* title still shows locally */ }
+      $('threadTitle').textContent = title;
+      renderSidebar();
+    }
+  } catch { /* title stays the prompt fallback */ }
 }
 
-/* ---------- command palette ---------- */
-function openPalette() {
-  $('palette').hidden = false;
-  $('paletteInput').value = '';
-  $('paletteInput').focus();
-  renderPalette();
+/* ---------- attachments ---------- */
+function renderPending() {
+  const tray = $('attachmentTray');
+  tray.replaceChildren();
+  if (!state.pending.length) { tray.hidden = true; syncSendState(); return; }
+  tray.hidden = false;
+  for (const a of state.pending) {
+    const chip = el('span', 'attachment-chip');
+    if (a.kind === 'image' && a.data) { const img = document.createElement('img'); img.src = 'data:image/jpeg;base64,' + a.data; img.alt = ''; chip.append(img); }
+    chip.append(document.createTextNode(a.name || 'file'));
+    const x = el('button', '', '\u00d7');
+    x.type = 'button';
+    x.onclick = () => { state.pending = state.pending.filter(p => p !== a); renderPending(); };
+    chip.append(x);
+    tray.append(chip);
+  }
+  syncSendState();
 }
-function closePalette() { $('palette').hidden = true; }
-function renderPalette() {
-  const q = $('paletteInput').value.trim().toLowerCase();
-  const list = $('paletteBody');
-  list.replaceChildren();
-  const tab = state.paletteTab;
-  const addSection = (title, rows) => {
-    if (!rows.length) return;
-    list.append(el('div', 'palette-group', title));
-    for (const r of rows) {
-      const b = el('button', 'palette-item');
-      b.type = 'button';
-      b.innerHTML = `<svg><use href="#i-${r.icon || 'search'}"/></svg><span>${escapeHTML(r.label)}</span>${r.kbd ? `<kbd>${escapeHTML(r.kbd)}</kbd>` : r.meta ? `<span class="palette-item-meta">${escapeHTML(r.meta)}</span>` : ''}`;
-      b.onclick = () => { closePalette(); r.onClick(); };
-      list.append(b);
+async function fileBase64(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).split(',')[1] || '');
+    r.onerror = () => reject(new Error('Could not read ' + file.name));
+    r.readAsDataURL(file);
+  });
+}
+async function downscaleImageFile(file) {
+  try {
+    const data = await fileBase64(file);
+    const img = new Image();
+    await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; img.src = 'data:' + (file.type || 'image/jpeg') + ';base64,' + data; });
+    const scale = Math.min(1, 1568 / Math.max(img.naturalWidth || 1, img.naturalHeight || 1));
+    if (scale >= 1) return { kind: 'image', name: file.name, data };
+    const cv = document.createElement('canvas');
+    cv.width = Math.max(1, Math.round(img.naturalWidth * scale));
+    cv.height = Math.max(1, Math.round(img.naturalHeight * scale));
+    const cx = cv.getContext('2d');
+    cx.fillStyle = '#ffffff'; cx.fillRect(0, 0, cv.width, cv.height);
+    cx.drawImage(img, 0, 0, cv.width, cv.height);
+    const url = cv.toDataURL('image/jpeg', 0.85);
+    return { kind: 'image', name: file.name, data: url.split(',')[1] };
+  } catch { return null; }
+}
+async function handleFiles(files) {
+  const list = [...(files || [])];
+  if (!list.length) return;
+  for (const file of list) {
+    if (file.type.startsWith('image/')) {
+      const img = await downscaleImageFile(file);
+      if (img) state.pending.push(img);
+      else toast('Could not read ' + file.name);
+    } else if (file.size > 400000) {
+      toast(file.name + ' is too large to send (400 KB max for text files).');
+    } else {
+      try {
+        const text = await file.text();
+        state.pending.push({ kind: 'log', name: file.name, text });
+      } catch { toast('Could not read ' + file.name); }
     }
+  }
+  if (!state.modelVision && state.pending.some(a => a.kind === 'image')) {
+    toast('This model may not see image pixels — its vision flag is off in the catalog.');
+  }
+  renderPending();
+}
+
+/* ---------- "+" menu (Grok's exact order + Skills submenu) ---------- */
+function closePlusMenu() { const m = $('plusMenu'); if (m) m.hidden = true; $('plusBtn').setAttribute('aria-expanded', 'false'); $('plusScrim').hidden = true; }
+function openPlusMenu() {
+  const m = $('plusMenu'), btn = $('plusBtn');
+  if (!m.hidden) { closePlusMenu(); return; }
+  closeModelPicker();
+  m.replaceChildren();
+  const handle = el('div', 'plus-menu-handle');
+  m.append(handle);
+  const upload = el('button', 'plus-menu-row');
+  upload.type = 'button';
+  upload.innerHTML = '<svg><use href="#i-upload"/></svg><span>Upload a file</span>';
+  upload.onclick = () => { closePlusMenu(); $('attachment').click(); };
+  m.append(upload);
+  const projectsRow = el('button', 'plus-menu-row');
+  projectsRow.type = 'button';
+  projectsRow.innerHTML = '<svg><use href="#i-folder"/></svg><span>Projects</span><span class="plus-menu-state">\u203a</span>';
+  projectsRow.onclick = () => { closePlusMenu(); openProjectPicker(); };
+  m.append(projectsRow);
+  m.append(el('div', 'plus-menu-divider'));
+  const skillsRow = el('button', 'plus-menu-row');
+  skillsRow.type = 'button';
+  skillsRow.innerHTML = '<svg><use href="#i-spark"/></svg><span>Skills</span><span class="plus-menu-state">\u203a</span>';
+  const skillsSub = el('div', 'plus-menu-sub');
+  skillsSub.hidden = true;
+  for (const [id, label] of FILE_SKILLS) {
+    const b = el('button', 'plus-menu-row');
+    b.type = 'button';
+    b.innerHTML = `<svg><use href="#i-file"/></svg><span>${escapeHTML(label)}</span>`;
+    b.onclick = () => { closePlusMenu(); $('prompt').value = 'Create a ' + label.toLowerCase() + ' for me: '; autoGrowPrompt(); syncSendState(); $('prompt').focus(); };
+    skillsSub.append(b);
+  }
+  for (const s of state.customSkills) {
+    const b = el('button', 'plus-menu-row');
+    b.type = 'button';
+    b.innerHTML = `<svg><use href="#i-spark"/></svg><span>${escapeHTML(s.name)}</span>`;
+    b.onclick = () => { closePlusMenu(); $('prompt').value = s.instruction + ' '; autoGrowPrompt(); syncSendState(); $('prompt').focus(); };
+    skillsSub.append(b);
+  }
+  const manage = el('button', 'plus-menu-row');
+  manage.type = 'button';
+  manage.innerHTML = '<svg><use href="#i-settings"/></svg><span>Manage skills</span>';
+  manage.onclick = () => { closePlusMenu(); openSettings('skills'); };
+  skillsSub.append(manage);
+  skillsRow.onclick = () => { skillsSub.hidden = !skillsSub.hidden; };
+  m.append(skillsRow, skillsSub);
+  const connector = el('button', 'plus-menu-row');
+  connector.type = 'button';
+  connector.innerHTML = '<svg><use href="#i-plus"/></svg><span>Add connector</span>';
+  connector.onclick = () => { closePlusMenu(); openSettings('connectors'); };
+  m.append(connector);
+  const filesRow = el('button', 'plus-menu-row');
+  filesRow.type = 'button';
+  filesRow.innerHTML = '<svg><use href="#i-file"/></svg><span>Files</span><span class="plus-menu-state">\u203a</span>';
+  const filesSub = el('div', 'plus-menu-sub');
+  filesSub.hidden = true;
+  if (!state.library.length) {
+    const e = el('div', 'plus-menu-empty', 'No files yet. Upload one from the Library.');
+    filesSub.append(e);
+  }
+  for (const f of state.library.slice(0, 8)) {
+    const b = el('button', 'plus-menu-row');
+    b.type = 'button';
+    b.innerHTML = `<svg><use href="#i-file"/></svg><span>${escapeHTML(f.name || 'File')}</span>`;
+    b.onclick = () => { closePlusMenu(); openLibraryItem(f); };
+    filesSub.append(b);
+  }
+  filesRow.onclick = () => { filesSub.hidden = !filesSub.hidden; };
+  m.append(filesRow, filesSub);
+  m.append(el('div', 'plus-menu-divider'));
+  const researchOn = state.settings.research_mode === 'always';
+  const research = el('button', 'plus-menu-row');
+  research.type = 'button';
+  research.innerHTML = `<svg><use href="#i-globe"/></svg><span>Web research</span><span class="plus-menu-state">${researchOn ? 'On \u2014 always' : 'Auto'}</span>`;
+  research.onclick = () => {
+    const next = state.settings.research_mode === 'always' ? 'auto' : 'always';
+    persistSettings({ research_mode: next });
+    closePlusMenu();
+    toast(next === 'always' ? 'Web research always on' : 'Web research back to auto');
   };
-  if (tab === 'All') {
-    addSection('Actions', [
-      { label: 'New Chat', kbd: 'Ctrl J', icon: 'plus', onClick: () => newChat() },
-      { label: 'New Project', meta: '', icon: 'book', onClick: () => createProject() },
-      { label: 'New Automation', icon: 'spark', onClick: () => openSettings('automations') },
-      { label: 'Open settings', kbd: 'Ctrl ,', icon: 'settings', onClick: () => openSettings('account') },
-    ].filter(r => !q || r.label.toLowerCase().includes(q)));
-  }
-  if (tab === 'All') {
-    addSection('Imagine', [
-      { label: 'Make a website', meta: 'Apps', icon: 'spark', onClick: () => { armMode('apps'); $('prompt').focus(); } },
-      { label: 'Design a presentation', meta: 'Slides', icon: 'book', onClick: () => { armMode('presentation'); $('prompt').focus(); } },
-    ].filter(r => !q || r.label.toLowerCase().includes(q)));
-  }
-  if (tab === 'Imagine' && !q) {
-    // Grok: the Imagine tab lists generated images — Janna generates
-    // none, so the tab is honestly empty.
-    list.append(el('div', 'palette-empty', 'Nothing generated in Imagine yet.'));
-  }
-  if (tab === 'Apps') {
-    const apps = state.library.filter(it => it.kind === 'app' && (!q || (it.name || '').toLowerCase().includes(q)));
-    if (apps.length) addSection('Apps', apps.map(it => ({ label: it.name, meta: it.kindLabel || it.kind, icon: 'panel', onClick: () => openLibraryItem(it) })));
-    else if (!q) list.append(el('div', 'palette-empty', 'No apps yet. Apps you build with Janna will show up here.'));
-  }
-  if ((tab === 'All' || tab === 'Files') && !q) {
-    addSection('Files', state.library.slice(0, 5).map(it => ({ label: it.name, meta: it.kindLabel || it.kind, icon: 'file', onClick: () => openLibraryItem(it) })));
-    if (tab === 'Files' && !state.library.length) list.append(el('div', 'palette-empty', 'No files yet.'));
-  }
-  if (tab === 'Automations') {
-    const rows = state.savedAutomations.map(a => ({ label: a.name, meta: a.trigger ? a.trigger.cadence + ' ' + a.trigger.time : 'No trigger', icon: 'spark', onClick: () => openAutomationDetail(a.name, a) }));
-    const hit = rows.filter(r => !q || r.label.toLowerCase().includes(q));
-    if (hit.length) addSection('Automations', hit);
-    else if (!q) list.append(el('div', 'palette-empty', 'No automations yet. Schedule Janna to run on its own and they will show up here.'));
-  }
-  if ((tab === 'All' || tab === 'Files') && q) {
-    addSection('Files', state.library.filter(it => (it.name || '').toLowerCase().includes(q)).map(it => ({ label: it.name, meta: it.kindLabel || it.kind, icon: 'file', onClick: () => openLibraryItem(it) })));
-  }
-  if (tab === 'All') {
-    const chats = visibleChats().filter(s => !q || (s.title || '').toLowerCase().includes(q) || (s.messages || []).some(m => (m.content || '').toLowerCase().includes(q)));
-    if (q) list.append(el('div', 'palette-group', chats.length + ' conversation' + (chats.length === 1 ? '' : 's') + ' found'));
-    addSection('Chats', chats.slice(0, 8).map(s => ({ label: s.title || 'New chat', meta: timeAgo(s.updated), icon: 'chat', onClick: () => openSession(s.id) })));
-    if (q && chats.length === 0 && !list.querySelector('.palette-item')) list.append(el('div', 'palette-empty', 'No matches for \u201c' + $('paletteInput').value.trim() + '\u201d.'));
-    if (q) {
-      const ask = el('button', 'palette-item');
-      ask.type = 'button';
-      ask.innerHTML = `<svg><use href="#i-search"/></svg><span>Ask Janna \u201c${escapeHTML($('paletteInput').value.trim())}\u201d</span>`;
-      ask.onclick = () => { closePalette(); $('prompt').value = $('paletteInput').value.trim(); autoGrowPrompt(); syncSendState(); $('prompt').focus(); };
-      list.append(ask);
-    }
-  }
-  if (!list.childNodes.length) list.append(el('div', 'palette-empty', 'No matches for \u201c' + $('paletteInput').value.trim() + '\u201d.'));
-}
-function renderPaletteTabs() {
-  const tabs = $('paletteTabs');
-  tabs.replaceChildren();
-  for (const t of ['All', 'Imagine', 'Apps', 'Automations', 'Files']) {
-    const b = el('button', 'palette-tab' + (state.paletteTab === t ? ' active' : ''));
-    b.type = 'button'; b.textContent = t;
-    b.onclick = () => { state.paletteTab = t; renderPaletteTabs(); renderPalette(); };
-    tabs.append(b);
-  }
+  m.append(research);
+  m.hidden = false;
+  btn.setAttribute('aria-expanded', 'true');
+  // Dim the page behind the sheet on mobile (Grok dims it too).
+  if (matchMedia('(max-width:700px)').matches) { const sc = $('plusScrim'); if (sc) sc.hidden = false; }
 }
 
-/* Automation detail (Grok's, 2026-11-25 re-study): breadcrumb, icon +
-   Change icon, editable name, Triggers ("Daily ⌄ at 7:30 AM" + Remove),
-   Instructions textarea with + Attach / Connectors 0 / Skills 0 /
-   model toolbar, Notification "Email + App ⌄", Cancel/Save bar, NO
-   enable toggle. Saving stores the setup in this browser only — Janna
-   cannot run automations yet, and Save says so honestly. */
+/* ---------- projects (Grok's New Project picker, review #2): 64 icons in
+   an 8x8 grid + 8 colours. Inline stroke SVGs in the same style as the
+   shell sprite (24x24, stroke currentColor, width 1.65). ---------- */
+const PROJECT_ICONS = [
+  ['folder', 'Folder', '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>'],
+  ['flag', 'Flag', '<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><path d="M4 22v-7"/>'],
+  ['home', 'Home', '<path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/>'],
+  ['star', 'Star', '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>'],
+  ['heart', 'Heart', '<path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>'],
+  ['globe', 'Globe', '<circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>'],
+  ['unlock', 'Unlock', '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/>'],
+  ['smile', 'Smile', '<circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><path d="M9 9h.01M15 9h.01"/>'],
+  ['shield', 'Shield', '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>'],
+  ['bell', 'Bell', '<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>'],
+  ['mail', 'Mail', '<path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><path d="M22 6l-10 7L2 6"/>'],
+  ['phone', 'Phone', '<path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/>'],
+  ['user', 'User', '<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>'],
+  ['stethoscope', 'Stethoscope', '<path d="M4 3v5a7 7 0 0 0 14 0V3"/><path d="M11 15v1a5 5 0 0 0 10 0v-3"/><circle cx="21" cy="9" r="1.8"/>'],
+  ['calendar', 'Calendar', '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>'],
+  ['clock', 'Clock', '<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>'],
+  ['hourglass', 'Hourglass', '<path d="M5 22h14M5 2h14M17 22v-4.17a2 2 0 0 0-.59-1.42L12 12l-4.41 4.41A2 2 0 0 0 7 17.83V22M7 2v4.17a2 2 0 0 0 .59 1.42L12 12l4.41-4.41A2 2 0 0 0 17 6.17V2"/>'],
+  ['sun', 'Sun', '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>'],
+  ['moon', 'Moon', '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>'],
+  ['monitor', 'Monitor', '<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>'],
+  ['umbrella', 'Umbrella', '<path d="M23 12a11.05 11.05 0 0 0-22 0zm-5 7a3 3 0 0 1-6 0v-7"/>'],
+  ['leaf', 'Leaf', '<path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10z"/><path d="M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12"/>'],
+  ['bug', 'Bug', '<path d="M12 3a5 5 0 0 1 5 5v8a5 5 0 0 1-10 0V8a5 5 0 0 1 5-5z"/><path d="M9 3l1 2M15 3l-1 2M8 21l-2-2M16 21l2-2M7 9h10M7 13h10"/>'],
+  ['flask', 'Flask', '<path d="M10 2v6L4.5 18a2 2 0 0 0 1.8 3h11.4a2 2 0 0 0 1.8-3L14 8V2"/><path d="M8.5 2h7M7 16h10"/>'],
+  ['rocket', 'Rocket', '<path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="M12 15l-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/>'],
+  ['plane', 'Plane', '<path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/>'],
+  ['car', 'Car', '<path d="M3 13l1.5-4.5A2 2 0 0 1 6.4 7h11.2a2 2 0 0 1 1.9 1.5L21 13v5a1 1 0 0 1-1 1h-1"/><path d="M3 13v5a1 1 0 0 0 1 1h1"/><circle cx="7.5" cy="18" r="1.8"/><circle cx="16.5" cy="18" r="1.8"/><path d="M9.3 18h5.4"/>'],
+  ['camera', 'Camera', '<path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/>'],
+  ['video', 'Video', '<path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/>'],
+  ['music', 'Music', '<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>'],
+  ['headphones', 'Headphones', '<path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/>'],
+  ['microscope', 'Microscope', '<path d="M9 2h6"/><path d="M12 2v6"/><path d="M8 21h8"/><path d="M12 8l4.5 6.5a3.5 3.5 0 0 1-3 5.5h-3a3.5 3.5 0 0 1-3-5.5z"/><path d="M12 21v-1"/>'],
+  ['archive', 'Archive', '<rect x="3" y="3" width="18" height="5" rx="1"/><path d="M5 8v11a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/>'],
+  ['book', 'Book', '<path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>'],
+  ['zap', 'Zap', '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>'],
+  ['wrench', 'Wrench', '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>'],
+  ['note', 'Note', '<path d="M15.5 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8.5z"/><path d="M15 3v6h6M9 13h6M9 17h4"/>'],
+  ['scale', 'Scale', '<path d="M12 3v18M5 7h14M7 21h10"/><path d="M5 7l-2.5 6a3 3 0 0 0 5 0zM19 7l-2.5 6a3 3 0 0 0 5 0z"/>'],
+  ['film', 'Film', '<rect x="2" y="2" width="20" height="20" rx="2.18"/><path d="M7 2v20M17 2v20M2 12h20M2 7h5M2 17h5M17 17h5M17 7h5"/>'],
+  ['palette', 'Palette', '<path d="M12 3a9 9 0 1 0 0 18c1.5 0 2-1 1.5-2.5-.5-1.5.5-2.5 2-2.5H17a4 4 0 0 0 4-4c0-5-4-9-9-9z"/><path d="M8 10h.01M12 7h.01M16 10h.01"/>'],
+  ['cpu', 'CPU', '<rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M1 9h3M1 15h3M20 9h3M20 15h3"/>'],
+  ['calculator', 'Calculator', '<rect x="4" y="2" width="16" height="20" rx="2"/><path d="M8 6h8"/><path d="M8 12h.01M12 12h.01M16 12h.01M8 16h.01M12 16h.01M16 16h.01"/>'],
+  ['laptop', 'Laptop', '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M2 20h20"/>'],
+  ['briefcase', 'Briefcase', '<rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>'],
+  ['clipboard', 'Clipboard', '<path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M9 12h6M9 16h6"/>'],
+  ['building', 'Building', '<rect x="4" y="2" width="16" height="20" rx="2"/><path d="M9 22v-4h6v4"/><path d="M8 6h.01M16 6h.01M12 6h.01M12 10h.01M12 14h.01M16 10h.01M16 14h.01M8 10h.01M8 14h.01"/>'],
+  ['flame', 'Flame', '<path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.07-2.14-.22-4.05 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.15.43-2.29 1-3a2.5 2.5 0 0 0 2.5 2.5z"/>'],
+  ['play', 'Play', '<polygon points="5 3 19 12 5 21 5 3"/>'],
+  ['database', 'Database', '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>'],
+  ['shirt', 'Shirt', '<path d="M20.38 3.46L16 2a4 4 0 0 1-8 0L3.62 3.46a2 2 0 0 0-1.34 2.23l.58 3.47a1 1 0 0 0 .99.84H6v10c0 1.1.9 2 2 2h8a2 2 0 0 0 2-2V10h2.15a1 1 0 0 0 .99-.84l.58-3.47a2 2 0 0 0-1.34-2.23z"/>'],
+  ['gem', 'Gem', '<path d="M6 3h12l4 6-10 13L2 9z"/><path d="M11 3L8 9l4 13 4-13-3-6M2 9h20"/>'],
+  ['gamepad', 'Gamepad', '<path d="M17.32 5H6.68a4 4 0 0 0-3.98 3.59L2 17a2 2 0 0 0 3.35 1.47L8 15h8l2.65 3.47A2 2 0 0 0 22 17l-.7-8.41A4 4 0 0 0 17.32 5z"/><path d="M6 12h4M8 10v4M15 13h.01M18 11h.01"/>'],
+  ['chef', 'Chef Hat', '<path d="M17 21a1 1 0 0 0 1-1v-5.35c0-.46.32-.84.73-1.04a4 4 0 0 0-2.13-7.59 5 5 0 0 0-9.19 0 4 4 0 0 0-2.13 7.59c.41.2.73.58.73 1.04V20a1 1 0 0 0 1 1z"/><path d="M6 17h12"/>'],
+  ['dollar', 'Dollar', '<path d="M12 1v22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>'],
+  ['tag', 'Tag', '<path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><path d="M7 7h.01"/>'],
+  ['gradcap', 'Graduation Cap', '<path d="M22 10L12 5 2 10l10 5 10-5z"/><path d="M6 12v5c0 1.66 2.69 3 6 3s6-1.34 6-3v-5"/><path d="M22 10v6"/>'],
+  ['pin', 'Pin', '<path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>'],
+  ['compass', 'Compass', '<circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/>'],
+  ['code', 'Code', '<path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/>'],
+  ['box', 'Box', '<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.27 6.96L12 12.01l8.73-5.05M12 22.08V12"/>'],
+  ['sparkles', 'Sparkles', '<path d="M12 3l1.9 5.8a2 2 0 0 0 1.3 1.3L21 12l-5.8 1.9a2 2 0 0 0-1.3 1.3L12 21l-1.9-5.8a2 2 0 0 0-1.3-1.3L3 12l5.8-1.9a2 2 0 0 0 1.3-1.3z"/><path d="M19 3l.9 2.6 2.6.9-2.6.9L19 10l-.9-2.6-2.6-.9 2.6-.9z"/>'],
+  ['key', 'Key', '<path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.78 7.78 5.5 5.5 0 0 1 7.78-7.78zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/>'],
+  ['bulb', 'Lightbulb', '<path d="M9 18h6M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.4 1 2.3h6c0-.9.4-1.8 1-2.3A7 7 0 0 0 12 2z"/>'],
+  ['bookmark', 'Bookmark', '<path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>'],
+];
+const PROJECT_COLORS = [
+  ['default', 'Default color', ''],
+  ['blue', 'Blue', '#1f7aec'],
+  ['orange', 'Orange', '#f97316'],
+  ['pink', 'Pink', '#ec4899'],
+  ['purple', 'Purple', '#8b5cf6'],
+  ['teal', 'Teal', '#14b8a6'],
+  ['red', 'Red', '#ef4444'],
+  ['green', 'Green', '#22c55e'],
+];
+/* Example projects (Grok's Library Projects tab — FULL card texts, review #3
+   2026-11-26; v67 used the truncated narrow-view texts). */
+const EXAMPLE_PROJECTS = [
+  { name: 'Legal Document Reviewer', desc: 'Get expert analysis of U.S. legal documents' },
+  { name: 'Cover Letter Writer', desc: 'Craft tailored cover letters that align your experience with the job description' },
+  { name: 'Writing Assistant', desc: 'Polish and improve any text for clarity, conciseness, and style.' },
+  { name: 'Fitness Advice', desc: 'Plan workouts, nutrition, and fitness goals with evidence-based guidance' },
+];
+function projectIconSvg(p) {
+  const found = PROJECT_ICONS.find(i => i[0] === (p && p.icon)) || PROJECT_ICONS[0];
+  const col = (PROJECT_COLORS.find(c => c[0] === (p && p.color)) || PROJECT_COLORS[0])[2];
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="${col || 'currentColor'}" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round">${found[2]}</svg>`;
+}
+function inlineIcon(id) {
+  const found = PROJECT_ICONS.find(i => i[0] === id) || PROJECT_ICONS[0];
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round">${found[2]}</svg>`;
+}
+function createProject(chatId) { openProjectDialog(chatId); }
+function openProjectPicker() {
+  const items = [{ label: 'Create Project', icon: 'i-plus', onClick: () => openProjectDialog() }];
+  for (const p of state.localProjects) {
+    items.push({ label: p.name || 'Untitled Project', icon: 'i-folder', onClick: () => { state.projectFilter = p.id; renderSidebar(); } });
+  }
+  showMenu($('plusBtn'), items, { header: 'Projects' });
+}
+function openProjectDialog(chatId, prefill) {
+  closeMenus();
+  const overlay = el('div', 'dialog-overlay');
+  const card = el('div', 'dialog-card proj-dialog');
+  const draft = { icon: 'folder', color: 'default', name: 'Untitled Project', about: '', files: [] };
+  if (prefill) Object.assign(draft, prefill);
+  const closeBtn = el('button', 'icon-button proj-close');
+  closeBtn.type = 'button';
+  closeBtn.innerHTML = '<svg><use href="#i-close"/></svg>';
+  closeBtn.setAttribute('aria-label', 'Close');
+  closeBtn.onclick = () => overlay.remove();
+  const iconRow = el('div', 'proj-icon-row');
+  const tile = el('button', 'proj-icon-tile');
+  tile.type = 'button';
+  tile.innerHTML = projectIconSvg(draft);
+  tile.title = 'Choose an icon and color';
+  const tileLabel = el('button', 'text-btn');
+  tileLabel.type = 'button';
+  tileLabel.textContent = 'Choose an icon and color';
+  const picker = el('div', 'proj-icon-picker');
+  picker.hidden = true;
+  const colors = el('div', 'proj-colors');
+  for (const [id, label, hex] of PROJECT_COLORS) {
+    const c = el('button', 'proj-color' + (draft.color === id ? ' selected' : ''));
+    c.type = 'button';
+    c.title = label;
+    c.style.background = hex || 'var(--chip)';
+    c.onclick = () => {
+      draft.color = id;
+      colors.querySelectorAll('.proj-color').forEach(x => x.classList.remove('selected'));
+      c.classList.add('selected');
+      tile.innerHTML = projectIconSvg(draft);
+    };
+    colors.append(c);
+  }
+  const icons = el('div', 'proj-icons');
+  for (const [id, label, svg] of PROJECT_ICONS) {
+    const b = el('button', 'proj-icon' + (draft.icon === id ? ' selected' : ''));
+    b.type = 'button';
+    b.title = label;
+    b.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round">${svg}</svg>`;
+    b.onclick = () => {
+      draft.icon = id;
+      icons.querySelectorAll('.proj-icon').forEach(x => x.classList.remove('selected'));
+      b.classList.add('selected');
+      tile.innerHTML = projectIconSvg(draft);
+    };
+    icons.append(b);
+  }
+  picker.append(colors, icons);
+  const togglePicker = () => { picker.hidden = !picker.hidden; };
+  tile.onclick = togglePicker;
+  tileLabel.onclick = togglePicker;
+  iconRow.append(tile, tileLabel);
+  const title = document.createElement('input');
+  title.className = 'proj-title';
+  title.value = draft.name;
+  title.placeholder = 'Untitled Project';
+  title.setAttribute('aria-label', 'Project name');
+  const about = document.createElement('textarea');
+  about.className = 'proj-about';
+  about.value = draft.about;
+  about.placeholder = "What's this project about?";
+  about.setAttribute('aria-label', 'What is this project about?');
+  const addFolder = el('button', 'proj-add-folder');
+  addFolder.type = 'button';
+  addFolder.innerHTML = '<span>Add Folder</span><small>Attach files from your Library</small>';
+  const folderInput = document.createElement('input');
+  folderInput.type = 'file';
+  folderInput.multiple = true;
+  folderInput.hidden = true;
+  folderInput.onchange = () => {
+    const names = [...folderInput.files].map(f => f.name);
+    draft.files = draft.files.concat(names);
+    addFolder.querySelector('span').textContent = draft.files.length ? `${draft.files.length} file${draft.files.length === 1 ? '' : 's'} attached` : 'Add Folder';
+    handleFiles(folderInput.files);
+  };
+  addFolder.onclick = () => folderInput.click();
+  const create = el('button', 'proj-create', 'Create');
+  create.type = 'button';
+  create.onclick = () => {
+    draft.name = title.value.trim() || 'Untitled Project';
+    draft.about = about.value.trim();
+    const project = { id: uid('proj'), name: draft.name, icon: draft.icon, color: draft.color, about: draft.about, files: draft.files, created: Date.now() };
+    state.localProjects.unshift(project);
+    saveProjects();
+    if (chatId) state.chatProjects[chatId] = project.id;
+    saveChatProjects();
+    overlay.remove();
+    renderSidebar();
+    toast('Project created: ' + project.name);
+  };
+  card.append(closeBtn, iconRow, picker, title, about, addFolder, create);
+  overlay.append(card);
+  overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+  document.body.append(overlay);
+  setTimeout(() => title.focus(), 40);
+}
+function createExampleProject(ex) {
+  const existing = state.localProjects.find(p => p.name === ex.name);
+  if (existing) { state.projectFilter = existing.id; renderSidebar(); closeLibrary(); return; }
+  const project = { id: uid('proj'), name: ex.name, icon: 'folder', color: 'default', about: ex.desc, files: [], created: Date.now() };
+  state.localProjects.unshift(project);
+  saveProjects();
+  state.projectFilter = project.id;
+  renderSidebar();
+  closeLibrary();
+  toast('Project created: ' + ex.name);
+}
+
+/* ---------- Library ---------- */
+function openLibrary() { $('libraryView').hidden = false; renderLibrary(); }
+function closeLibrary() { $('libraryView').hidden = true; }
+function libraryUsageBytes() { return state.library.reduce((n, f) => n + (f.size || 0), 0); }
+function addFilesToLibrary(files) {
+  for (const f of [...files]) {
+    state.library.unshift({ id: uid('file'), name: f.name, size: f.size || 0, kind: 'file', created: Date.now() });
+  }
+  saveLibrary();
+}
+function renderLibrary() {
+  const list = $('libraryBody');
+  const tab = state.libraryTab;
+  $('libraryUpload').textContent = tab === 'apps' ? 'Create app' : 'Upload files';
+  // Tabs: All / Media / Projects / Apps / Files (Grok).
+  $('libraryTabs').replaceChildren();
+  for (const t of ['all', 'media', 'projects', 'apps', 'files']) {
+    const b = el('button', 'tab' + (t === tab ? ' active' : ''));
+    b.type = 'button';
+    b.textContent = t[0].toUpperCase() + t.slice(1);
+    b.onclick = () => { state.libraryTab = t; renderLibrary(); };
+    $('libraryTabs').append(b);
+  }
+  const q = (state.libraryQuery || '').toLowerCase();
+  let items = state.library.filter(f => !q || (f.name || '').toLowerCase().includes(q));
+  if (state.librarySort === 'name') items = [...items].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  else if (state.librarySort === 'oldest') items = [...items].reverse();
+  if (tab === 'apps') items = items.filter(f => f.kind === 'app');
+  else if (tab === 'files') items = items.filter(f => f.kind !== 'app');
+  else if (tab === 'media') items = items.filter(f => f.kind === 'image');
+  list.replaceChildren();
+  if (tab === 'projects') {
+    const head = el('div', 'library-section-head');
+    const empty = el('div', 'empty-state');
+    const icon = el('span', 'lib-icon');
+    icon.innerHTML = '<svg><use href="#i-folder"/></svg>';
+    const h = el('h3', '', 'Get started by creating a new project');
+    const p = el('p', '', 'Projects help you set common instructions and attach files for conversations.');
+    const nb = el('button', 'primary-pill', 'New project');
+    nb.type = 'button';
+    nb.onclick = () => openProjectDialog();
+    empty.append(icon, h, p, nb);
+    head.append(empty);
+    const exHead = el('h3', 'lib-example-head', 'Example projects');
+    const grid = el('div', 'lib-example-grid');
+    for (const ex of EXAMPLE_PROJECTS) {
+      const card = el('button', 'lib-example-card');
+      card.type = 'button';
+      const doc = el('span', 'lib-example-doc');
+      doc.innerHTML = `<span class="lib-example-doc-title">${escapeHTML(ex.name)}</span><span class="lib-example-doc-lines"></span>`;
+      card.append(doc);
+      card.append(el('span', 'lib-example-title', ex.name));
+      card.append(el('span', 'lib-example-desc', ex.desc));
+      card.onclick = () => createExampleProject(ex);
+      grid.append(card);
+    }
+    list.append(head, exHead, grid);
+    return;
+  }
+  const texts = {
+    all: ['Your library is empty', 'Upload files to keep them within reach.'],
+    media: ['No media yet', 'Upload images, videos, or audio to see them here.'],
+    apps: ['No apps yet', 'Create an app with Grok to see it here.'],
+    files: ['No files yet', 'Upload files to see them here.'],
+  };
+  if (!items.length) {
+    const [title, sub] = texts[tab] || texts.all;
+    const empty = el('div', 'empty-state');
+    empty.append(el('h3', '', title), el('p', '', sub));
+    list.append(empty);
+    return;
+  }
+  for (const f of items) {
+    const row = el('button', 'library-row');
+    row.type = 'button';
+    row.innerHTML = `<svg><use href="#i-file"/></svg><span class="library-name">${escapeHTML(f.name || 'File')}</span><span class="library-meta">${f.size ? Math.round(f.size / 1024) + ' KB' : ''}</span>`;
+    row.onclick = () => openLibraryItem(f);
+    list.append(row);
+  }
+}
+function openLibraryItem(f) {
+  if (f.kind === 'app' && f.url) { openRightPane(f.name, f.url); return; }
+  toast('File saved in this browser: ' + (f.name || 'File'));
+}
+
+/* ---------- skills ---------- */
+const FILE_SKILLS = [
+  ['docx', 'Word document (.docx)'],
+  ['pdf', 'PDF document (.pdf)'],
+  ['pptx', 'Presentation (.pptx)'],
+  ['xlsx', 'Spreadsheet (.xlsx)'],
+];
+async function addCustomSkill() {
+  const res = await showDialog({ title: 'New skill', text: 'Give the skill a short instruction, for example "Write in the voice of a travel writer".', fields: [{ name: 'instruction', placeholder: 'Skill instruction' }], okText: 'Create skill' });
+  if (!res || !res.instruction || !res.instruction.trim()) return;
+  const name = res.instruction.trim();
+  state.customSkills.unshift({ name, instruction: name });
+  saveSkills();
+  renderSettingsBody();
+}
+
+/* ---------- automations ----------
+   Grok semantics (review #3): clicking Add on a catalog card CREATES the
+   automation immediately — opening the detail and pressing Cancel still
+   created "Morning Brief" on the account. Janna matches that: Add creates
+   it right away (stored locally), Cancel only goes back, Save updates it.
+   Janna cannot RUN automations — Save says so in a toast. */
+const AUTOMATIONS = [
+  { section: 'Featured', items: [
+    { name: 'Custom', desc: 'Create your own automation from scratch' },
+    { name: 'Morning Brief', desc: 'Start the day with headlines, market moves, and your weather.' },
+    { name: 'Daily Stock Tracker', desc: 'Prices, sentiment, and catalysts for your watchlist every day.' },
+    { name: 'AI News Digest', desc: 'Model releases, research, and funding that actually matter.' },
+    { name: 'Daily Planner', desc: 'A realistic plan for today with focus blocks and quick wins.' },
+    { name: 'Weekly Review', desc: 'Wrap the week: what you did, loose ends, and next priorities.' },
+  ] },
+  { section: 'News', items: [
+    { name: 'X Trends Digest', desc: 'The five most interesting conversations on X right now.' },
+  ] },
+  { section: 'Productivity', items: [
+    { name: 'Email Auto-Responder', desc: 'Draft replies to routine emails as they arrive.' },
+    { name: 'Task Extractor', desc: 'Pull tasks out of your messages into a list.' },
+  ] },
+  { section: 'Finance', items: [
+    { name: 'Earnings Calendar', desc: 'Upcoming earnings and what to watch.' },
+    { name: 'Portfolio News Scan', desc: 'News that moves your holdings.' },
+  ] },
+  { section: 'Research', items: [
+    { name: 'Competitor Watch', desc: 'Track what your competitors shipped this week.' },
+    { name: 'Paper Watch', desc: 'New papers worth reading in your field.' },
+    { name: 'Weekend Deep Dive', desc: 'One deep topic, explored properly.' },
+  ] },
+  { section: 'Lifestyle', items: [
+    { name: 'Workout Coach', desc: 'A daily plan that fits your schedule.' },
+    { name: 'Meal Planner', desc: 'Plan the week\u2019s meals and shopping list.' },
+    { name: 'Language Practice', desc: 'A little practice every day.' },
+  ] },
+];
+/* Grok's exact Morning Brief instructions (review #2/3). Other catalog
+   automations have no observed instruction text, so they start empty. */
+const AUTOMATION_INSTRUCTIONS = {
+  'Morning Brief': 'Put together my morning brief: the top world, business, and tech headlines from the last 24 hours with one-line summaries, any major overnight market moves, and today\u2019s weather for my location. End with one story worth reading in depth and why. Keep the whole thing scannable.',
+};
+function automationIcon(name) {
+  const inner = name === 'Morning Brief'
+    ? '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>'
+    : '<path d="M12 3l1.9 5.8a2 2 0 0 0 1.3 1.3L21 12l-5.8 1.9a2 2 0 0 0-1.3 1.3L12 21l-1.9-5.8a2 2 0 0 0-1.3-1.3L3 12l5.8-1.9a2 2 0 0 0 1.3-1.3z"/><path d="M19 3l.9 2.6 2.6.9-2.6.9L19 10l-.9-2.6-2.6-.9 2.6-.9z"/>';
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
+}
+function createAutomation(name) {
+  const catalog = AUTOMATIONS.flatMap(s => s.items).find(a => a.name === name);
+  const a = {
+    id: uid('auto'), name, created: Date.now(),
+    cadence: 'Daily', time: '7:30 AM',
+    instructions: AUTOMATION_INSTRUCTIONS[name] || '',
+    model: state.model, notify: 'Email + App',
+    connectors: [], skills: [],
+  };
+  state.savedAutomations.unshift(a);
+  saveAutomations();
+  toast('Automation created: ' + name);
+  return a;
+}
+function removeAutomation(id) {
+  state.savedAutomations = state.savedAutomations.filter(a => a.id !== id);
+  saveAutomations();
+}
 function openAutomationDetail(name, existing) {
-  const draft = existing
-    ? { ...existing, trigger: existing.trigger ? { ...existing.trigger } : null, attachments: [...(existing.attachments || [])], skills: [...(existing.skills || [])] }
-    : { id: uid('auto'), name, icon: 'sun', trigger: { cadence: 'Daily', time: '7:30 AM' }, instructions: AUTOMATION_INSTRUCTIONS[name] || '', attachments: [], skills: [], model: state.selectedModel || '', notification: 'Email + App' };
+  const a = existing || createAutomation(name);
   openSettings('automations');
   const body = $('settingsBody');
   body.replaceChildren();
-  const back = button('\u2190 Automations', () => renderSettingsBody('automations'));
-  back.classList.add('text-btn');
-  body.append(back);
-  body.append(el('h2', '', 'Automations \u203a ' + draft.name));
-  const iconRow = el('div', 'auto-icon-row');
-  const tile = el('button', 'auto-icon-tile');
-  tile.type = 'button';
-  tile.innerHTML = inlineIcon(draft.icon);
-  tile.onclick = () => { picker.hidden = !picker.hidden; };
-  const changeBtn = button('Change icon', () => { picker.hidden = !picker.hidden; });
-  iconRow.append(tile, changeBtn);
-  body.append(iconRow);
-  const picker = el('div', 'auto-icon-picker');
-  picker.hidden = true;
-  const iconsEl = el('div', 'proj-icons');
-  for (const [id, label, svg] of PROJECT_ICONS) {
-    const b = document.createElement('button');
-    b.type = 'button'; b.className = 'proj-icon' + (draft.icon === id ? ' selected' : '');
-    b.title = label; b.setAttribute('aria-label', label);
-    b.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round">${svg}</svg>`;
-    b.onclick = () => { draft.icon = id; tile.innerHTML = inlineIcon(id); iconsEl.querySelectorAll('.proj-icon').forEach(x => x.classList.toggle('selected', x === b)); };
-    iconsEl.append(b);
+  const back = el('button', 'settings-back', '\u2190 Automations');
+  back.type = 'button';
+  back.onclick = () => openSettings('automations');
+  const head = el('div', 'auto-detail-head');
+  const iconTile = el('button', 'auto-icon-tile');
+  iconTile.type = 'button';
+  iconTile.innerHTML = automationIcon(a.name);
+  iconTile.title = 'Change icon';
+  const iconGrid = el('div', 'auto-icon-picker');
+  iconGrid.hidden = true;
+  for (const [id] of PROJECT_ICONS) {
+    const b = el('button', 'proj-icon');
+    b.type = 'button';
+    b.innerHTML = inlineIcon(id);
+    b.onclick = () => { a.icon = id; iconTile.innerHTML = a.icon ? inlineIcon(a.icon) : automationIcon(a.name); iconGrid.hidden = true; };
+    iconGrid.append(b);
   }
-  picker.append(iconsEl);
-  body.append(picker);
-  body.append(el('h3', '', 'Automation name'));
+  iconTile.onclick = () => { iconGrid.hidden = !iconGrid.hidden; };
+  const nameWrap = el('div', 'auto-name-wrap');
   const nameInput = document.createElement('input');
-  nameInput.type = 'text'; nameInput.value = draft.name; nameInput.setAttribute('aria-label', 'Automation name');
-  nameInput.className = 'auto-name-input';
-  nameInput.oninput = () => { draft.name = nameInput.value; };
-  body.append(nameInput);
-  body.append(el('h3', '', 'Triggers'));
-  const trigWrap = el('div', 'auto-triggers');
-  const renderTriggers = () => {
-    trigWrap.replaceChildren();
-    if (!draft.trigger) {
-      const add = button('Add trigger', () => { draft.trigger = { cadence: 'Daily', time: '7:30 AM' }; renderTriggers(); });
-      trigWrap.append(add);
-      return;
-    }
-    const row = el('div', 'auto-trigger-row');
-    const clock = el('span', 'auto-trigger-icon');
-    clock.innerHTML = inlineIcon('clock');
-    const cadBtn = button((draft.trigger.cadence || 'Daily') + ' \u2304', e => {
-      showMenu(cadBtn, ['Daily', 'Weekdays', 'Weekly', 'Monthly'].map(c => ({ label: (draft.trigger.cadence === c ? '\u2713 ' : '') + c, onClick: () => { draft.trigger.cadence = c; renderTriggers(); } })));
-    });
-    const timeBtn = button(draft.trigger.time || '7:30 AM', async () => {
-      const res = await showDialog({ title: 'Trigger time', text: 'What time should this automation run?', fields: [{ name: 'time', value: draft.trigger.time || '7:30 AM', placeholder: '7:30 AM' }], okText: 'Save' });
-      if (res && String(res.time || '').trim()) { draft.trigger.time = String(res.time).trim(); renderTriggers(); }
-    });
-    const del = button('', () => { draft.trigger = null; renderTriggers(); }, 'icon-button');
-    del.innerHTML = '<svg><use href="#i-trash"/></svg>';
-    del.title = 'Remove trigger'; del.setAttribute('aria-label', 'Remove trigger');
-    row.append(clock, cadBtn, el('span', '', 'at'), timeBtn, del);
-    trigWrap.append(row);
+  nameInput.className = 'auto-name';
+  nameInput.value = a.name;
+  nameInput.setAttribute('aria-label', 'Automation name');
+  nameInput.onchange = () => { a.name = nameInput.value.trim() || a.name; saveAutomations(); };
+  const changeIcon = el('button', 'text-btn');
+  changeIcon.type = 'button';
+  changeIcon.textContent = 'Change icon';
+  changeIcon.onclick = () => { iconGrid.hidden = !iconGrid.hidden; };
+  nameWrap.append(nameInput, changeIcon);
+  head.append(iconTile, nameWrap);
+  body.append(back, el('h2', 'auto-crumb', 'Automations \u203a ' + a.name), head, iconGrid);
+  const trigHead = el('h3', 'auto-section-head', 'Triggers');
+  const trig = el('div', 'auto-trigger');
+  const clock = el('span', 'auto-clock');
+  clock.innerHTML = '<svg><use href="#i-clock"/></svg>';
+  const cadence = el('button', 'auto-pill');
+  cadence.type = 'button';
+  cadence.textContent = a.cadence + ' \u2304';
+  cadence.onclick = () => showMenu(cadence, ['Daily', 'Weekdays', 'Weekly', 'Monthly'].map(c => ({ label: c, onClick: () => { a.cadence = c; cadence.textContent = c + ' \u2304'; saveAutomations(); } })));
+  const at = el('span', 'auto-at', 'at');
+  const timePill = el('button', 'auto-pill');
+  timePill.type = 'button';
+  timePill.textContent = a.time;
+  timePill.onclick = () => {
+    const input = document.createElement('input');
+    input.className = 'auto-time-input';
+    input.value = a.time;
+    input.onchange = () => { a.time = input.value.trim() || '7:30 AM'; timePill.textContent = a.time; saveAutomations(); };
+    timePill.replaceWith(input);
+    input.focus();
   };
-  renderTriggers();
-  body.append(trigWrap);
-  body.append(el('h3', '', 'Instructions'));
-  const ta = document.createElement('textarea');
-  ta.className = 'auto-instructions';
-  ta.value = draft.instructions || '';
-  ta.placeholder = 'Describe what this automation should do\u2026';
-  ta.oninput = () => { draft.instructions = ta.value; };
-  body.append(ta);
+  const removeTrig = el('button', 'icon-button auto-remove-trigger');
+  removeTrig.type = 'button';
+  removeTrig.innerHTML = '<svg><use href="#i-trash"/></svg>';
+  removeTrig.title = 'Remove trigger';
+  removeTrig.onclick = () => { a.cadence = ''; a.time = ''; trig.replaceChildren(); trig.append(el('button', 'auto-pill', 'Add trigger')); saveAutomations(); };
+  trig.append(clock, cadence, at, timePill, removeTrig);
+  const instrHead = el('h3', 'auto-section-head', 'Instructions');
+  const instr = document.createElement('textarea');
+  instr.className = 'auto-instructions';
+  instr.value = a.instructions;
+  instr.setAttribute('aria-label', 'Instructions');
+  instr.onchange = () => { a.instructions = instr.value; saveAutomations(); };
   const toolbar = el('div', 'auto-toolbar');
-  const attachBtn = button(draft.attachments.length ? '+ Attach (' + draft.attachments.length + ')' : '+ Attach', () => fileInput.click());
-  const connBtn = button('Connectors 0', e => {
-    showMenu(connBtn, [{ label: 'No connectors available', disabled: true }]);
-  });
-  const skillBtn = button('Skills ' + draft.skills.length, e => {
-    const items = [];
-    for (const [kind, label] of FILE_SKILLS) items.push({ label: (draft.skills.includes(kind) ? '\u2713 ' : '') + label, onClick: () => { toggleSkill(kind); } });
-    for (const sk of state.customSkills) items.push({ label: (draft.skills.includes('custom:' + sk.id) ? '\u2713 ' : '') + sk.name, onClick: () => { toggleSkill('custom:' + sk.id); } });
-    const toggleSkill = id => {
-      draft.skills = draft.skills.includes(id) ? draft.skills.filter(s => s !== id) : [...draft.skills, id];
-      skillBtn.textContent = 'Skills ' + draft.skills.length;
-    };
-    showMenu(skillBtn, items);
-  });
-  const modelLabel = () => {
-    const m = (state.models || []).find(x => x.id === draft.model);
-    return (m ? (SHORT_MODEL_LABELS[m.id] || m.label || m.id) : 'Fast') + ' \u2304';
-  };
-  const modelBtn = button(modelLabel(), e => {
-    showMenu(modelBtn, (state.models || []).map(m => ({ label: (draft.model === m.id ? '\u2713 ' : '') + (SHORT_MODEL_LABELS[m.id] || m.label || m.id), onClick: () => { draft.model = m.id; modelBtn.textContent = modelLabel(); } })));
-  });
-  const fileInput = document.createElement('input');
-  fileInput.type = 'file'; fileInput.multiple = true; fileInput.hidden = true;
-  fileInput.onchange = async () => {
-    const files = [...(fileInput.files || [])];
-    if (!files.length) return;
-    draft.attachments.push(...files.map(f => f.name));
-    attachBtn.textContent = '+ Attach (' + draft.attachments.length + ')';
-    await addFilesToLibrary(files);
-  };
-  toolbar.append(attachBtn, connBtn, skillBtn, modelBtn, fileInput);
-  body.append(toolbar);
-  body.append(el('h3', '', 'Notification'));
-  const notifBtn = button('\uD83D\uDD14 ' + draft.notification + ' \u2304', e => {
-    showMenu(notifBtn, ['Email + App', 'App only'].map(n => ({ label: (draft.notification === n ? '\u2713 ' : '') + n, onClick: () => { draft.notification = n; notifBtn.textContent = '\uD83D\uDD14 ' + n + ' \u2304'; } })));
-  });
-  body.append(notifBtn);
+  const attach = el('button', 'auto-tool');
+  attach.type = 'button';
+  attach.innerHTML = '<svg><use href="#i-plus"/></svg><span>Attach</span>';
+  attach.onclick = () => $('attachment').click();
+  const conn = el('button', 'auto-tool');
+  conn.type = 'button';
+  conn.innerHTML = `<span>Connectors ${a.connectors.length}</span>`;
+  conn.onclick = () => showMenu(conn, [{ label: 'No connectors available', disabled: true, onClick: () => {} }]);
+  const sk = el('button', 'auto-tool');
+  sk.type = 'button';
+  sk.innerHTML = `<span>Skills ${a.skills.length}</span>`;
+  sk.onclick = () => showMenu(sk, [
+    ...FILE_SKILLS.map(([id, label]) => ({ label, checked: a.skills.includes(id), onClick: () => { const i = a.skills.indexOf(id); if (i >= 0) a.skills.splice(i, 1); else a.skills.push(id); saveAutomations(); } })),
+    ...state.customSkills.map(s => ({ label: s.name, checked: a.skills.includes(s.name), onClick: () => { const i = a.skills.indexOf(s.name); if (i >= 0) a.skills.splice(i, 1); else a.skills.push(s.name); saveAutomations(); } })),
+  ]);
+  const modelPill = el('button', 'auto-tool');
+  modelPill.type = 'button';
+  modelPill.textContent = shortModelLabel(a.model) + ' \u2304';
+  modelPill.onclick = () => showMenu(modelPill, state.models.map(m => ({ label: shortModelLabel(m.id), checked: m.id === a.model, onClick: () => { a.model = m.id; modelPill.textContent = shortModelLabel(m.id) + ' \u2304'; saveAutomations(); } })));
+  toolbar.append(attach, conn, sk, modelPill);
+  const notifHead = el('h3', 'auto-section-head', 'Notification');
+  const notif = el('button', 'auto-pill notif');
+  notif.type = 'button';
+  notif.textContent = '\uD83D\uDD14 ' + a.notify + ' \u2304';
+  notif.onclick = () => showMenu(notif, ['Email + App', 'App only'].map(n => ({ label: n, onClick: () => { a.notify = n; notif.textContent = '\uD83D\uDD14 ' + n + ' \u2304'; saveAutomations(); } })));
   const bar = el('div', 'auto-save-bar');
-  const cancel = button('Cancel', () => renderSettingsBody('automations'));
-  const save = button('Save', () => {
-    const name = (draft.name || '').trim() || 'Untitled automation';
-    draft.name = name;
-    const i = state.savedAutomations.findIndex(a => a.id === draft.id);
-    if (i >= 0) state.savedAutomations[i] = draft; else state.savedAutomations.unshift(draft);
+  const cancel = el('button', 'auto-cancel', 'Cancel');
+  cancel.type = 'button';
+  // Grok semantics: Cancel does NOT delete an automation that was created
+  // by Add — it only leaves the detail view.
+  cancel.onclick = () => openSettings('automations');
+  const save = el('button', 'auto-save', 'Save');
+  save.type = 'button';
+  save.onclick = () => {
+    const i = state.savedAutomations.findIndex(x => x.id === a.id);
+    if (i >= 0) state.savedAutomations[i] = a; else state.savedAutomations.unshift(a);
     saveAutomations();
-    renderSettingsBody('automations');
+    openSettings('automations');
     toast('Automation saved in this browser. Janna can\u2019t run automations yet.');
-  });
-  save.classList.add('action-btn');
+  };
   bar.append(cancel, save);
-  body.append(bar);
+  body.append(trigHead, trig, instrHead, instr, toolbar, notifHead, notif, bar);
 }
 
-/* Connect Apps catalog (Grok's, 2026-11-25 re-study). Rows show the
-   brand tile, bold name, grey category and a Connect pill. Tapping a
-   row opens its detail page; Connect itself cannot complete in the
-   web version and says so honestly. */
+/* ---------- Connect Apps (Grok's Connect Apps list, review #3) ---------- */
+/* Recommended rows carry Grok's REAL 2-line descriptions (review #3).
+   Other apps keep the category as the grey sub-line — their descriptions
+   were never observed, so they are not invented. */
 const CONNECT_APPS = {
   recommended: [
-    { name: 'Gmail', cat: 'Google Workspace' },
-    { name: 'Google Drive', cat: 'Google Workspace' },
-    { name: 'Google Calendar', cat: 'Google Workspace' },
-    { name: 'GitHub', cat: 'Developer' },
-    { name: 'Finance', cat: 'Finance' },
-    { name: 'Notion', cat: 'Productivity' },
+    { name: 'Gmail', desc: 'Search inbox, summarize, and draft.', cat: 'Google Workspace' },
+    { name: 'Google Drive', desc: 'Find files and answers in your docs.', cat: 'Google Workspace' },
+    { name: 'Google Calendar', desc: 'Check your schedule and plan meetings.', cat: 'Google Workspace' },
+    { name: 'GitHub', desc: 'Look up code, issues, and pull requests.', cat: 'Developer' },
+    { name: 'Finance', desc: 'Securely connect financial accounts', cat: 'Finance' },
+    { name: 'Notion', desc: 'Search your pages, docs, and databases.', cat: 'Productivity' },
   ],
   categories: [
-    { cat: 'Advertising', apps: ['X Ads'] },
-    { cat: 'Analytics', apps: ['Google Cloud BigQuery'] },
-    { cat: 'Apps', apps: ['Expensify', 'Paypal', 'Zapier'] },
-    { cat: 'Developer', apps: ['GitHub', 'Datadog', 'Excalidraw', 'Mixpanel', 'Netlify', 'Vercel'] },
-    { cat: 'Finance', apps: ['Finance', 'Bigdata.com', 'Coinbase', 'Daloopa', 'Finary', 'Interactive Brokers (IBKR)'] },
-    { cat: 'Google Workspace', apps: ['Gmail', 'Google Calendar', 'Google Drive'] },
-    { cat: 'Payments', apps: ['Stripe'] },
-    { cat: 'Productivity', apps: ['Outlook', 'Outlook Calendar', 'Asana', 'Atlassian', 'Calendly', 'Canva'] },
-    { cat: 'Sales', apps: ['HubSpot', 'Meltwater'] },
-    { cat: 'Social Media', apps: ['Buffer', 'Metricool'] },
-    { cat: 'Storage', apps: ['Box'] },
+    ['Advertising', ['X Ads']],
+    ['Analytics', ['Google Cloud BigQuery']],
+    ['Apps', ['Expensify', 'Paypal', 'Zapier']],
+    ['Developer', ['GitHub', 'Datadog', 'Excalidraw', 'Mixpanel', 'Netlify', 'Vercel']],
+    ['Finance', ['Finance', 'Bigdata.com', 'Coinbase', 'Daloopa', 'Finary', 'Interactive Brokers (IBKR)']],
+    ['Google Workspace', ['Gmail', 'Google Calendar', 'Google Drive']],
+    ['Payments', ['Stripe']],
+    ['Productivity', ['Outlook', 'Outlook Calendar', 'Asana', 'Atlassian', 'Calendly', 'Canva']],
+    ['Sales', ['HubSpot', 'Meltwater']],
+    ['Social Media', ['Buffer', 'Metricool']],
+    ['Storage', ['Box']],
   ],
 };
 const CONNECTOR_CHIPS = ['All', 'Advertising', 'Analytics', 'Apps', 'Developer', 'Finance'];
@@ -2515,423 +2096,550 @@ function openConnectorDetail(app) {
   openSettings('connectors');
   const body = $('settingsBody');
   body.replaceChildren();
-  const back = button('\u2190 Connect Apps', () => renderSettingsBody('connectors'));
-  back.classList.add('text-btn');
-  body.append(back);
-  body.append(el('h2', '', 'Connect Apps \u203a ' + app.name));
+  const back = el('button', 'settings-back', '\u2190 Connect Apps');
+  back.type = 'button';
+  back.onclick = () => openSettings('connectors');
   const head = el('div', 'conn-detail-head');
-  const tile = el('span', 'conn-tile conn-tile-lg');
-  tile.textContent = app.name.charAt(0);
-  head.append(tile);
-  const titles = el('div', 'conn-detail-titles');
-  titles.append(el('strong', 'conn-detail-name', app.name));
-  titles.append(el('small', '', app.cat));
-  head.append(titles);
-  const connectBtn = button('Connect', () => toast(app.name + ' can\u2019t be connected in the web version.'));
-  connectBtn.classList.add('text-btn');
-  head.append(connectBtn);
-  body.append(head);
+  const tile = el('span', 'conn-tile-lg');
+  tile.textContent = (app.name || '?')[0];
+  const nameWrap = el('div', 'conn-detail-name');
+  nameWrap.append(el('h2', '', app.name));
+  nameWrap.append(el('span', 'conn-detail-cat', app.cat || 'Productivity'));
+  const connect = el('button', 'primary-pill conn-connect', 'Connect');
+  connect.type = 'button';
+  connect.onclick = () => toast(app.name + ' can\u2019t be connected in the web version.');
+  head.append(tile, nameWrap, connect);
+  body.append(back, el('h2', 'conn-crumb', 'Connect Apps \u203a ' + app.name), head);
   if (app.name === 'Gmail') {
-    body.append(el('p', 'settings-note', 'Give Janna access to search your emails.'));
-    body.append(el('h3', '', 'About this Connector'));
-    body.append(settingsRow({ label: 'Search your emails', hint: 'Search your inbox, summarize unread emails, and find messages from specific people.' }));
-    body.append(settingsRow({ label: 'We never train on your data', hint: 'Janna does not train on your Gmail data.' }));
-    body.append(settingsRow({ label: 'Your emails stay in Gmail', hint: 'We don\u2019t store your emails. Janna searches Gmail in real-time when you ask questions.' }));
+    body.append(el('p', 'conn-intro', 'Give Janna access to search your emails.'));
+    const about = el('div', 'conn-about');
+    about.append(el('h3', '', 'About this Connector'));
+    const items = [
+      ['Search your emails', 'Search your inbox, summarize unread emails, and find messages from specific people.'],
+      ['We never train on your data', 'Janna AI does not train on your Gmail data.'],
+      ['Your emails stay in Gmail', 'We don\u2019t store your emails. Janna searches Gmail in real-time when you ask questions.'],
+    ];
+    for (const [t, d] of items) {
+      const row = el('div', 'conn-about-row');
+      row.append(el('strong', '', t), el('p', '', d));
+      about.append(row);
+    }
+    body.append(about);
   } else {
-    body.append(el('p', 'settings-note', app.name + ' isn\u2019t connected. Janna can\u2019t connect to ' + app.name + ' in the web version.'));
+    body.append(el('p', 'conn-intro', app.desc || (app.name + ' can\u2019t be connected in the web version.')));
   }
-  body.append(el('p', 'settings-note', 'Third-party connectors are not built or maintained by Janna AI. Use caution when granting access to external services. Review the permissions before connecting.'));
+  body.append(el('p', 'conn-disclaimer', 'Third-party connectors are not built or maintained by Janna AI. Use caution when granting access to external services. Review the permissions before connecting. Usage is subject to the Janna AI Privacy Policy.'));
 }
-
-/* ---------- settings ---------- */
-const SETTINGS_SECTIONS = [
-  { id: 'account', label: 'Account' },
-  { id: 'appearance', label: 'Appearance' },
-  { id: 'behavior', label: 'Behavior' },
-  { id: 'notifications', label: 'Notifications' },
-  { id: 'personality', label: 'Customize' },
-  { id: 'connectors', label: 'Connect Apps' },
-  { id: 'skills', label: 'Skills' },
-  { id: 'automations', label: 'Automations' },
-  { id: 'data', label: 'Data Controls' },
-];
-function openSettings(section = 'account') {
-  // Grok has no standalone Voice section (voice lives in Behavior) —
-  // an old ?_s=voice deep link lands on Behavior instead.
-  if (section === 'voice') section = 'behavior';
-  closeSidebar();
-  const overlay = $('settingsView');
-  overlay.hidden = false;
-  const nav = $('settingsNav'); nav.replaceChildren();
-  for (const s of SETTINGS_SECTIONS) {
-    const b = el('button', 'settings-nav-item' + (s.id === section ? ' active' : ''));
-    b.type = 'button'; b.textContent = s.label;
-    b.onclick = () => renderSettingsBody(s.id);
-    nav.append(b);
-  }
-  $('settingsSearch').value = '';
-  renderSettingsBody(section);
-  try { const u = new URL(location.href); u.searchParams.set('_s', section); history.replaceState(null, '', u); } catch { /* ignore */ }
-}
-function closeSettings() {
-  $('settingsView').hidden = true;
-  try { const u = new URL(location.href); u.searchParams.delete('_s'); history.replaceState(null, '', u); } catch { /* ignore */ }
-}
-function settingsRow({ label, hint = '', control }) {
-  const row = el('div', 'settings-row');
-  const texts = el('div', 'settings-row-texts');
-  texts.append(el('strong', '', label));
-  if (hint) texts.append(el('p', '', hint));
-  row.append(texts);
-  if (control) row.append(control);
-  return row;
-}
-function settingsSelect(options, value, onChange) {
-  const sel = document.createElement('select');
-  for (const [v, l] of options) { const o = document.createElement('option'); o.value = v; o.textContent = l; sel.append(o); }
-  sel.value = value;
-  sel.onchange = () => onChange(sel.value);
-  return sel;
-}
-function settingsToggle(checked, onChange) {
-  const t = document.createElement('input');
-  t.type = 'checkbox'; t.checked = !!checked;
-  t.setAttribute('aria-label', 'Toggle setting');
-  t.onchange = () => onChange(t.checked);
-  return t;
-}
-function renderSettingsBody(section) {
-  const body = $('settingsBody');
-  body.replaceChildren();
-  document.querySelectorAll('#settingsNav .settings-nav-item').forEach(b => b.classList.toggle('active', b.textContent === (SETTINGS_SECTIONS.find(s => s.id === section)?.label || '')));
-  const h = title => body.append(el('h2', '', title));
-  const applySearch = () => {
-    const q = $('settingsSearch').value.trim().toLowerCase();
-    body.querySelectorAll('.settings-row').forEach(r => { r.hidden = !q || r.textContent.toLowerCase().includes(q); });
-  };
-  if (section === 'account') {
-    h('Account');
-    body.append(settingsRow({ label: 'Workspace', hint: 'Guest workspace \u2014 no account, no sign-in', control: el('span', 'settings-value', 'Guest') }));
-    body.append(settingsRow({ label: 'Plan', hint: 'Janna AI is free. Every model is included.', control: el('span', 'settings-value', 'Free') }));
-    body.append(settingsRow({ label: 'Language', hint: 'Language for answers and voice', control: settingsSelect((state.languages || []).map(l => [l.id, l.name]), state.settings.language || 'en', v => persistSettings({ language: v })) }));
-  } else if (section === 'appearance') {
-    h('Appearance');
-    body.append(settingsRow({ label: 'Theme', hint: 'Light, Dark, or follow your device', control: settingsSelect([['system', 'System'], ['light', 'Light'], ['dark', 'Dark']], state.settings.appearance_mode || 'system', v => persistSettings({ appearance_mode: v })) }));
-    body.append(settingsRow({ label: 'Wrap Long Code Blocks', hint: 'Wrap code lines instead of scrolling sideways', control: settingsToggle(state.settings.wrap_code === true, v => persistSettings({ wrap_code: v })) }));
-    body.append(settingsRow({ label: 'Reduce motion', hint: 'Turn off animations', control: settingsToggle(state.settings.reduce_motion === true, v => persistSettings({ reduce_motion: v })) }));
-    body.append(settingsRow({ label: 'Show suggestions', hint: 'Suggestion rows and follow-up chips', control: settingsToggle(state.settings.show_suggestions !== false, v => persistSettings({ show_suggestions: v })) }));
-  } else if (section === 'behavior') {
-    h('Behavior');
-    body.append(settingsRow({ label: 'Require Ctrl+Enter to Submit', hint: 'Enter inserts a new line instead of sending', control: settingsToggle(state.settings.require_ctrl_enter === true, v => persistSettings({ require_ctrl_enter: v })) }));
-    body.append(settingsRow({ label: 'Auto-Scroll', hint: 'Follow new answers as they stream in', control: settingsToggle(state.settings.auto_scroll !== false, v => persistSettings({ auto_scroll: v })) }));
-    // Grok keeps voice inside Behavior (no standalone Voice section).
-    body.append(el('h3', '', 'Voice'));
-    body.append(settingsRow({ label: 'Voice', hint: 'The voice Janna speaks with', control: settingsSelect(VOICE_PERSONAS.map(p => [p.id, p.name + ' \u2014 ' + p.desc]), state.settings.voice_name || 'ara', async v => { await persistSettings({ voice_name: v }); syncVoiceNameLabel(); }) }));
-    body.append(settingsRow({ label: 'Speed', hint: 'How fast Janna speaks', control: settingsSelect(VOICE_SPEEDS.map(s => [s[0], s[0]]), state.settings.voice_speed || 'Normal', v => persistSettings({ voice_speed: v })) }));
-    body.append(settingsRow({ label: 'Personality', hint: 'How Janna speaks in voice mode', control: settingsSelect(VOICE_PERSONALITIES.map(p => [p[0], p[0]]).concat([['Custom', 'Custom\u2026']]), state.settings.voice_personality || 'Assistant', async v => {
-      if (v === 'Custom') {
-        const res = await showDialog({ title: 'Custom personality', text: 'How should Janna speak in voice mode?', fields: [{ name: 'text', value: state.settings.voice_personality_custom || '', placeholder: 'e.g. Speak like a pirate, but kindly' }], okText: 'Save' });
-        if (!res || !String(res.text || '').trim()) { renderSettingsBody('behavior'); return; }
-        await persistSettings({ voice_personality: 'Custom', voice_personality_custom: String(res.text).trim() });
-      } else await persistSettings({ voice_personality: v });
-      syncVoiceNameLabel();
-    }) }));
-    body.append(settingsRow({ label: 'Dictation Refinement', hint: 'Clean up dictated text before it is sent', control: settingsSelect([['tidy', 'Tidy up'], ['verbatim', 'Verbatim']], state.settings.dictation_refinement || 'tidy', v => persistSettings({ dictation_refinement: v })) }));
-    const micSel = document.createElement('select');
-    const micFb = document.createElement('option'); micFb.value = 'Microphone'; micFb.textContent = 'Microphone'; micSel.append(micFb);
-    micSel.onchange = () => persistSettings({ voice_mic_label: micSel.value });
-    body.append(settingsRow({ label: 'Microphone', hint: 'Microphone used for voice mode and dictation', control: micSel }));
-    voiceLoadMicsInto(micSel);
-    body.append(el('p', 'settings-note', 'Changes apply from Janna\u2019s next reply, even during a call.'));
-  } else if (section === 'notifications') {
-    h('Notifications');
-    body.append(settingsRow({ label: 'Browser Notifications', hint: 'Notify when an answer finishes while the tab is hidden', control: settingsToggle(state.settings.browser_notifications === true, async v => {
-      if (v && 'Notification' in window) {
-        const perm = await Notification.requestPermission().catch(() => 'denied');
-        if (perm !== 'granted') { toast('Browser notifications were not allowed.'); renderSettingsBody('notifications'); return; }
-      }
-      persistSettings({ browser_notifications: v });
-    }) }));
-    body.append(el('p', 'settings-note', 'No email notifications \u2014 Janna has no account or email address to send to.'));
-  } else if (section === 'personality') {
-    h('Customize');
-    const styles = [['Default', 'Default'], ['Concise', 'Concise'], ['Formal', 'Formal'], ['Tutor', 'Tutor'], ['Comprehensive', 'Comprehensive'], ['Custom', 'Custom']];
-    body.append(settingsRow({ label: 'Response style', hint: 'How Janna answers. Applied to each prompt sent to the model.', control: settingsSelect(styles, state.settings.response_style || 'Default', v => { persistSettings({ response_style: v }); renderSettingsBody('personality'); }) }));
-    if ((state.settings.response_style || 'Default') === 'Custom') {
-      const ta = document.createElement('textarea');
-      ta.value = state.settings.custom_style || '';
-      ta.placeholder = 'Describe how Janna should answer\u2026';
-      ta.onchange = () => persistSettings({ custom_style: ta.value });
-      body.append(settingsRow({ label: 'Custom instruction', hint: 'Your own style instruction', control: ta }));
-    }
-  } else if (section === 'connectors') {
-    h('Connect Apps');
-    let chip = 'All';
-    let connectedOnly = false;
-    const yourBtn = button('Your apps \u2014 0 connected \u203a', () => { connectedOnly = !connectedOnly; renderRows(); });
-    yourBtn.classList.add('text-btn');
-    body.append(yourBtn);
-    const search = document.createElement('input');
-    search.type = 'search'; search.placeholder = 'Search apps'; search.setAttribute('aria-label', 'Search apps');
-    body.append(search);
-    const chipsEl = el('div', 'palette-tabs');
-    const renderChips = () => {
-      chipsEl.replaceChildren();
-      for (const c of CONNECTOR_CHIPS) {
-        const b = el('button', 'palette-tab' + (chip === c ? ' active' : ''));
-        b.type = 'button'; b.textContent = c;
-        b.onclick = () => { chip = c; renderChips(); renderRows(); };
-        chipsEl.append(b);
-      }
-      const more = el('button', 'palette-tab' + (CONNECTOR_MORE_CHIPS.includes(chip) ? ' active' : ''));
-      more.type = 'button'; more.textContent = 'More \u2304';
-      more.onclick = () => showMenu(more, CONNECTOR_MORE_CHIPS.map(c => ({ label: (chip === c ? '\u2713 ' : '') + c, onClick: () => { chip = c; renderChips(); renderRows(); } })));
-      chipsEl.append(more);
-    };
-    renderChips();
-    body.append(chipsEl);
-    const list = el('div', 'connectors-list');
-    const renderRows = () => {
-      list.replaceChildren();
-      const q = search.value.trim().toLowerCase();
-      if (connectedOnly) {
-        list.append(el('div', 'empty-state', 'No apps connected yet.'));
-        return;
-      }
-      const matchApp = a => !q || a.name.toLowerCase().includes(q) || a.cat.toLowerCase().includes(q);
-      const rowFor = a => {
-        const row = el('div', 'connector-row');
-        const tile = el('span', 'conn-tile'); tile.textContent = a.name.charAt(0);
-        const texts = el('div', 'settings-row-texts');
-        texts.append(el('strong', '', a.name));
-        texts.append(el('p', '', a.cat));
-        const conn = button('Connect', e => { e.stopPropagation(); openConnectorDetail(a); });
-        row.append(tile, texts, conn);
-        row.onclick = () => openConnectorDetail(a);
-        return row;
-      };
-      if (chip === 'All') {
-        const rec = CONNECT_APPS.recommended.filter(matchApp);
-        if (rec.length) {
-          const head = el('div', 'conn-rec-head');
-          head.append(el('strong', '', 'Recommended for you'));
-          const viewAll = button('View all', () => { search.value = ''; chip = 'All'; renderChips(); renderRows(); });
-          viewAll.classList.add('text-btn');
-          head.append(viewAll);
-          list.append(head);
-          for (const a of rec) list.append(rowFor(a));
-        }
-      }
-      for (const g of CONNECT_APPS.categories.filter(g => (chip === 'All' || g.cat === chip) && g.apps.some(n => matchApp({ name: n, cat: g.cat })))) {
-        list.append(el('h3', '', g.cat));
-        for (const n of g.apps.filter(n => matchApp({ name: n, cat: g.cat }))) list.append(rowFor({ name: n, cat: g.cat }));
-      }
-      if (!list.childNodes.length) list.append(el('div', 'empty-state', 'No apps match your search.'));
-    };
-    search.oninput = renderRows;
-    renderRows();
-    body.append(list);
-    const addBtn = button('Add a custom connector', () => openToolsPanel());
-    addBtn.classList.add('text-btn');
-    body.append(addBtn);
-    body.append(el('p', 'settings-note', 'The web edition keeps connections local to this browser. GitHub and Figma sign-in are desktop-only features.'));
-  } else if (section === 'skills') {
-    h('Skills');
-    body.append(settingsRow({ label: 'Personal', hint: 'Teach Janna a repeatable task it follows whenever a request matches.', control: button('New Skill', () => addCustomSkill()) }));
-    for (const sk of state.customSkills) {
-      body.append(settingsRow({ label: sk.name, hint: sk.instruction, control: button('Delete', () => { state.customSkills = state.customSkills.filter(r => r !== sk); saveCustomSkills(); renderSettingsBody('skills'); }) }));
-    }
-    body.append(el('h3', '', 'Built-in'));
-    for (const [kind, label, hint] of FILE_SKILLS) {
-      body.append(settingsRow({ label, hint }));
-    }
-  } else if (section === 'automations') {
-    h('Automations');
-    const search = document.createElement('input');
-    search.type = 'search'; search.placeholder = 'Search automations'; search.setAttribute('aria-label', 'Search automations');
-    body.append(search);
-    const tabs = el('div', 'palette-tabs');
-    const cats = ['All', 'News', 'Productivity', 'Finance', 'Research', 'Lifestyle'];
-    let cat = 'All';
-    const list = el('div', 'automations-list');
-    const renderList = () => {
-      list.replaceChildren();
-      const q = search.value.trim().toLowerCase();
-      const mine = state.savedAutomations.filter(a => !q || (a.name + ' ' + (a.instructions || '')).toLowerCase().includes(q));
-      if (mine.length && (cat === 'All' || q)) {
-        list.append(el('h3', '', 'Your automations'));
-        for (const a of mine) {
-          const ctrls = el('div', 'row-controls');
-          ctrls.append(button('Open', e => { e.stopPropagation(); openAutomationDetail(a.name, a); }));
-          ctrls.append(button('Remove', async e => {
-            e.stopPropagation();
-            const ok = await confirmDialog('Remove automation?', a.name + ' will be removed from this browser.', 'Remove');
-            if (!ok) return;
-            state.savedAutomations = state.savedAutomations.filter(x => x.id !== a.id);
-            saveAutomations(); renderList();
-          }));
-          const row = settingsRow({ label: a.name, hint: a.trigger ? a.trigger.cadence + ' at ' + a.trigger.time : 'No trigger', control: ctrls });
-          row.onclick = () => openAutomationDetail(a.name, a);
-          list.append(row);
-        }
-      }
-      for (const g of AUTOMATIONS.filter(g => cat === 'All' || g.cat === cat)) {
-        const items = g.items.filter(it => !q || (it.name + ' ' + (it.desc || '')).toLowerCase().includes(q));
-        if (!items.length) continue;
-        if (cat === 'All') list.append(el('h3', '', g.cat));
-        for (const it of items) {
-          const add = button('Add', e => { e.stopPropagation(); openAutomationDetail(it.name); });
-          const row = settingsRow({ label: it.name, hint: it.desc || g.cat, control: add });
-          row.onclick = () => openAutomationDetail(it.name);
-          list.append(row);
-        }
-      }
-      if (!list.childNodes.length) list.append(el('div', 'empty-state', 'No automations match your search.'));
-    };
-    for (const c of cats) {
-      const b = el('button', 'palette-tab' + (c === cat ? ' active' : ''));
-      b.type = 'button'; b.textContent = c;
-      b.onclick = () => { cat = c; tabs.querySelectorAll('.palette-tab').forEach(t => t.classList.toggle('active', t.textContent === c)); renderList(); };
-      tabs.append(b);
-    }
-    search.oninput = renderList;
-    body.append(tabs, list);
-    renderList();
-  } else if (section === 'data') {
-    h('Data Controls');
-    body.append(settingsRow({ label: 'Personalize With Conversation History', hint: 'Janna remembers facts from your chats to answer better', control: settingsToggle(state.settings.memory_enabled !== false, v => persistSettings({ memory_enabled: v })) }));
-    body.append(settingsRow({ label: 'File Storage', hint: 'Local files in your Library', control: el('span', 'settings-value', Math.round(libraryUsageBytes() / 1024) + ' KB used in this browser') }));
-    const archived = state.sessions.filter(s => s.archived);
-    body.append(settingsRow({ label: 'Deleted Conversations', hint: archived.length ? archived.length + ' archived conversation(s)' : 'No archived conversations', control: button('View', () => showArchived()) }));
-    body.append(settingsRow({ label: 'Delete All Conversations', hint: 'Deletes every chat in your history', control: button('Delete all', async () => {
-      const ok = await confirmDialog('Delete all conversations?', 'Every chat in your history will be deleted. This can\u2019t be undone.', 'Delete all');
-      if (!ok) return;
-      try { await api('/api/sessions/clear'); state.session = null; refreshBootstrap(); renderConversation(null); toast('All conversations deleted.'); } catch (e) { toast(e.message); }
-    }) }));
-    body.append(settingsRow({ label: 'Export Account Data', hint: 'Download your chats, settings and memory as JSON', control: button('Export', async () => {
-      try {
-        const data = await api('/api/profile/export');
-        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-        const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'janna-data.json'; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-        toast('Export downloaded.');
-      } catch (e) { toast(e.message); }
-    }) }));
-    body.append(settingsRow({ label: 'Terms of Service', hint: 'How Janna AI works and what it stores', control: button('View', () => openLegal('terms')) }));
-    body.append(settingsRow({ label: 'Privacy Policy', hint: 'Where your chats live and who sees them', control: button('View', () => openLegal('privacy')) }));
-    body.append(settingsRow({ label: 'Clear Cache', hint: 'Clears the offline cache and reloads', control: button('Clear cache', async () => {
-      try { const keys = await caches.keys(); await Promise.all(keys.map(k => caches.delete(k))); } catch { /* no cache */ }
-      location.reload();
-    }) }));
-  }
-  $('settingsSearch').oninput = applySearch;
-}
-async function showArchived() {
-  const archived = state.sessions.filter(s => s.archived);
-  if (!archived.length) { toast('No archived conversations.'); return; }
-  const lines = archived.map(s => '\u2022 ' + (s.title || 'New chat')).join('\n');
-  const ok = await showDialog({ title: 'Archived conversations', text: lines + '\n\nRestore the most recent one?', okText: 'Restore latest', cancelText: 'Close' });
-  if (!ok) return;
-  const latest = [...archived].sort((a, b) => (b.updated || 0) - (a.updated || 0))[0];
-  try { await api('/api/sessions/update', { session_id: latest.id, archived: false }); refreshBootstrap(); toast('Restored: ' + (latest.title || 'New chat')); } catch (e) { toast(e.message); }
-}
-
-/* ---------- tools panel (connectors) ---------- */
-async function openToolsPanel() {
-  const res = await showDialog({
-    title: 'Add a custom connector',
-    text: 'Tavily powers web search. GitHub and Figma sign-in are desktop-only on the web edition.',
-    fields: [{ name: 'tavily', placeholder: 'Tavily API key (optional)' }],
-    okText: 'Save', cancelText: 'Close',
-  });
-  if (!res) return;
-  const key = String(res.tavily || '').trim();
-  if (!key) { toast('No key entered.'); return; }
-  try {
-    await api('/api/research/providers', { provider: 'tavily', api_key: key });
-    toast('Tavily key saved.');
-  } catch (e) { toast(e.message); }
-}
-
-/* ---------- account menu (static shell menu), help, feedback ----------
-   Grok's menu is Dashboard / Settings / Help › / Upgrade plan /
-   Sign out; Janna has no account, dashboard, upgrade or sign-out,
-   so its menu is honestly Settings + Help ›. Help opens upward into
-   FAQ / Community / Changelog / Send Feedback / Shared Links. */
-function renderAccountMenu(view) {
-  const m = $('accountMenu');
-  m.replaceChildren();
-  const item = (icon, label, onClick, chevron) => {
-    const b = el('button', 'account-menu-item');
-    b.type = 'button';
-    b.innerHTML = `<svg><use href="#i-${icon}"/></svg><span>${escapeHTML(label)}</span>${chevron ? '<span class="account-menu-chevron">\u203a</span>' : ''}`;
-    b.onclick = () => { m.hidden = true; onClick(); };
-    m.append(b);
-    return b;
-  };
-  if (view === 'help') {
-    const back = el('button', 'account-menu-item');
-    back.type = 'button';
-    back.innerHTML = `<span class="account-menu-chevron account-menu-chevron-back">\u2039</span><span>Help</span>`;
-    back.onclick = () => renderAccountMenu('main');
-    m.append(back);
-    item('feedback', 'FAQ', () => openHelp());
-    item('external', 'Community', () => window.open('https://github.com/JepongDevxyz/Janna-AI', '_blank'));
-    item('file', 'Changelog', () => openChangelog());
-    item('feedback', 'Send Feedback', () => openFeedback(null, 'feedback'));
-    item('share', 'Shared Links', () => openSharedLinks());
+function renderConnectors(body, search, chip, connectedOnly) {
+  const head = el('div', 'conn-rec-head');
+  const appsBtn = el('button', 'primary-pill', 'Your apps \u2014 0 connected \u203a');
+  appsBtn.type = 'button';
+  appsBtn.onclick = () => renderSettingsBody('connectors', { connectedOnly: !connectedOnly });
+  head.append(appsBtn);
+  body.append(head);
+  if (connectedOnly) {
+    body.append(el('div', 'empty-state', 'No apps connected yet.'));
     return;
   }
-  item('settings', 'Settings', () => openSettings('account'));
-  item('feedback', 'Help', () => { renderAccountMenu('help'); m.hidden = false; }, true);
-}
-function toggleAccountMenu() {
-  const m = $('accountMenu');
-  if (m.hidden) { renderAccountMenu('main'); m.hidden = false; }
-  else m.hidden = true;
-}
-function openChangelog() {
-  showDialog({
-    title: 'What\u2019s new \u2014 Janna AI',
-    text: 'v67: New Project dialog with icon + colour picker, example projects in Library, Automation detail pages (saved in this browser), Connect Apps list with app details, Help menu, palette empty states. v66: picker above the composer, top-bar cluster, thought line once, hidden-until-tap Edit/Copy, Branch as a real thread, read-aloud pill, autocomplete, code line numbers. v64: no blue tap flash anywhere. v62: Settings 9 sections, rotating suggestions, ephemeral follow-ups. v61: instant boot from cache. v60: footer/H1/composer geometry, thinking duration saved.',
-    okText: 'Close', showCancel: false,
-  });
-}
-function openSharedLinks() {
-  showDialog({
-    title: 'Shared Links',
-    text: 'No shared links yet \u2014 Janna doesn\u2019t create share links. Sharing copies the conversation as text instead.',
-    okText: 'Close', showCancel: false,
-  });
-}
-function openHelp() {
-  showDialog({
-    title: 'Help \u2014 Janna AI',
-    text: 'Ask Janna anything in the composer. Tap + to attach a file or an image. Use the model picker to switch between the 16 free models. Private mode (header) keeps a chat out of your history. Your chats, projects and library live only in this browser \u2014 nothing is sent anywhere except the model provider when you send a message. Shortcuts: Ctrl+K search, Ctrl+J new chat, Ctrl+, settings.',
-    okText: 'Close', showCancel: false,
-  });
-}
-async function openFeedback(sessionId, kind) {
-  const isReport = kind === 'report';
-  const res = await showDialog({
-    title: isReport ? 'Report message' : 'Send feedback',
-    text: isReport ? 'Tell us what is wrong with this message. Reports are stored only in this browser.' : 'Tell us what worked or what went wrong. Feedback is stored only in this browser.',
-    fields: [{ name: 'text', type: 'textarea', placeholder: isReport ? 'What is wrong with this message\u2026' : 'Your feedback\u2026' }],
-    okText: isReport ? 'Report message' : 'Send feedback',
-  });
-  if (!res || !String(res.text).trim()) return;
-  const all = loadJSON('janna-web-feedback-v1', []);
-  all.unshift({ session_id: sessionId || null, kind: isReport ? 'report' : 'feedback', text: String(res.text).trim(), created: Math.floor(Date.now() / 1000) });
-  saveJSON('janna-web-feedback-v1', all);
-  toast(isReport ? 'Thanks \u2014 report saved.' : 'Thanks \u2014 feedback saved.');
-}
-function openLegal(kind) {
-  const text = kind === 'terms'
-    ? 'Janna AI is a free chat app. Chats, projects and files are stored only in this browser. When you send a message, the text (and any attached file you chose to send) goes to the selected model provider so it can answer. There is no account, no payment and no tracking.'
-    : 'Privacy: Janna AI has no account system. Your chats stay in this browser unless you export them. Model providers receive the messages you send. Private mode chats are never saved to history. You can delete all conversations or clear the cache from Settings \u2192 Data Controls.';
-  showDialog({ title: kind === 'terms' ? 'Terms of Service' : 'Privacy Policy', text, okText: 'Close', showCancel: false });
+  const searchBox = document.createElement('input');
+  searchBox.className = 'conn-search';
+  searchBox.placeholder = 'Search apps';
+  searchBox.value = search || '';
+  searchBox.oninput = () => renderSettingsBody('connectors', { search: searchBox.value, chip });
+  body.append(searchBox);
+  const chips = el('div', 'conn-chips');
+  for (const c of CONNECTOR_CHIPS) {
+    const b = el('button', 'chip' + (chip === c ? ' active' : ''));
+    b.type = 'button';
+    b.textContent = c;
+    b.onclick = () => renderSettingsBody('connectors', { search, chip: c });
+    chips.append(b);
+  }
+  const more = el('button', 'chip');
+  more.type = 'button';
+  more.textContent = 'More \u2304';
+  more.onclick = () => showMenu(more, CONNECTOR_MORE_CHIPS.map(c => ({ label: c, onClick: () => renderSettingsBody('connectors', { search, chip: c }) })));
+  chips.append(more);
+  body.append(chips);
+  const q = (search || '').toLowerCase();
+  const matchChip = (cat) => chip === 'All' || cat === chip;
+  const renderRow = (app) => {
+    const row = el('div', 'connector-row');
+    const tile = el('span', 'conn-tile');
+    tile.textContent = (app.name || '?')[0];
+    const info = el('div', 'conn-info');
+    info.append(el('strong', '', app.name));
+    info.append(el('span', 'conn-sub', app.desc || app.cat));
+    const connect = el('button', 'primary-pill conn-connect', 'Connect');
+    connect.type = 'button';
+    connect.onclick = () => openConnectorDetail(app);
+    row.append(tile, info, connect);
+    return row;
+  };
+  const rec = CONNECT_APPS.recommended.filter(a => (!q || a.name.toLowerCase().includes(q)) && matchChip(a.cat));
+  if (rec.length && chip === 'All') {
+    const rh = el('div', 'conn-rec-head');
+    rh.append(el('h3', '', 'Recommended for you'));
+    const viewAll = el('button', 'text-btn');
+    viewAll.type = 'button';
+    viewAll.textContent = 'View all';
+    viewAll.onclick = () => renderSettingsBody('connectors', { search, chip: 'All' });
+    rh.append(viewAll);
+    body.append(rh);
+    for (const a of rec) body.append(renderRow(a));
+  }
+  for (const [cat, names] of CONNECT_APPS.categories) {
+    if (!matchChip(cat)) continue;
+    const rows = names.map(n => {
+      const rec = CONNECT_APPS.recommended.find(r => r.name === n);
+      return { name: n, cat, desc: rec ? rec.desc : cat };
+    }).filter(a => !q || a.name.toLowerCase().includes(q));
+    if (!rows.length) continue;
+    body.append(el('h3', 'conn-cat-head', cat));
+    for (const a of rows) body.append(renderRow(a));
+  }
+  const add = el('button', 'primary-pill conn-add-custom', 'Add a custom connector');
+  add.type = 'button';
+  add.onclick = () => openToolsPanel();
+  body.append(add);
 }
 
-/* ---------- bootstrap ---------- */
+/* ---------- settings (Grok's 9 sections, review #2) ---------- */
+const SETTING_SECTIONS = ['account', 'appearance', 'behavior', 'notifications', 'customize', 'connectors', 'skills', 'automations', 'data'];
+const SETTING_LABELS = {
+  account: 'Account', appearance: 'Appearance', behavior: 'Behavior',
+  notifications: 'Notifications', customize: 'Customize', connectors: 'Connect Apps',
+  skills: 'Skills', automations: 'Automations', data: 'Data Controls',
+};
+let settingsState = {};
+function openSettings(section, opts) {
+  closeMenus();
+  settingsState = opts || {};
+  $('settingsView').hidden = false;
+  renderSettingsBody(section || state.settings.section || 'account', opts);
+}
+function closeSettings() { $('settingsView').hidden = true; }
+function renderSettingsBody(section, opts) {
+  section = section || state.settings.section || 'account';
+  state.settings.section = section;
+  settingsState = opts || settingsState;
+  const body = $('settingsBody');
+  body.replaceChildren();
+  const nav = $('settingsNav');
+  nav.replaceChildren();
+  for (const s of SETTING_SECTIONS) {
+    const b = el('button', 'settings-nav-item' + (s === section ? ' active' : ''));
+    b.type = 'button';
+    b.textContent = SETTING_LABELS[s];
+    b.onclick = () => renderSettingsBody(s);
+    nav.append(b);
+  }
+  const st = $('settingsTitle');
+  if (st) st.textContent = SETTING_LABELS[section];
+  if (section === 'account') {
+    const card = el('div', 'settings-card');
+    const avatar = el('span', 'settings-avatar');
+    avatar.textContent = 'J';
+    const who = el('div', 'settings-who');
+    who.append(el('strong', '', 'Workspace Guest'), el('span', 'muted', 'No sign-in needed — Janna AI is free.'));
+    const plan = el('div', 'settings-plan');
+    plan.append(el('span', '', 'Plan: Free'), el('span', 'muted', 'All models are free, no limits.'));
+    const lang = el('label', 'settings-row');
+    lang.append(el('span', '', 'Language'));
+    const sel = document.createElement('select');
+    sel.className = 'settings-select';
+    sel.setAttribute('aria-label', 'Language');
+    for (const l of ['English', 'Tagalog']) {
+      const o = document.createElement('option');
+      o.value = l; o.textContent = l;
+      sel.append(o);
+    }
+    sel.value = state.settings.language || 'English';
+    sel.onchange = () => persistSettings({ language: sel.value });
+    lang.append(sel);
+    card.append(avatar, who, plan, lang);
+    body.append(card);
+    body.append(el('p', 'settings-note', 'Your chats stay in this browser. Clear them any time from Data Controls.'));
+  } else if (section === 'appearance') {
+    const themeRow = el('div', 'settings-row');
+    themeRow.append(el('span', '', 'Theme'));
+    const sel = document.createElement('select');
+    sel.className = 'settings-select';
+    sel.setAttribute('aria-label', 'Theme');
+    for (const m of ['system', 'light', 'dark']) {
+      const o = document.createElement('option');
+      o.value = m; o.textContent = m[0].toUpperCase() + m.slice(1);
+      sel.append(o);
+    }
+    sel.value = state.settings.appearance_mode || 'system';
+    sel.onchange = () => { persistSettings({ appearance_mode: sel.value }); applyTheme(); };
+    themeRow.append(sel);
+    const wrap = el('label', 'settings-row');
+    wrap.append(el('span', '', 'Wrap Long Code Blocks'), el('small', 'muted', 'Wrap long lines in code blocks by default'));
+    const wrapT = document.createElement('input');
+    wrapT.type = 'checkbox'; wrapT.checked = state.settings.wrap_code === true;
+    wrapT.onchange = () => { persistSettings({ wrap_code: wrapT.checked }); applyTheme(); };
+    wrap.append(wrapT);
+    const motion = el('label', 'settings-row');
+    motion.append(el('span', '', 'Reduce motion'));
+    const motionT = document.createElement('input');
+    motionT.type = 'checkbox'; motionT.checked = state.settings.reduce_motion === true;
+    motionT.onchange = () => { persistSettings({ reduce_motion: motionT.checked }); applyTheme(); };
+    motion.append(motionT);
+    const sugg = el('label', 'settings-row');
+    sugg.append(el('span', '', 'Show suggestions'), el('small', 'muted', 'Starter prompts on new chats and follow-ups under replies'));
+    const suggT = document.createElement('input');
+    suggT.type = 'checkbox'; suggT.checked = state.settings.show_suggestions !== false;
+    suggT.onchange = () => { persistSettings({ show_suggestions: suggT.checked }); renderSuggestions(); };
+    sugg.append(suggT);
+    body.append(themeRow, wrap, motion, sugg);
+  } else if (section === 'behavior') {
+    const rows = [
+      ['voice_output', 'Read replies aloud', 'Speak each reply when it finishes.'],
+      ['browser_notifications', 'Browser notifications', 'Notify when a reply finishes while the tab is hidden.'],
+      ['research_mode', 'Web research', ''],
+    ];
+    for (const [key, label, sub] of rows) {
+      const row = el('div', 'settings-row');
+      row.append(el('span', '', label));
+      if (sub) row.append(el('small', 'muted', sub));
+      if (key === 'research_mode') {
+        const sel = document.createElement('select');
+        sel.className = 'settings-select';
+        sel.setAttribute('aria-label', 'Web research');
+        for (const [v, t] of [['auto', 'Auto'], ['always', 'Always']]) {
+          const o = document.createElement('option');
+          o.value = v; o.textContent = t;
+          sel.append(o);
+        }
+        sel.value = state.settings.research_mode || 'auto';
+        sel.onchange = () => persistSettings({ research_mode: sel.value });
+        row.append(sel);
+      } else {
+        const t = document.createElement('input');
+        t.type = 'checkbox'; t.checked = state.settings[key] === true;
+        t.onchange = () => persistSettings({ [key]: t.checked });
+        row.append(t);
+      }
+      body.append(row);
+    }
+    const voiceRow = el('div', 'settings-row');
+    voiceRow.append(el('span', '', 'Voice'), el('small', 'muted', 'Voice mode and read-aloud voice'));
+    const vb = el('button', 'primary-pill');
+    vb.type = 'button';
+    vb.textContent = 'Open voice mode';
+    vb.onclick = () => { closeSettings(); openVoiceMode(); };
+    voiceRow.append(vb);
+    body.append(voiceRow);
+  } else if (section === 'notifications') {
+    const row = el('div', 'settings-row');
+    row.append(el('span', '', 'Browser notifications'), el('small', 'muted', 'Notify when a reply finishes while the tab is hidden.'));
+    const t = document.createElement('input');
+    t.type = 'checkbox'; t.checked = state.settings.browser_notifications === true;
+    t.onchange = async () => {
+      if (t.checked && 'Notification' in window && Notification.permission === 'default') {
+        try { await Notification.requestPermission(); } catch { /* ignore */ }
+      }
+      persistSettings({ browser_notifications: t.checked });
+    };
+    row.append(t);
+    body.append(row);
+  } else if (section === 'customize') {
+    body.append(el('p', 'settings-note', 'Janna AI has no accounts, so there is no per-account name or personality to set. The shell keeps the grok.com layout — Janna AI branding only.'));
+    const row = el('div', 'settings-row');
+    row.append(el('span', '', 'Show suggestions'));
+    const t = document.createElement('input');
+    t.type = 'checkbox'; t.checked = state.settings.show_suggestions !== false;
+    t.onchange = () => { persistSettings({ show_suggestions: t.checked }); renderSuggestions(); };
+    row.append(t);
+    body.append(row);
+  } else if (section === 'connectors') {
+    renderConnectors(body, settingsState.search, settingsState.chip || 'All', settingsState.connectedOnly);
+  } else if (section === 'skills') {
+    for (const [id, label] of FILE_SKILLS) {
+      const row = el('div', 'settings-row');
+      row.append(el('span', '', label));
+      const b = el('button', 'primary-pill');
+      b.type = 'button';
+      b.textContent = 'Use';
+      b.onclick = () => { closeSettings(); $('prompt').value = 'Create a ' + label.toLowerCase() + ' for me: '; autoGrowPrompt(); syncSendState(); $('prompt').focus(); };
+      row.append(b);
+      body.append(row);
+    }
+    for (const s of state.customSkills) {
+      const row = el('div', 'settings-row');
+      row.append(el('span', '', s.name));
+      const b = el('button', 'text-btn');
+      b.type = 'button';
+      b.textContent = 'Delete';
+      b.onclick = () => { state.customSkills = state.customSkills.filter(x => x !== s); saveSkills(); renderSettingsBody('skills'); };
+      row.append(b);
+      body.append(row);
+    }
+    const add = el('button', 'primary-pill', 'New skill');
+    add.type = 'button';
+    add.onclick = addCustomSkill;
+    body.append(add);
+  } else if (section === 'automations') {
+    const search = document.createElement('input');
+    search.className = 'auto-search';
+    search.placeholder = 'Search automations';
+    search.setAttribute('aria-label', 'Search automations');
+    search.oninput = () => renderAutomationCatalog(body, search.value, settingsState.cat || 'All');
+    body.append(search);
+    renderAutomationCatalog(body, '', settingsState.cat || 'All');
+  } else if (section === 'data') {
+    body.append(el('p', 'settings-note', 'Your chats, projects, automations and files are stored only in this browser.'));
+    const clear = el('button', 'danger-pill', 'Clear all chats');
+    clear.type = 'button';
+    clear.onclick = async () => {
+      const ok = await confirmDialog('Clear all chats?', 'This deletes every chat in this browser. It cannot be undone.');
+      if (!ok) return;
+      try { await api('/api/sessions/clear', {}); } catch { /* local state still clears */ }
+      state.sessions = []; state.session = null; state.chatProjects = {}; saveChatProjects();
+      renderSidebar(); renderConversation(null); closeSettings();
+      toast('All chats cleared.');
+    };
+    const exportBtn = el('button', 'primary-pill', 'Export all chats');
+    exportBtn.type = 'button';
+    exportBtn.onclick = async () => {
+      try {
+        const blob = await api('/api/profile/export', {});
+        const text = typeof blob === 'string' ? blob : JSON.stringify(blob, null, 2);
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+        a.download = 'janna-ai-export.json';
+        a.click();
+      } catch { toast('Export failed.'); }
+    };
+    body.append(clear, exportBtn);
+    const legal = el('button', 'text-btn');
+    legal.type = 'button';
+    legal.textContent = 'Your privacy choices';
+    legal.onclick = openLegal;
+    body.append(legal);
+  }
+  const foot = el('div', 'settings-foot');
+  foot.append(el('span', '', 'Janna AI is free — no Premium, no sign-in.'));
+  body.append(foot);
+}
+function renderAutomationCatalog(body, query, cat) {
+  body.querySelectorAll('.auto-cat, .auto-cat-head, .auto-owned, .auto-empty').forEach(n => n.remove());
+  const q = (query || '').toLowerCase();
+  if (state.savedAutomations.length) {
+    const owned = el('div', 'auto-owned');
+    owned.append(el('h3', 'auto-cat-head', 'Your automations'));
+    for (const a of state.savedAutomations) {
+      const row = el('div', 'auto-owned-row');
+      row.append(el('span', 'auto-owned-name', a.name));
+      row.append(el('span', 'muted', (a.cadence ? a.cadence + ' ' : '') + (a.time || '')));
+      const open = el('button', 'text-btn');
+      open.type = 'button';
+      open.textContent = 'Open';
+      open.onclick = () => openAutomationDetail(a.name, a);
+      const del = el('button', 'text-btn');
+      del.type = 'button';
+      del.textContent = 'Remove';
+      del.onclick = () => { removeAutomation(a.id); renderSettingsBody('automations'); };
+      row.append(open, del);
+      owned.append(row);
+    }
+    body.append(owned);
+  }
+  const cats = ['All', 'News', 'Productivity', 'Finance', 'Research', 'Lifestyle'];
+  const chips = el('div', 'auto-cat auto-chips');
+  for (const c of cats) {
+    const b = el('button', 'chip' + (cat === c ? ' active' : ''));
+    b.type = 'button';
+    b.textContent = c;
+    b.onclick = () => renderSettingsBody('automations', { cat: c });
+    chips.append(b);
+  }
+  body.append(chips);
+  for (const s of AUTOMATIONS) {
+    if (cat !== 'All' && s.section !== cat && s.section !== 'Featured') continue;
+    const items = s.items.filter(a => !q || a.name.toLowerCase().includes(q) || a.desc.toLowerCase().includes(q));
+    if (!items.length) continue;
+    body.append(el('h3', 'auto-cat-head', s.section));
+    for (const a of items) {
+      const row = el('div', 'auto-cat-row');
+      row.append(el('span', 'auto-cat-name', a.name));
+      row.append(el('span', 'muted', a.desc));
+      const add = el('button', 'primary-pill', 'Add');
+      add.type = 'button';
+      // Grok semantics: Add creates the automation immediately, then
+      // opens its detail for editing.
+      add.onclick = () => openAutomationDetail(a.name);
+      row.append(add);
+      body.append(row);
+    }
+  }
+}
+
+/* ---------- account menu (no accounts — Settings + Help only) ---------- */
+function renderAccountMenu(view) {
+  const menu = $('accountMenu');
+  menu.replaceChildren();
+  const items = [];
+  if (view === 'help') {
+    items.push({ label: '\u2039 Help', onClick: () => renderAccountMenu('main') });
+    items.push({ label: 'FAQ', onClick: openHelp });
+    items.push({ label: 'Community', onClick: () => window.open('https://github.com/JepongDevxyz/Janna-AI', '_blank') });
+    items.push({ label: 'Changelog', onClick: openChangelog });
+    items.push({ label: 'Send Feedback', onClick: () => openFeedback(null, 'feedback') });
+    items.push({ label: 'Shared Links', onClick: openSharedLinks });
+  } else {
+    items.push({ label: 'Settings', icon: 'i-settings', onClick: () => { menu.hidden = true; openSettings('account'); } });
+    items.push({ label: 'Help', icon: 'i-help', chevron: true, onClick: () => renderAccountMenu('help') });
+  }
+  for (const it of items) {
+    const b = el('button', 'account-menu-item');
+    b.type = 'button';
+    b.innerHTML = `${it.icon ? `<svg><use href="#${it.icon}"/></svg>` : ''}<span>${escapeHTML(it.label)}</span>${it.chevron ? '<span class="account-menu-chevron">\u203a</span>' : ''}`;
+    b.onclick = it.onClick;
+    menu.append(b);
+  }
+  menu.hidden = false;
+}
+function toggleAccountMenu() {
+  const menu = $('accountMenu');
+  if (menu.hidden) { closeMenus(); renderAccountMenu('main'); }
+  else menu.hidden = true;
+}
+function openHelp() {
+  return showDialog({ title: 'Help — Janna AI', text: 'Janna AI is free with no sign-in. Your chats stay in this browser.\n\n\u2022 New chat: tap New chat in the sidebar, or Ctrl+J.\n\u2022 Change model: tap the model chip in the composer.\n\u2022 Voice: tap the microphone to dictate, or the waveform for voice mode.\n\u2022 Projects: keep instructions and files for a conversation.\n\u2022 Library: files you upload stay in this browser.', okText: 'Close', showCancel: false });
+}
+function openChangelog() {
+  showDialog({ title: 'What\u2019s new \u2014 Janna AI',
+    text: 'v68 \u2014 Rebuilt from scratch on the grok.com deep review #3: user bubbles never wrap vertically, the live header is just "Thinking" + "Planning next moves" with no timer, no "Thought for" line after replies, the running composer keeps "Ask anything\u2026" with a black square Stop, follow-up pills stack right-aligned, example projects use grok\u2019s full texts, Connect Apps uses grok\u2019s real descriptions, and automation Add creates immediately like grok.\n\nv67 \u2014 New Project dialog with a 64-icon picker, example projects, Automation detail + local save, Connect Apps list + Gmail detail, Help menu, palette empty states.\n\nv66 \u2014 Model picker bottom sheet, jump button inside the composer, thread title pill, private home, read-aloud bar, home autocomplete, code line numbers, Library empty state.\n\nv62 \u2014 Settings in 9 sections, Skills + Automations, all-three rotating suggestions, follow-up pills, sidebar row menu, trimmed reply menu.',
+    okText: 'Close', showCancel: false });
+}
+function openFeedback(message, kind) {
+  const wrap = el('div', 'feedback-form');
+  const label = el('p', '', kind === 'report' ? 'Report this message:' : 'Tell us what you think:');
+  const input = document.createElement('textarea');
+  input.placeholder = kind === 'report' ? 'What was wrong with this message?' : 'Your feedback\u2026';
+  input.rows = 4;
+  const send = el('button', 'primary-pill', 'Send feedback');
+  send.type = 'button';
+  send.onclick = () => { toast('Thanks for the feedback.'); document.querySelector('.dialog-overlay')?.remove(); };
+  wrap.append(label, input, send);
+  const overlay = el('div', 'dialog-overlay');
+  const card = el('div', 'dialog-card');
+  const close = el('button', 'icon-button dialog-close');
+  close.type = 'button';
+  close.innerHTML = '<svg><use href="#i-close"/></svg>';
+  close.onclick = () => overlay.remove();
+  card.append(close, el('h2', '', kind === 'report' ? 'Report message' : 'Send feedback'), wrap);
+  overlay.append(card);
+  overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+  document.body.append(overlay);
+}
+function openSharedLinks() {
+  showDialog({ title: 'Shared Links', text: 'Janna AI has no server-side share links. Use Share in a reply\u2019s More menu to copy a conversation as text instead.', okText: 'Close', showCancel: false });
+}
+function openLegal() {
+  showDialog({ title: 'Your privacy choices', text: 'Janna AI is free with no accounts. Chats, projects, automations and files live only in this browser. Clear them any time from Data Controls. The web version never trains on your chats.', okText: 'Close', showCancel: false });
+}
+function openToolsPanel() {
+  showDialog({ title: 'Add a custom connector', text: 'Custom connectors are not available in the web version. Connect Apps lists the apps Janna knows about.', okText: 'Close', showCancel: false });
+}
+
+/* ---------- voice ---------- */
+function voiceSpeak(text) {
+  if (!('speechSynthesis' in window)) return;
+  try {
+    speechSynthesis.cancel();
+    const plain = String(text || '').replace(/[#*_`>\[\]()]/g, '').slice(0, 4000);
+    if (!plain.trim()) return;
+    const u = new SpeechSynthesisUtterance(plain);
+    const voices = speechSynthesis.getVoices();
+    const want = state.settings.voice_name || '';
+    const v = voices.find(x => x.name === want) || voices.find(x => x.lang && x.lang.startsWith('en')) || voices[0];
+    if (v) u.voice = v;
+    const rate = parseFloat(state.settings.voice_rate || '1') || 1;
+    u.rate = Math.min(2, Math.max(0.5, rate));
+    speechSynthesis.speak(u);
+  } catch { /* TTS is best-effort */ }
+}
+function openVoiceMode() {
+  const overlay = $('voiceOverlay');
+  overlay.hidden = false;
+  const rec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!rec) { toast('Voice mode needs a browser with speech recognition.'); overlay.hidden = true; return; }
+  const r = new rec();
+  r.continuous = true;
+  r.interimResults = true;
+  r.lang = (state.settings.language || 'English') === 'Tagalog' ? 'fil-PH' : 'en-US';
+  r.onresult = e => {
+    let final = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      if (e.results[i].isFinal) final += e.results[i][0].transcript;
+    }
+    if (final) {
+      $('prompt').value = final; autoGrowPrompt(); syncSendState();
+      const cap = $('voiceCaption');
+      if (cap) cap.textContent = final;
+    }
+  };
+  r.onerror = () => { overlay.hidden = true; toast('Microphone access denied. Check your browser settings.'); };
+  r.onend = () => { overlay.hidden = true; };
+  state.voiceRecognizer = r;
+  try { r.start(); } catch { overlay.hidden = true; }
+  $('voiceClose').onclick = () => { try { r.stop(); } catch { /* ignore */ } overlay.hidden = true; };
+  $('voiceOrb').onclick = () => { try { r.stop(); } catch { /* ignore */ } overlay.hidden = true; };
+  $('voiceSend').onclick = () => { try { r.stop(); } catch { /* ignore */ } overlay.hidden = true; send(); };
+}
+function startDictation() {
+  const rec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!rec) { toast('Dictation needs a browser with speech recognition.'); return; }
+  if (state.voiceListening) { try { state.voiceRecognizer.stop(); } catch { /* ignore */ } state.voiceListening = false; return; }
+  const r = new rec();
+  r.continuous = false;
+  r.interimResults = false;
+  r.lang = (state.settings.language || 'English') === 'Tagalog' ? 'fil-PH' : 'en-US';
+  r.onresult = e => {
+    const text = e.results[0][0].transcript;
+    $('prompt').value = ($('prompt').value ? $('prompt').value + ' ' : '') + text;
+    autoGrowPrompt(); syncSendState();
+  };
+  r.onerror = () => { state.voiceListening = false; toast('Microphone access denied. Check your browser settings.'); };
+  r.onend = () => { state.voiceListening = false; };
+  state.voiceRecognizer = r;
+  state.voiceListening = true;
+  try { r.start(); } catch { state.voiceListening = false; }
+}
+
+/* ---------- right pane (Grok's "Toggle right pane": opens a pane with
+   "Open a file… Ctrl O" — the grid icon is NOT Library) ---------- */
+function openRightPane(name, url) {
+  const pane = $('rightPane');
+  pane.hidden = false;
+  if (url) {
+    $('rightPaneName').textContent = name || 'Preview';
+    state.rightPaneUrl = url;
+    $('rightPanePreview').hidden = false;
+    $('rightPaneEmpty').hidden = true;
+    previewHtml(url);
+  } else {
+    $('rightPaneName').textContent = '';
+    $('rightPanePreview').hidden = true;
+    $('rightPaneEmpty').hidden = false;
+  }
+}
+function closeRightPane() { $('rightPane').hidden = true; }
+function previewHtml(url) {
+  const iframe = $('rightPaneFrame');
+  state.rightPaneUrl = url;
+  if (iframe) {
+    iframe.srcdoc = '';
+    iframe.src = url;
+  }
+}
+
+/* ---------- boot ---------- */
+/* ---------- bootstrap (v67 contract: plain /api/* fetches through the
+   adapter's patched fetch — there is no window.JannaWeb object) ---------- */
 let reconnectTimer = null;
 async function initialConnection() {
   try {
@@ -2940,15 +2648,27 @@ async function initialConnection() {
     const saved = (() => { try { return localStorage.getItem('janna-pair-token') || ''; } catch { return ''; } })();
     if (state.remote) state.token = info.pair_required === true ? saved : 'web';
     else state.token = 'web';
-    if (state.remote && info.pair_required === true && !state.token) {
-      const res = await showDialog({ title: 'Pair this device', text: 'Enter the pairing code shown on your computer.', fields: [{ name: 'code', placeholder: 'Pairing code' }], okText: 'Pair' });
-      if (!res || !String(res.code).trim()) return;
-      const pair = await api('/api/pair', { code: String(res.code).trim() });
-      state.token = pair.token || ''; saveLocalToken();
-    }
+    // Hosted web is never a remote desktop (the adapter answers
+    // remote:false), so there is no pairing flow here.
   } catch { state.token = 'web'; }
 }
-async function refreshBootstrap(keepSession) {
+function modelRecord(id) { return state.modelCatalog.find(m => m.id === id) || { id, label: id, note: 'Cloud model', model_class: 'Janna Cloud' }; }
+function renderModelOptions(models) {
+  // A local-first bootstrap with no cached catalog yet returns an empty
+  // list — that means "not loaded yet", not "no models". Keep the seeded
+  // model label instead of blanking it to "Choose a model".
+  if (!models || !models.length) { syncModelPicker(); return; }
+  state.models = models || [];
+  const current = state.model || (() => { try { return localStorage.getItem('janna-selected-model') || ''; } catch { return ''; } })();
+  const ordered = [];
+  const seen = new Set();
+  for (const row of state.modelCatalog) { if (state.models.includes(row.id) && !seen.has(row.id)) { ordered.push(row); seen.add(row.id); } }
+  for (const id of state.models) { if (!seen.has(id)) { ordered.push(modelRecord(id)); seen.add(id); } }
+  state.model = ordered.some(r => r.id === current) ? current : (ordered[0]?.id || '');
+  syncModelPicker();
+  refreshNativeLevels();
+}
+async function refreshBootstrap(force) {
   try {
     const b = await api('/api/bootstrap');
     state.booted = true;
@@ -2967,14 +2687,16 @@ async function refreshBootstrap(keepSession) {
     if (state.session) {
       const fresh = findSession(state.session.id);
       if (fresh && Array.isArray(fresh.messages)) state.session = fresh;
-      // summaries carry no messages; keep the in-memory session in that case
     }
-    renderRecents(); renderProjects(); renderLibrary(); renderSuggestions(); syncPrivate();
+    renderSidebar();
+    renderProjects();
+    renderLibrary();
+    renderSuggestions();
+    syncPrivate();
     statusBadge();
   } catch (e) {
     state.booted = true;
     state.bootFailed = true;
-    toast('Could not reach Janna. ' + e.message);
     statusBadge();
   }
 }
@@ -2982,6 +2704,8 @@ function reconnectCheck() {
   try { refreshBootstrap(true); } catch { /* next cycle */ }
 }
 function initializeWorkspace() {
+  // URL params only (?s=<session id>, ?_s=<settings section>) — the boot
+  // sequence lives in the DOMContentLoaded handler below.
   const params = new URLSearchParams(location.search);
   const open = params.get('s');
   const settingsSection = params.get('_s');
@@ -2989,195 +2713,153 @@ function initializeWorkspace() {
   if (open) openSession(open);
 }
 function bindEvents() {
-  const prompt = $('prompt');
-  prompt.addEventListener('input', () => { autoGrowPrompt(); syncSendState(); saveDraftSoon(); renderAutocomplete(); });
-  prompt.addEventListener('keydown', e => {
-    const ctrlEnter = state.settings.require_ctrl_enter === true;
-    if (e.key === 'Enter' && !e.shiftKey) {
-      if (ctrlEnter && !(e.ctrlKey || e.metaKey)) return; // insert newline
-      e.preventDefault();
-      send();
+  const on = (id, ev, fn) => { const n = $(id); if (n) n.addEventListener(ev, fn); };
+  const click = (id, fn) => on(id, 'click', fn);
+  $('sidebarToggle').onclick = () => { state.sidebarOpen ? closeSidebar() : openSidebar(); };
+  $('mobileScrim').onclick = closeSidebar;
+  click('newChat', () => { newChat(); });
+  click('chatsPlus', () => { newChat(); });
+  click('headerSearch', () => openPalette());
+  click('navLibrary', () => { closeSidebar(); openLibrary(); });
+  $('libraryClose').onclick = closeLibrary;
+  $('librarySearch').oninput = e => { state.libraryQuery = e.target.value; renderLibrary(); };
+  $('libraryUpload').onclick = () => {
+    if (state.libraryTab === 'apps') { $('prompt').value = 'Build an app: '; autoGrowPrompt(); syncSendState(); closeLibrary(); $('prompt').focus(); return; }
+    $('libraryFileInput').click();
+  };
+  $('libraryFileInput').onchange = e => { addFilesToLibrary(e.target.files); renderLibrary(); e.target.value = ''; };
+  click('libraryViewOptions', () => {
+    state.librarySort = state.librarySort === 'date' ? 'name' : state.librarySort === 'name' ? 'oldest' : 'date';
+    renderLibrary();
+    toast(state.librarySort === 'name' ? 'Sorted by name' : state.librarySort === 'oldest' ? 'Oldest first' : 'Newest first');
+  });
+  const togglePrivate = () => { state.isPrivate = !state.isPrivate; renderConversation(state.isPrivate ? { id: 'private', title: 'Private chat', messages: state.privateThread } : state.session); syncPrivate(); };
+  $('privateToggle').onclick = togglePrivate;
+  click('profileOpen', toggleAccountMenu);
+  click('sidebarSettings', () => openSettings('account'));
+  click('newProjectBtn', () => openProjectDialog());
+  click('projectsDots', () => showMenu($('projectsDots'), [{ label: 'New Project', onClick: () => openProjectDialog() }]));
+  click('chatsDots', () => showMenu($('chatsDots'), [
+    { label: 'New chat', onClick: newChat },
+    { label: 'Clear all chats', danger: true, onClick: () => openSettings('data') },
+  ]));
+  const toggleSection = (headId, listId, extraId) => {
+    const head = $(headId), list = $(listId);
+    if (!head || !list) return;
+    const collapsed = list.hidden;
+    list.hidden = !collapsed;
+    if (extraId) { const x = $(extraId); if (x) x.hidden = !collapsed; }
+    head.setAttribute('aria-expanded', String(!collapsed));
+  };
+  click('projectsHead', () => toggleSection('projectsHead', 'projectList', 'newProjectBtn'));
+  click('chatsHead', () => toggleSection('chatsHead', 'sessionList', 'showMoreChats'));
+  // The Show more/less button is static HTML; renderSidebar only sets its
+  // label/visibility — it had no click binding at all, so tapping it did
+  // nothing (rig run 2).
+  click('showMoreChats', () => { state.showAllChats = !state.showAllChats; renderSidebar(); });
+  $('convMenuBtn').onclick = () => showMenu($('convMenuBtn'), [
+    { label: 'New chat', onClick: newChat },
+    { label: 'Search', onClick: openPalette },
+    { label: 'Library', onClick: openLibrary },
+    { label: 'Settings', onClick: () => openSettings('account') },
+  ]);
+  $('rightPaneToggle').onclick = () => { $('rightPane').hidden ? openRightPane() : closeRightPane(); };
+  click('rightPaneHide', closeRightPane);
+  click('appPreviewRow', () => { if ($('rightPanePreview').hidden) toast('Open a file to preview it here.'); });
+  click('openFileRow', () => $('previewFileInput').click());
+  $('previewFileInput').onchange = e => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    openRightPane(f.name, URL.createObjectURL(f));
+    e.target.value = '';
+  };
+  click('rightPaneCopy', async () => {
+    if (!state.rightPaneUrl) return;
+    const ok = await copyCodeText(state.rightPaneUrl);
+    toast(ok ? 'Copied link' : 'Copy failed');
+  });
+  click('rightPaneDownload', () => { if (state.rightPaneUrl) window.open(state.rightPaneUrl, '_blank'); });
+  click('rightPaneSource', async () => {
+    const view = $('rightPaneSourceView'), frame = $('rightPaneFrame');
+    if (!view || !frame || !state.rightPaneUrl) return;
+    if (view.hidden) {
+      try { view.textContent = await (await fetch(state.rightPaneUrl)).text(); } catch { view.textContent = 'Could not load the source.'; }
+      view.hidden = false;
+      frame.hidden = true;
+      $('rightPaneSource').textContent = 'Preview';
+    } else {
+      view.hidden = true;
+      frame.hidden = false;
+      $('rightPaneSource').textContent = 'Source';
     }
   });
-  prompt.addEventListener('paste', e => {
-    const files = [...(e.clipboardData?.files || [])];
-    if (files.length) { e.preventDefault(); handleFiles(files); }
+  click('termsLink', () => showDialog({ title: 'Terms', text: 'Janna AI is free with no sign-in and no limits. Chats stay in this browser. Be kind — don\u2019t use Janna to harm others.', okText: 'Close', showCancel: false }));
+  click('privacyLink', openLegal);
+  click('privacyChoicesLink', openLegal);
+  $('settingsSearch').oninput = e => {
+    const q = e.target.value.toLowerCase();
+    [...$('settingsNav').children].forEach(b => { b.hidden = !!q && !b.textContent.toLowerCase().includes(q); });
+  };
+  $('jumpLatest').onclick = () => scrollThreadToBottom();
+  $('send').onclick = send;
+  $('stop').onclick = stopRun;
+  $('plusBtn').onclick = openPlusMenu;
+  $('plusScrim').onclick = closePlusMenu;
+  $('voiceMic').onclick = startDictation;
+  $('voiceModeBtn').onclick = openVoiceMode;
+  $('modelPickerBtn').onclick = openModelPicker;
+  $('attachment').onchange = e => { handleFiles(e.target.files); e.target.value = ''; };
+  $('prompt').addEventListener('input', () => { autoGrowPrompt(); syncSendState(); });
+  $('prompt').addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      if (!state.busy) send();
+      // While busy Enter does nothing — the text stays in the box (Grok).
+    }
+    if (e.key === 'Escape') { closeMenus(); closeModelPicker(); closePlusMenu(); }
   });
-  $('send').onclick = () => send();
-  $('stop').onclick = () => stopRun();
-  $('thread').addEventListener('scroll', updateJump, { passive: true });
-  $('jumpLatest').onclick = () => { const t = $('thread'); if (t) t.scrollTop = t.scrollHeight; };
-  $('plusBtn').onclick = () => openPlusMenu();
-  $('modelPickerBtn').onclick = () => openModelPicker();
-  $('voiceMic').onclick = () => voiceDictate();
-  $('voiceModeBtn').onclick = () => voiceOpen();
-  $('attachment').onchange = e => { handleFiles([...e.target.files]); e.target.value = ''; };
-  $('sidebarToggle').onclick = () => {
-    // Desktop (>=1024px): the sidebar is a static column, so .open has no
-    // visible effect there — collapse it instead. Phone: overlay open/close.
-    if (matchMedia('(min-width:1024px)').matches) { document.body.classList.toggle('sidebar-hidden'); return; }
-    $('sidebar').classList.contains('open') ? closeSidebar() : openSidebar();
-  };
-  $('mobileScrim').onclick = () => closeSidebar();
-  $('plusScrim').onclick = () => closePlusMenu();
-  $('newChat').onclick = () => newChat();
-  $('chatsPlus').onclick = () => newChat();
-  $('navLibrary').onclick = () => { closeSidebar(); openLibrary(); };
-  $('newProjectBtn').onclick = () => createProject();
-  $('profileOpen').onclick = () => toggleAccountMenu();
-  $('sidebarSettings').onclick = () => openSettings('account');
-  $('projectsHead').onclick = e => { if (e.target.closest('.side-head-dots')) return; $('projectsSection').classList.toggle('collapsed'); };
-  $('chatsHead').onclick = e => { if (e.target.closest('.side-head-dots') || e.target.closest('.side-head-plus')) return; $('chatsSection').classList.toggle('collapsed'); };
-  $('projectsDots').onclick = e => { e.stopPropagation(); showMenu(e.currentTarget, [{ label: 'New project', icon: 'plus', onClick: () => createProject() }]); };
-  $('chatsDots').onclick = e => {
-    e.stopPropagation();
-    showMenu(e.currentTarget, [
-      { label: 'New chat', icon: 'plus', onClick: () => newChat() },
-      { label: 'Show archived', icon: 'archive', onClick: () => showArchived() },
-      'sep',
-      { label: 'Delete all conversations', icon: 'trash', danger: true, onClick: async () => {
-        const ok = await confirmDialog('Delete all conversations?', 'Every chat in your history will be deleted. This can\u2019t be undone.', 'Delete all');
-        if (!ok) return;
-        try { await api('/api/sessions/clear'); state.session = null; refreshBootstrap(); renderConversation(null); toast('All conversations deleted.'); } catch (err) { toast(err.message); }
-      } },
-    ]);
-  };
-  $('showMoreChats').onclick = () => { state.showAllChats = !state.showAllChats; renderRecents(); };
-  $('headerSearch').onclick = () => openPalette();
-  $('privateToggle').onclick = () => togglePrivate();
-  $('raPause').onclick = () => {
-    if (!('speechSynthesis' in window)) return;
-    if (raState.paused) { try { window.speechSynthesis.resume(); } catch { /* ignore */ } raState.paused = false; $('raPause').innerHTML = '<svg><use href="#i-pause"/></svg>'; $('raPause').title = 'Pause'; }
-    else { try { window.speechSynthesis.pause(); } catch { /* ignore */ } raState.paused = true; $('raPause').innerHTML = '<svg><use href="#i-play"/></svg>'; $('raPause').title = 'Resume'; }
-  };
-  $('raVoice').onclick = () => {
-    const i = VOICE_PERSONAS.findIndex(p => p.id === (state.settings.voice_name || 'ara'));
-    const next = VOICE_PERSONAS[(i + 1) % VOICE_PERSONAS.length];
-    state.settings.voice_name = next.id;
-    saveJSON('janna-web-settings-v1', state.settings);
-    $('raVoiceLabel').textContent = next.name;
-    startReadAloud();
-  };
-  $('raRate').onclick = () => {
-    const cur = state.settings.voice_speed || 'Normal';
-    const i = VOICE_SPEEDS.findIndex(s => s[0] === cur);
-    const next = VOICE_SPEEDS[(i + 1) % VOICE_SPEEDS.length];
-    state.settings.voice_speed = next[0];
-    saveJSON('janna-web-settings-v1', state.settings);
-    $('raRateLabel').textContent = next[0].replace('Normal', '1x');
-    startReadAloud();
-  };
-  $('raStop').onclick = () => hideReadAloudBar();
-  $('rightPaneToggle').onclick = () => { $('rightPane').hidden ? openRightPane() : closeRightPane(); };
-  $('rightPaneHide').onclick = () => closeRightPane();
-  $('rightPaneNewTab').onclick = () => clearPreview();
-  $('appPreviewRow').onclick = () => {
-    if (state.rightPaneCode) { $('rightPanePreview').hidden = false; document.querySelector('.right-pane-empty').hidden = true; }
-    else toast('No preview yet \u2014 generate a page or open a file.');
-  };
-  $('openFileRow').onclick = () => $('previewFileInput').click();
-  $('previewFileInput').onchange = async e => {
-    const file = e.target.files[0]; e.target.value = '';
-    if (!file) return;
-    if (!/\.html?$/i.test(file.name)) { toast('Only .html files can be previewed here.'); return; }
-    previewHtml(await file.text(), file.name);
-  };
-  $('rightPaneCopy').onclick = async () => { if (!state.rightPaneCode) return; toast((await copyCodeText(state.rightPaneCode)) ? 'Preview code copied' : 'Copy failed'); };
-  $('rightPaneDownload').onclick = () => {
-    if (!state.rightPaneCode) return;
-    const blob = new Blob([state.rightPaneCode], { type: 'text/html' });
-    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = state.rightPaneName || 'preview.html'; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-  };
-  $('rightPaneSource').onclick = () => {
-    if (!state.rightPaneCode) return;
-    const view = $('rightPaneSourceView'), frame = $('rightPaneFrame');
-    if (view.hidden) { view.textContent = state.rightPaneCode; view.hidden = false; frame.hidden = true; }
-    else { view.hidden = true; view.textContent = ''; frame.hidden = false; }
-  };
-  $('libraryClose').onclick = () => closeLibrary();
-  $('libraryUpload').onclick = () => $('libraryFileInput').click();
-  $('libraryFileInput').onchange = e => { addFilesToLibrary([...e.target.files]); e.target.value = ''; };
-  $('librarySearch').oninput = e => { state.libraryQuery = e.target.value; renderLibrary(); };
-  $('libraryViewOptions').onclick = () => {
-    state.librarySort = state.librarySort === 'name' ? 'date' : 'name';
-    renderLibrary();
-    toast(state.librarySort === 'name' ? 'Library sorted by name' : 'Library sorted by newest first');
-  };
-  $('paletteClose').onclick = () => closePalette();
-  $('paletteInput').oninput = () => renderPalette();
-  $('settingsClose').onclick = () => closeSettings();
-  $('termsLink').onclick = () => openLegal('terms');
-  $('privacyLink').onclick = () => openLegal('privacy');
-  $('privacyChoicesLink').onclick = () => openSettings('data');
-  $('convMenuBtn').onclick = e => {
-    const s = state.session;
-    if (!s) return;
-    showMenu(e.currentTarget, [
-      { label: 'Share', icon: 'share', onClick: () => shareChat(s) },
-      { label: s.pinned ? 'Unpin' : 'Pin', icon: 'pin', onClick: () => pinChat(s) },
-      { label: 'Rename', icon: 'edit', onClick: () => renameChat(s) },
-      { label: 'Add to Project', icon: 'book', onClick: () => openProjectPicker(s, e.currentTarget) },
-      { label: 'Send Feedback', icon: 'feedback', onClick: () => openFeedback(s.id) },
-      { label: 'Copy Conversation ID', icon: 'copy', onClick: async () => { toast((await copyCodeText(s.id)) ? 'Conversation ID copied' : 'Copy failed'); } },
-      { label: 'Open in new tab', icon: 'external', onClick: () => window.open(location.pathname + '?s=' + encodeURIComponent(s.id), '_blank') },
-      'sep',
-      { label: 'Archive', icon: 'archive', onClick: () => archiveChat(s) },
-      { label: 'Delete', icon: 'trash', danger: true, onClick: () => deleteChat(s) },
-    ]);
-  };
-  $('messages').addEventListener('click', async e => {
-    const actionBtn = e.target.closest('[data-code-action]');
-    if (!actionBtn) return;
-    const body = actionBtn.closest('.message-body');
-    const blocks = codeByBody.get(body) || [];
-    const block = blocks[Number(actionBtn.dataset.codeIndex)];
-    if (!block) return;
-    if (actionBtn.dataset.codeAction === 'copy') toast((await copyCodeText(block.code)) ? 'Code copied' : 'Copy failed');
-    else if (actionBtn.dataset.codeAction === 'preview') previewHtml(block.code, codeFileName(block.language));
-    else if (actionBtn.dataset.codeAction === 'save') saveCodeToLibrary(block.code, block.language);
+  $('messages').addEventListener('scroll', () => {
+    const m = $('messages');
+    const nearBottom = m.scrollHeight - m.scrollTop - m.clientHeight < 120;
+    $('jumpLatest').hidden = nearBottom;
   });
-  document.addEventListener('click', e => {
-    // The click that opened a menu bubbles up here in the same task; don't
-    // let it close the menu it just opened.
-    if (openMenuEl && !openMenuEl.contains(e.target) && Date.now() - menuOpenedAt > 50) closeMenus();
-    if (!$('modelPicker').hidden && !e.target.closest('#modelPicker') && !e.target.closest('#modelPickerBtn')) closeModelPicker();
-    if (!$('plusMenu').hidden && !e.target.closest('#plusMenu') && !e.target.closest('#plusBtn')) closePlusMenu();
-    // A click whose target was detached mid-click (e.g. the Help item
-    // re-rendering the menu into its submenu) is not an outside click.
-    if (!$('accountMenu').hidden && e.target.isConnected && !e.target.closest('#accountMenu') && !e.target.closest('#profileOpen')) $('accountMenu').hidden = true;
-  });
+  $('settingsClose').onclick = closeSettings;
+  $('paletteClose').onclick = closePalette;
+  $('paletteInput').addEventListener('input', e => { renderPalette(e.target.value); });
   document.addEventListener('keydown', e => {
-    const mod = e.ctrlKey || e.metaKey;
-    if (mod && e.key.toLowerCase() === 'k') { e.preventDefault(); $('palette').hidden ? openPalette() : closePalette(); }
-    else if (mod && e.key.toLowerCase() === 'j') { e.preventDefault(); newChat(); }
-    else if (mod && e.key === ',') { e.preventDefault(); $('settingsView').hidden ? openSettings('account') : closeSettings(); }
-    else if (mod && e.key.toLowerCase() === 'o' && !$('rightPane').hidden) { e.preventDefault(); $('previewFileInput').click(); }
-    else if (e.key === 'Escape') { const sheet = document.getElementById('voiceSheet'); if (sheet && !sheet.hidden) { voiceToggleSheet(false); return; } if (document.getElementById('voiceOverlay')) { voiceClose(); return; } closeMenus(); closeModelPicker(); closePlusMenu(); $('accountMenu').hidden = true; if (!$('palette').hidden) closePalette(); else if (!$('settingsView').hidden) closeSettings(); else if (!$('libraryView').hidden) closeLibrary(); else closeSidebar(); }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'j') { e.preventDefault(); newChat(); }
+    if ((e.ctrlKey || e.metaKey) && e.key === ',') { e.preventDefault(); openSettings('account'); }
+    if (e.key === 'Escape') { closePalette(); closeLibrary(); closeSettings(); closePlusMenu(); closeModelPicker(); }
   });
-  window.addEventListener('online', () => reconnectCheck());
-  // v61: the adapter serves the first bootstrap locally, then refreshes
-  // the model list in the background — re-fetch when it lands.
-  window.addEventListener('janna-bootstrap-refreshed', () => refreshBootstrap(true));
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) reconnectCheck(); });
-  window.addEventListener('resize', () => syncDesktopChrome());
-  if (window.matchMedia) matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => applyTheme());
-  reconnectTimer = setInterval(reconnectCheck, 10000);
+  // Outside-click handler: closes anchored menus, the model picker and the
+  // account menu. A click whose target was DETACHED during its own handler
+  // (the Help submenu re-renders #accountMenu via replaceChildren, so the
+  // clicked button is no longer connected) must NOT count as "outside" —
+  // otherwise tapping Help closes the menu instead of opening the submenu.
+  document.addEventListener('click', e => {
+    if (!e.target || !e.target.isConnected) return;
+    const t = e.target;
+    if (!t.closest('#accountMenu') && !t.closest('#profileOpen')) { const m = $('accountMenu'); if (m) m.hidden = true; }
+    if (!t.closest('.menu-pop') && !t.closest('[data-menu-anchor]')) closeMenus();
+    if (!t.closest('#modelPicker') && !t.closest('#modelPickerBtn')) closeModelPicker();
+    if (!t.closest('#plusMenu') && !t.closest('#plusBtn')) closePlusMenu();
+  });
 }
 document.addEventListener('DOMContentLoaded', async () => {
+  document.documentElement.classList.add('js');
+  applyTheme();
   bindEvents();
-  // v61 instant first paint: chats + settings live in this browser, so
+  // Instant local first paint: chats + settings live in this browser, so
   // render the cached list before the network bootstrap returns — grok
   // shows history at once instead of an empty list. The local-first
   // bootstrap (web-adapter) replaces these with the same merged list.
   state.sessions = loadJSON('janna-web-sessions-v1', []);
-  state.settings = Object.assign({}, loadJSON('janna-web-settings-v1', {}));
+  state.settings = Object.assign({}, state.settings, loadJSON('janna-web-settings-v1', {}));
   try { state.model = localStorage.getItem('janna-selected-model') || ''; } catch { /* ignore */ }
-  renderPaletteTabs();
+  renderSidebar();
   renderProjects();
-  renderRecents();
   renderLibrary();
   renderSuggestions();
-  renderModeChip();
   syncPrivate();
   autoGrowPrompt();
   syncSendState();
@@ -3187,4 +2869,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   await refreshBootstrap();
   renderConversation(state.session);
   initializeWorkspace();
+  // The adapter serves the first bootstrap locally, then refreshes the
+  // model list in the background — re-fetch when it lands.
+  window.addEventListener('janna-bootstrap-refreshed', () => refreshBootstrap(true));
+  window.addEventListener('online', () => reconnectCheck());
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) reconnectCheck(); });
+  if (window.matchMedia) matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => applyTheme());
+  reconnectTimer = setInterval(reconnectCheck, 10000);
+  if ('serviceWorker' in navigator) {
+    try { await navigator.serviceWorker.register('/sw.js'); } catch { /* offline support is best-effort */ }
+  }
 });

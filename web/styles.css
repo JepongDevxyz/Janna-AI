@@ -1,7 +1,13 @@
-/* Janna AI — Grok-style shell (fresh reset, 2026-11-24).
+/* Janna AI — Grok-style shell, v68 fresh rebuild (2026-11-26).
    Phone-first at 390px. Desktop >=1024px is a responsive expansion of the
    same layout (sidebar becomes a fixed left column). The desktop layout was
-   NOT verified against grok.com desktop, which was never inspected. */
+   NOT verified against grok.com desktop, which was never inspected.
+   v68 corrections (grok-spec.md §14, review #3): user bubble is
+   width:max-content with max-width:65% and overflow-wrap:break-word
+   (never `anywhere` — that shrank "Hi" to one glyph wide); live header is
+   "Thinking" + "Planning next moves" with no timer; no persistent
+   "Thought for" line; running composer keeps "Ask anything..." and a black
+   square Stop; follow-up pills are a right-aligned stack. */
 :root{
   font-family:system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
   font-synthesis:none;-webkit-font-smoothing:antialiased;
@@ -36,10 +42,9 @@ button:disabled{cursor:not-allowed;opacity:.55}
 button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 /* No blue tap flash on phones: Chrome paints -webkit-tap-highlight-color
    (holo blue) over ANY tapped element — not just buttons, but chat rows,
-   message bubbles, links, the voice orb, sidebar dots, scrims. v63 only
-   covered buttons; v64 kills it globally so nothing in the whole app
-   flashes blue when pressed. The :active rules below keep a grey press
-   feedback instead. */
+   message bubbles, links, the voice orb, sidebar dots, scrims. v64 kills it
+   globally so nothing in the whole app flashes blue when pressed. The
+   :active rules below keep a grey press feedback instead. */
 *{-webkit-tap-highlight-color:transparent}
 .symbols{position:absolute;width:0;height:0;overflow:hidden}
 svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.65;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
@@ -197,13 +202,13 @@ svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.65;strok
 .send-button{flex-shrink:0;border:0;background:var(--chip);color:var(--muted);display:flex;align-items:center;justify-content:center;border-radius:50%;width:34px;height:34px;margin-bottom:1px}
 .send-button svg{width:19px;height:19px;stroke-width:2}
 .send-button.active{background:var(--accent);color:var(--accent-ink)}
-/* Stop (Grok): a black square inside a light-grey circle — not a dark disc. */
-.send-button.stop-button{background:var(--chip);color:var(--ink)}
-.send-button.stop-button svg{width:16px;height:16px}
+/* Stop (Grok, review #3): a BLACK SQUARE button that replaces Send while a
+   run is in flight. The mic and voice buttons stay visible while running. */
+.send-button.stop-button{background:var(--ink);color:var(--panel);border-radius:10px}
+.send-button.stop-button svg{width:14px;height:14px;fill:currentColor;stroke:none}
 .composer.is-empty .send-button{display:none}
-.composer:not(.is-empty) .composer-mic,.composer:not(.is-empty) .voice-mode-btn{display:none}
+.composer:not(.is-empty) .voice-mode-btn{display:none}
 .composer.is-busy .send-button{display:none}
-.composer.is-busy .composer-mic,.composer.is-busy .voice-mode-btn{display:none}
 .composer.is-busy .stop-button{display:flex}
 .mode-chip-row{display:flex;flex-wrap:wrap;gap:6px;padding:2px 6px 8px}
 .mode-chip{display:inline-flex;align-items:center;gap:6px;border:0;background:transparent;color:var(--accent);font-size:13px;font-weight:600;padding:5px 8px 5px 2px;border-radius:999px}
@@ -243,8 +248,10 @@ svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.65;strok
 .plus-menu-sub{padding:2px 0 2px 12px}
 .plus-menu-empty{padding:10px 12px;font-size:13px;color:var(--muted)}
 
-/* ---------- Follow-up chips ---------- */
-.follow-ups{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-start;width:100%;max-width:760px;margin:0 auto 10px}
+/* ---------- Follow-up chips (Grok, review #3: right-aligned stack, one
+   per line in a narrow viewport; the blue play triangle shows only on
+   hover/focus, not always) ---------- */
+.follow-ups{display:flex;flex-direction:column;align-items:flex-end;gap:8px;width:100%;max-width:760px;margin:0 auto 10px}
 /* Read aloud (Grok): a floating white playback pill above the composer. */
 .read-aloud-bar{display:flex;align-items:center;gap:4px;background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:6px 8px;box-shadow:var(--shadow);margin:0 auto 10px;width:fit-content;max-width:100%}
 .ra-btn{flex-shrink:0;width:32px;height:32px;border:0;border-radius:50%;background:transparent;color:var(--ink);display:inline-flex;align-items:center;justify-content:center}
@@ -257,19 +264,25 @@ svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.65;strok
 .composer.private-mode.is-empty .voice-mode-btn{display:none}
 .composer.private-mode.is-empty:not(.is-busy) .send-button{display:inline-flex;width:48px;height:48px;background:var(--chip);color:var(--muted)}
 .composer.private-mode.is-empty:not(.is-busy) .send-button svg{width:22px;height:22px}
-.follow-chip{border:1px solid var(--line);background:var(--panel);border-radius:999px;padding:8px 14px;font-size:13px;color:var(--ink);text-align:left}
+.follow-chip{border:1px solid var(--line);background:var(--panel);border-radius:999px;padding:8px 14px;font-size:13px;color:var(--ink);text-align:left;max-width:100%}
 .follow-chip:hover{background:var(--hover)}
-.follow-chip.primary{background:var(--chip);border-color:transparent}
-.follow-chip.primary .follow-play{color:var(--accent);margin-right:6px}
+.follow-chip .follow-play{display:none;color:var(--accent);margin-right:6px}
+.follow-chip:hover .follow-play,.follow-chip:focus-visible .follow-play{display:inline}
 
 /* ---------- Messages ---------- */
 .messages{max-width:760px;margin:0 auto;padding:24px 20px 32px;width:100%}
 .message{margin-bottom:36px;min-width:0}
 .message.user{display:flex;flex-direction:column;align-items:flex-end}
-.user-bubble{max-width:85%;border-radius:28px;background:var(--bubble);padding:13px 16px;white-space:pre-wrap;line-height:1.55;color:var(--ink);overflow-wrap:anywhere;cursor:pointer}
+/* v68 bubble fix (grok-spec §14): width:max-content so short text ("Hi")
+   sizes to one line and reads as a near-circular capsule like Grok's;
+   max-width:65% matches Grok's measured ~63% cap; overflow-wrap:break-word
+   (NEVER `anywhere` — `anywhere` makes the flex min-content one glyph wide,
+   which is exactly how "Hi" stacked vertically in her video); flex-shrink:0
+   so the row can never squeeze the bubble narrower than its content. */
+.user-bubble{width:max-content;max-width:65%;flex-shrink:0;border-radius:28px;background:var(--bubble);padding:13px 16px;white-space:pre-wrap;line-height:1.55;color:var(--ink);overflow-wrap:break-word;cursor:pointer}
 .user-bubble img.attachment-preview{max-width:100%;border-radius:12px;margin-top:8px;display:block}
 /* Grok-style inline edit: tap a user bubble, edit in place, Cancel/Send. */
-.edit-area{width:100%;max-width:85%;margin-left:auto;display:flex;flex-direction:column;gap:8px}
+.edit-area{width:100%;max-width:65%;margin-left:auto;display:flex;flex-direction:column;gap:8px}
 .edit-area textarea{width:100%;border:1px solid var(--line);background:var(--panel);border-radius:16px;padding:12px 14px;font-size:16px;line-height:1.55;resize:none;outline:0;color:var(--ink)}
 .edit-area textarea:focus{border-color:var(--accent)}
 .edit-actions{display:flex;gap:8px;justify-content:flex-end}
@@ -284,8 +297,12 @@ svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.65;strok
 .message-actions{display:flex;align-items:center;gap:2px;margin-top:6px}
 .message.user .message-actions{justify-content:flex-end}
 /* User Edit/Copy (Grok): hidden until you tap the bubble, then icon-only,
-   to the LEFT of the bubble on the same baseline. */
-.user-row{display:flex;align-items:flex-end;justify-content:flex-end;gap:2px;max-width:100%}
+   to the LEFT of the bubble on the same baseline. width:100% is the fix
+   for the v67 vertical-wrap bug: the bubble's max-width:65% is a percentage
+   of this row, so the row MUST have a definite width — with a fit-content
+   row the percentage resolves against the bubble's own width, the loop
+   collapses to min-content, and "Hi" stacks H-over-i (her video). */
+.user-row{display:flex;align-items:flex-end;justify-content:flex-end;gap:2px;width:100%;max-width:100%}
 .user-actions{display:none;margin:0}
 .message.user.show-user-actions .user-actions{display:flex}
 .message-action-text{display:inline-flex;align-items:center;gap:5px;border:0;background:transparent;color:var(--muted);font-size:12.5px;padding:5px 8px;border-radius:8px}
@@ -295,7 +312,7 @@ svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.65;strok
 .message-action:hover{background:var(--hover);color:var(--ink)}
 .message-action svg{width:17px;height:17px}
 .message-action.voted{color:var(--accent)}
-.message-body{font-size:16px;line-height:1.7;color:var(--ink);overflow-wrap:anywhere}
+.message-body{font-size:16px;line-height:1.7;color:var(--ink);overflow-wrap:break-word}
 .message-body h1,.message-body h2,.message-body h3{font-weight:600;line-height:1.3;margin:22px 0 10px}
 .message-body h1{font-size:24px}.message-body h2{font-size:21px}.message-body h3{font-size:18px}
 .message-body p{margin:0 0 14px}
@@ -317,27 +334,21 @@ svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.65;strok
 .message-body td code{white-space:nowrap;overflow-wrap:normal;background:var(--chip);padding:2px 5px;border-radius:5px}
 .message-metadata{color:var(--faded);font-size:11px;margin-top:12px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
 .raw-toggle{border:0;background:transparent;text-decoration:underline;text-underline-offset:3px;color:var(--muted);padding:0;font-size:11px}
-.raw-panel{font:12px/1.6 ui-monospace,Consolas,monospace;background:var(--chip);border:1px solid var(--line);border-radius:12px;padding:14px 16px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}
+.raw-panel{font:12px/1.6 ui-monospace,Consolas,monospace;background:var(--chip);border:1px solid var(--line);border-radius:12px;padding:14px 16px;overflow:auto;white-space:pre-wrap;overflow-wrap:break-word}
 
-/* Thinking display */
+/* Thinking display (v68, review #3): the LIVE header only — "Thinking" plus
+   the single step "Planning next moves" with a dotted spinner. No timer, no
+   seconds, no step rotation, and NO persistent "Thought for Xs" line after
+   the reply (Grok shows none on Fast replies in all three fresh probes).
+   The header is removed when the run finishes. */
 .thinking{margin:0 0 14px;border:0;background:transparent;font-size:14px;color:var(--muted)}
-.thinking.done{border-bottom:1px solid var(--line);padding-bottom:10px}
-.thinking.done .think-title{font-size:15px}
 .thinking-head{display:flex;align-items:center;gap:8px;width:100%;border:0;background:transparent;color:var(--muted);font-size:14px;padding:4px 0;text-align:left;border-radius:8px}
-.thinking-head:hover{color:var(--ink)}
 .thinking-head .think-spinner{width:14px;height:14px;border:2px solid var(--line);border-top-color:var(--muted);border-radius:50%;animation:spin 1s linear infinite;flex-shrink:0}
 .thinking-head .think-title{flex:1;text-align:left;font-size:18px;font-weight:500;color:var(--muted)}
-.thinking-head .think-chevron{width:15px;height:15px;transition:transform .15s}
-.thinking.collapsed .think-chevron{transform:rotate(-90deg)}
-.thinking.collapsed .think-body{display:none}
-.thinking.done .think-spinner{display:none}
 .think-body{padding:6px 0 4px 22px}
 .think-steps{list-style:none;margin:0;padding:0;display:grid;gap:8px}
 .think-steps li{display:flex;gap:9px;line-height:1.5;font-size:13.5px}
-.think-steps li::before{content:'';width:5px;height:5px;background:var(--faded);border-radius:50%;margin-top:8px;flex-shrink:0}
-.think-steps li.is-current::before{background:var(--accent)}
-.think-steps li.fading{opacity:.45}
-.think-steps small{display:block;color:var(--faded);font-size:12px}
+.think-steps li::before{content:'';width:5px;height:5px;background:var(--accent);border-radius:50%;margin-top:8px;flex-shrink:0}
 @keyframes spin{to{transform:rotate(360deg)}}
 
 /* Code blocks */
@@ -354,13 +365,8 @@ svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.65;strok
 .code-gutter{flex-shrink:0;position:sticky;left:0;padding:14px 8px 14px 16px;font:12.5px/1.65 ui-monospace,SFMono-Regular,Consolas,'Liberation Mono',monospace;color:var(--faded);text-align:right;user-select:none;background:var(--panel);white-space:pre}
 .message-body .code-block .code-scroll pre{flex:1;min-width:0;overflow:visible;max-height:none}
 .message-body .code-block code{font:12.5px/1.65 ui-monospace,SFMono-Regular,Consolas,'Liberation Mono',monospace;white-space:pre}
-body.wrap-code .message-body .code-block pre{white-space:pre-wrap;overflow-wrap:anywhere}
+body.wrap-code .message-body .code-block pre{white-space:pre-wrap;overflow-wrap:break-word}
 .tok-kw{color:var(--code-kw)}.tok-str{color:var(--code-str)}.tok-com{color:var(--code-com);font-style:italic}.tok-num{color:var(--code-num)}.tok-fn{color:var(--code-fn)}
-
-/* Queued inputs */
-.queued-inputs{padding:14px;border:1px solid var(--line);border-radius:16px;margin-bottom:20px}
-.queued-input{display:flex;align-items:center;gap:8px;margin-top:8px}
-.queued-input textarea{flex:1;min-width:0;background:var(--panel);color:var(--ink);border:1px solid var(--line);padding:8px;border-radius:8px;resize:vertical}
 .run-recovery{margin:0 0 20px;padding:14px 16px;border:1px solid var(--line);border-radius:16px;font-size:14px;line-height:1.6}
 .run-recovery p{margin:6px 0}
 
@@ -423,7 +429,7 @@ body.wrap-code .message-body .code-block pre{white-space:pre-wrap;overflow-wrap:
 .library-item small{display:block;color:var(--muted);font-size:12px;margin-top:2px}
 .library-empty{text-align:center;color:var(--muted);padding:56px 20px;line-height:1.7}
 .library-empty strong{display:block;color:var(--ink);font-size:16px;margin-bottom:6px}
-.library-viewer{white-space:pre-wrap;overflow-wrap:anywhere;font-size:14px;line-height:1.65;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;max-height:60vh;overflow:auto}
+.library-viewer{white-space:pre-wrap;overflow-wrap:break-word;font-size:14px;line-height:1.65;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;max-height:60vh;overflow:auto}
 .library-viewer img{max-width:100%;border-radius:10px}
 
 .settings-card{max-width:860px}
@@ -577,7 +583,6 @@ body[data-theme='dark'] .toast,body[data-theme='velvet'] .toast,body[data-theme=
   .settings-nav-group{width:100%}
   .palette{padding:8vh 10px 10px}
   .messages{padding:20px 14px 28px}
-  .user-bubble{max-width:92%}
   .thread-title-pill{max-width:44vw}
 }
 @media(prefers-reduced-motion:reduce){
@@ -594,8 +599,8 @@ body.reduce-motion *,body.reduce-motion *::before,body.reduce-motion *::after{an
   .message{break-inside:avoid}
 }
 
-/* v67 — grok deep-review completion: New Project dialog, Automation
-   detail, Connect Apps list, Library example projects, account menu. */
+/* ---------- v68: New Project dialog, Automation detail, Connect Apps list,
+   Library example projects, account menu (from grok-spec §13–§14) ---------- */
 .side-row-icon{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:8px;background:var(--chip);color:var(--muted);flex-shrink:0}
 .side-row-icon svg{width:17px;height:17px}
 .lib-icon{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:9px;background:var(--chip);color:var(--muted);flex-shrink:0}

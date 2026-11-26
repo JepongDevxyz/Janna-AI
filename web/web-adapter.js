@@ -1,4 +1,4 @@
-/* Janna AI — web edition adapter.
+/* Janna AI — web edition adapter (v68 fresh rebuild).
    Active ONLY on the hosted web deployment (Vercel / janna domain). On the
    desktop app (localhost, LAN or Tailscale pairing) it does nothing at all.
 
@@ -6,11 +6,18 @@
    so — like Fable AI's guest mode — conversations and settings live in this
    browser (localStorage), while /api/run streams from the cloud backend.
    This adapter serves the stateful session APIs locally and lets everything
-   else pass through to the real API. */
+   else pass through to the real API.
+   v68: the message-queue system is GONE (Grok has no queue — typed text
+   while a run is in flight stays in the box and is never auto-sent), and
+   the tap no longer records fabricated "thinking" activity (Grok shows no
+   persistent thought line on Fast replies). */
 (function () {
   'use strict';
   var host = location.hostname || '';
-  var hosted = /(^|\.)vercel\.app$/.test(host) || /(^|\.)jepong-devxyz\.com$/.test(host) || /(^|\.)janna-official\.tech$/.test(host) || host === 'janna-ai.vercel.app';
+  var hosted = /(^|\.)vercel\.app$/.test(host)
+    || /(^|\.)jepong-devxyz\.com$/.test(host)
+    || /(^|\.)janna-official\.tech$/.test(host)
+    || host === 'janna-ai.vercel.app';
   if (!hosted) return;
   window.__JANNA_WEB__ = true;
 
@@ -18,7 +25,10 @@
   var SETKEY = 'janna-web-settings-v1';
   var MKEY = 'janna-web-models-v1';
   function loadModels() {
-    try { var m = JSON.parse(localStorage.getItem(MKEY) || 'null'); return (m && Array.isArray(m.models)) ? m : null; } catch { return null; }
+    try {
+      var m = JSON.parse(localStorage.getItem(MKEY) || 'null');
+      return (m && Array.isArray(m.models)) ? m : null;
+    } catch { return null; }
   }
   function saveModels(m) {
     try { localStorage.setItem(MKEY, JSON.stringify(m)); } catch { /* ignore */ }
@@ -37,29 +47,36 @@
     try { localStorage.setItem(SETKEY, JSON.stringify(s)); } catch { /* ignore */ }
   }
   function jsonResponse(obj, status) {
-    return new Response(JSON.stringify(obj), { status: status || 200, headers: { 'Content-Type': 'application/json; charset=utf-8' } });
+    return new Response(JSON.stringify(obj), {
+      status: status || 200,
+      headers: { 'Content-Type': 'application/json; charset=utf-8' },
+    });
   }
-  function summary(s) { return { id: s.id, title: s.title, project_id: s.project_id || null, updated: s.updated || 0, pinned: !!s.pinned, archived: !!s.archived, msgs: (s.messages || []).length }; }
+  function summary(s) {
+    return {
+      id: s.id, title: s.title, project_id: s.project_id || null,
+      updated: s.updated || 0, pinned: !!s.pinned, archived: !!s.archived,
+      msgs: (s.messages || []).length,
+    };
+  }
 
   var nativeFetch = window.fetch.bind(window);
-
   function findSession(id) { return loadSessions().find(function (s) { return s.id === id; }); }
 
-  function appendEditExchange(sessionId, editIndex, prompt, assistantText, errorMessage, activity, attached) {
+  function appendEditExchange(sessionId, editIndex, prompt, assistantText, errorMessage, attached) {
     var list = loadSessions();
     var s = list.find(function (x) { return x.id === sessionId; });
     if (!s) return;
     s.messages = s.messages || [];
     var um = s.messages[editIndex];
-    if (!um || um.role !== 'user') { appendExchange(sessionId, prompt, assistantText, errorMessage, activity, attached); return; }
+    if (!um || um.role !== 'user') { appendExchange(sessionId, prompt, assistantText, errorMessage, attached); return; }
     var oldResponse = null;
     var next = s.messages[editIndex + 1];
-    if (next && next.role === 'assistant') oldResponse = { role: 'assistant', content: next.content };
+    if (next && next.role === 'assistant') oldResponse = { role: 'assistant', content: next.content, ts: next.ts || Date.now() };
     if (!Array.isArray(um.versions)) um.versions = [{ text: um.content, response: oldResponse }];
     var resp = null;
-    if (assistantText) resp = { role: 'assistant', content: assistantText };
-    else if (errorMessage) resp = { role: 'assistant', content: '\u26a0\ufe0f ' + errorMessage };
-    if (resp && activity && activity.steps && activity.steps.length) resp.activity = activity;
+    if (assistantText) resp = { role: 'assistant', content: assistantText, ts: Date.now() };
+    else if (errorMessage) resp = { role: 'assistant', content: '\u26a0\ufe0f ' + errorMessage, ts: Date.now() };
     um.versions.push({ text: prompt, response: resp });
     um.version = um.versions.length - 1;
     um.content = prompt;
@@ -81,22 +98,27 @@
     return cut;
   }
 
-  function appendExchange(sessionId, prompt, assistantText, errorMessage, activity, attached) {
+  function appendExchange(sessionId, prompt, assistantText, errorMessage, attached) {
     var list = loadSessions();
     var s = list.find(function (x) { return x.id === sessionId; });
     if (!s) return;
     s.messages = s.messages || [];
-    if (prompt) { var um = { role: 'user', content: prompt }; if (Array.isArray(attached) && attached.length) um.attached = attached; s.messages.push(um); }
-    if (assistantText) { var am = { role: 'assistant', content: assistantText }; if (activity && activity.steps && activity.steps.length) am.activity = activity; s.messages.push(am); }
-    else if (errorMessage) s.messages.push({ role: 'assistant', content: '\u26a0\ufe0f ' + errorMessage });
+    if (prompt) {
+      // The More-menu header shows the message timestamp (messageAt), so
+      // recorded messages need ts — the app stamps it at creation, but
+      // this stored copy is what openSession/bootstrap reload, and it was
+      // built without ts, so every reloaded message showed no header.
+      var um = { role: 'user', content: prompt, ts: Date.now() };
+      if (Array.isArray(attached) && attached.length) um.attached = attached;
+      s.messages.push(um);
+    }
+    if (assistantText) s.messages.push({ role: 'assistant', content: assistantText, ts: Date.now() });
+    else if (errorMessage) s.messages.push({ role: 'assistant', content: '\u26a0\ufe0f ' + errorMessage, ts: Date.now() });
     if ((!s.title || s.title === 'New chat') && prompt) s.title = wordTitle(prompt);
     s.updated = Math.floor(Date.now() / 1000);
     saveSessions(list);
   }
 
-  // Observe the run stream as it flows past and persist the exchange the
-  // moment the terminal frame arrives — synchronously, before the app
-  // re-reads the session and re-renders the conversation.
   // --- Janna's memory of the user + awareness context (her order: Janna
   // must know the previous chats, the whole app, and the user's plan/usage,
   // the way Muse does) ---
@@ -120,7 +142,10 @@
     if ((m = prompt.match(/(?:call me|tawagin mo akong)\s+([A-Za-z][A-Za-z .'-]{1,40})/i))) add('The user wants to be called ' + m[1].trim());
     saveMemory(facts);
   }
-  function clipText(s, n) { s = String(s || '').replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 1) + '\u2026' : s; }
+  function clipText(s, n) {
+    s = String(s || '').replace(/\s+/g, ' ').trim();
+    return s.length > n ? s.slice(0, n - 1) + '\u2026' : s;
+  }
   function buildContext(current, promptText) {
     var sessions = loadSessions();
     var totalMsgs = 0;
@@ -130,43 +155,25 @@
       var firstUser = null;
       for (var i = 0; i < msgs.length; i++) if (msgs[i].role === 'user') { firstUser = msgs[i]; break; }
       var last = msgs[msgs.length - 1];
-      return { title: x.title || 'New chat', when: x.updated ? new Date(x.updated * 1000).toISOString().slice(0, 10) : '', first: firstUser ? clipText(firstUser.content, 130) : '', last: last ? clipText(last.content, 130) : '' };
+      return {
+        title: x.title || 'New chat',
+        when: x.updated ? new Date(x.updated * 1000).toISOString().slice(0, 10) : '',
+        first: firstUser ? clipText(firstUser.content, 130) : '',
+        last: last ? clipText(last.content, 130) : '',
+      };
     });
     var st = loadSettings();
     var kbVault = loadVault();
     var kbGraph = buildGraph();
     var kbCtx = loadCtxFile();
-    return { facts: memoryOn() ? loadMemory().map(function (f) { return f.text; }) : [], chats: sessions.length, messages: totalMsgs, others: others, currentTitle: current ? (current.title || 'New chat') : 'New chat', theme: st.appearance_mode || 'system', vault: { count: kbVault.length, titles: kbVault.slice(0, 40).map(function (n) { return n.title || 'Untitled'; }), matched: matchedNotes(promptText) }, contextFile: kbCtx, graph: { topics: kbGraph.topics } };
-  }
-
-  // --- queued follow-up messages (the app's "queue for the next step") ---
-  var QUEUE_KEY = 'janna-web-queue-v1';
-  var draining = {};
-  function loadQueue() { try { return JSON.parse(localStorage.getItem(QUEUE_KEY) || '{}'); } catch { return {}; } }
-  function saveQueue(q) { try { localStorage.setItem(QUEUE_KEY, JSON.stringify(q)); } catch { /* ignore */ } }
-  function queueFor(sid) { var q = loadQueue(); return Array.isArray(q[sid]) ? q[sid] : []; }
-  function scheduleDrain(sessionId) { setTimeout(function () { drainQueue(sessionId); }, 900); }
-  function drainQueue(sessionId) {
-    if (!sessionId || draining[sessionId]) return;
-    var items = queueFor(sessionId);
-    if (!items.length) return;
-    var sess = findSession(sessionId);
-    if (!sess) { var q0 = loadQueue(); delete q0[sessionId]; saveQueue(q0); return; }
-    draining[sessionId] = true;
-    var item = items[0];
-    var q = loadQueue(); q[sessionId] = items.slice(1); if (!q[sessionId].length) delete q[sessionId]; saveQueue(q);
-    var body = { session_id: sessionId, prompt: item.text, mode: 'chat', messages: (sess.messages || []).filter(function (m) { return m && (m.role === 'user' || m.role === 'assistant'); }).map(function (m) { return { role: m.role, content: m.content }; }) };
-    if (sess.purpose === 'luna') body.companion = 'luna';
-    window.fetch('/api/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-      .then(function (r) { return r.text(); })
-      .catch(function () { /* the tap records errors as exchanges */ })
-      .then(function () {
-        draining[sessionId] = false;
-        try {
-          if (typeof state !== 'undefined' && state.session === sessionId && !state.busy && typeof openSession === 'function') openSession(sessionId);
-        } catch { /* app not ready */ }
-        if (queueFor(sessionId).length) scheduleDrain(sessionId);
-      });
+    return {
+      facts: memoryOn() ? loadMemory().map(function (f) { return f.text; }) : [],
+      chats: sessions.length, messages: totalMsgs, others: others,
+      currentTitle: current ? (current.title || 'New chat') : 'New chat',
+      theme: st.appearance_mode || 'system',
+      vault: { count: kbVault.length, titles: kbVault.slice(0, 40).map(function (n) { return n.title || 'Untitled'; }), matched: matchedNotes(promptText) },
+      contextFile: kbCtx, graph: { topics: kbGraph.topics },
+    };
   }
 
   // --- in-flight runs: nothing is lost on refresh. The exchange is
@@ -180,7 +187,11 @@
   var INFLIGHT_KEY = 'janna-web-inflight-v1';
   function saveInflight(sessionId, prompt, text, attached, editIndex) {
     try {
-      localStorage.setItem(INFLIGHT_KEY, JSON.stringify({ sessionId: sessionId, prompt: prompt, text: text || '', attached: Array.isArray(attached) ? attached : [], editIndex: (typeof editIndex === 'number' ? editIndex : null), at: Date.now() }));
+      localStorage.setItem(INFLIGHT_KEY, JSON.stringify({
+        sessionId: sessionId, prompt: prompt, text: text || '',
+        attached: Array.isArray(attached) ? attached : [],
+        editIndex: (typeof editIndex === 'number' ? editIndex : null), at: Date.now(),
+      }));
     } catch { /* full/blocked: in-memory only */ }
   }
   function loadInflight() { try { return JSON.parse(localStorage.getItem(INFLIGHT_KEY) || 'null'); } catch { return null; } }
@@ -226,16 +237,18 @@
     saveSessions(list);
   }
 
+  // Observe the run stream as it flows past and persist the exchange the
+  // moment the terminal frame arrives — synchronously, before the app
+  // re-reads the session and re-renders the conversation.
   function tapRunStream(response, sessionId, prompt, attached, editIndex) {
     if (!response.body || typeof TransformStream === 'undefined') return response;
     var decoder = new TextDecoder();
     var buffer = '', recorded = false;
-    var actSteps = [], actStart = Date.now();
     var partialText = '', lastWrite = 0;
     var hasSession = !!findSession(sessionId);
-    var recordDone = function (assistantText, errorMessage, act) {
-      if (editIndex != null) appendEditExchange(sessionId, editIndex, prompt, assistantText, errorMessage, act, attached);
-      else appendExchange(sessionId, prompt, assistantText, errorMessage, act, attached);
+    var recordDone = function (assistantText, errorMessage) {
+      if (editIndex != null) appendEditExchange(sessionId, editIndex, prompt, assistantText, errorMessage, attached);
+      else appendExchange(sessionId, prompt, assistantText, errorMessage, attached);
     };
     // The question is safe the moment the run starts — a refresh from here
     // on keeps at least the question, plus whatever reply arrived so far.
@@ -259,21 +272,29 @@
               try {
                 var event = JSON.parse(lines[i].slice(5).trim());
                 var p = event.payload || event;
-                if (p.type === 'progress' && p.message) { if (actSteps[actSteps.length - 1] !== p.message) actSteps.push(p.message); }
-                else if (p.type === 'delta' && typeof p.text === 'string' && p.text) {
+                if (p.type === 'delta' && typeof p.text === 'string' && p.text) {
                   partialText += p.text;
                   var now = Date.now();
                   if (hasSession && now - lastWrite > 400) { lastWrite = now; saveInflight(sessionId, prompt, partialText, attached, editIndex); }
+                } else if (p.type === 'done') {
+                  clearInflight();
+                  recordDone(typeof p.text === 'string' ? p.text : '', '');
+                  recorded = true;
+                } else if (p.type === 'error') {
+                  clearInflight();
+                  recordDone('', p.message || 'Run failed');
+                  recorded = true;
+                } else if (p.type === 'recovery') {
+                  clearInflight();
+                  recordDone('', p.message || 'Outcome unknown');
+                  recorded = true;
                 }
-                else if (p.type === 'done') { var act = actSteps.length ? { steps: actSteps.slice(0, 12), seconds: Math.max(1, Math.round((Date.now() - actStart) / 1000)) } : null; clearInflight(); recordDone(typeof p.text === 'string' ? p.text : '', '', act); recorded = true; if (queueFor(sessionId).length) scheduleDrain(sessionId); }
-                else if (p.type === 'error') { clearInflight(); recordDone('', p.message || 'Run failed', null); recorded = true; }
-                else if (p.type === 'recovery') { clearInflight(); recordDone('', p.message || 'Outcome unknown', null); recorded = true; }
               } catch { /* partial frame */ }
             }
           }
         } catch { /* never break the app's stream */ }
         controller.enqueue(chunk);
-      }
+      },
     });
     var headers = new Headers(response.headers);
     return new Response(response.body.pipeThrough(tap), { status: response.status, statusText: response.statusText, headers: headers });
@@ -300,7 +321,12 @@
       if (!bootLocal) {
         bootLocal = true;
         var cached = loadModels();
-        var local = { token: 'web', version: '1.6.0-web.5', projects: [], active_project: null, sessions: loadSessions().map(summary), models: cached ? cached.models : [], model_catalog: cached ? cached.model_catalog : [], settings: loadSettings(), languages: [], local: true };
+        var local = {
+          token: 'web', version: '1.6.0-web.5', projects: [], active_project: null,
+          sessions: loadSessions().map(summary),
+          models: cached ? cached.models : [], model_catalog: cached ? cached.model_catalog : [],
+          settings: loadSettings(), languages: [], local: true,
+        };
         nativeFetch(input, init).then(function (r) { return r.json(); }).then(function (b) {
           if (b && Array.isArray(b.models)) saveModels({ models: b.models, model_catalog: b.model_catalog || [], saved_at: Date.now() });
           window.dispatchEvent(new CustomEvent('janna-bootstrap-refreshed'));
@@ -322,7 +348,11 @@
       var body = {};
       try { body = JSON.parse((init && init.body) || '{}'); } catch { /* empty */ }
       var now = Math.floor(Date.now() / 1000);
-      var session = { id: 'web-' + Math.random().toString(36).slice(2, 10) + now.toString(36), title: 'New chat', project_id: body.project_id || null, created: now, updated: now, messages: [], events: [] };
+      var session = {
+        id: 'web-' + Math.random().toString(36).slice(2, 10) + now.toString(36),
+        title: 'New chat', project_id: body.project_id || null,
+        created: now, updated: now, messages: [], events: [],
+      };
       var list = loadSessions(); list.unshift(session); saveSessions(list);
       return Promise.resolve(jsonResponse(session));
     }
@@ -358,23 +388,24 @@
       var del = {};
       try { del = JSON.parse((init && init.body) || '{}'); } catch { /* empty */ }
       saveSessions(loadSessions().filter(function (s) { return s.id !== del.session_id; }));
-      var dq = loadQueue(); if (dq[del.session_id]) { delete dq[del.session_id]; saveQueue(dq); }
       return Promise.resolve(jsonResponse({ ok: true }));
     }
     if (path === '/api/sessions/clear' && method === 'POST') {
       saveSessions([]);
-      saveQueue({});
       return Promise.resolve(jsonResponse({ ok: true }));
     }
     if (path.startsWith('/api/session/') && method === 'GET') {
       var sid = decodeURIComponent(path.slice('/api/session/'.length));
       var found = findSession(sid);
       if (!found) return Promise.resolve(jsonResponse({ error: 'Conversation not found.' }, 404));
-      return Promise.resolve(jsonResponse(Object.assign({}, found, { runs: [], inputs: queueFor(sid), goals: [] })));
+      return Promise.resolve(jsonResponse(Object.assign({}, found, { runs: [], inputs: [], goals: [] })));
     }
     if (path === '/api/luna/chat' && method === 'POST') {
       var kn = Math.floor(Date.now() / 1000);
-      var ks = { id: 'web-luna-' + Math.random().toString(36).slice(2, 10), title: 'Luna chat', purpose: 'luna', project_id: null, created: kn, updated: kn, messages: [], events: [] };
+      var ks = {
+        id: 'web-luna-' + Math.random().toString(36).slice(2, 10), title: 'Luna chat',
+        purpose: 'luna', project_id: null, created: kn, updated: kn, messages: [], events: [],
+      };
       var kl = loadSessions(); kl.unshift(ks); saveSessions(kl);
       return Promise.resolve(jsonResponse(ks));
     }
@@ -399,7 +430,11 @@
     if (path === '/api/profile/select' && method === 'POST')
       return Promise.resolve(jsonResponse({ ok: true }));
     if (path === '/api/profile/export' && method === 'GET')
-      return Promise.resolve(jsonResponse({ format: 'janna-web-profile', version: 1, exported_at: new Date().toISOString(), sessions: loadSessions(), settings: loadSettings(), memory: loadMemory(), vault: loadVault(), contextFile: loadCtxFile() }));
+      return Promise.resolve(jsonResponse({
+        format: 'janna-web-profile', version: 1, exported_at: new Date().toISOString(),
+        sessions: loadSessions(), settings: loadSettings(), memory: loadMemory(),
+        vault: loadVault(), contextFile: loadCtxFile(),
+      }));
     if (path === '/api/profile/import' && method === 'POST') {
       var imp = {};
       try { imp = JSON.parse((init && init.body) || '{}'); } catch { /* empty */ }
@@ -412,9 +447,20 @@
       if (added) saveSessions(existing);
       var notes = 0;
       if (imp.settings && typeof imp.settings === 'object') { saveSettings(Object.assign({}, imp.settings, loadSettings())); notes = 1; }
-      if (Array.isArray(imp.memory) && imp.memory.length) { var cur = loadMemory(); imp.memory.forEach(function (f) { if (f && f.text && !cur.some(function (x) { return x.text === f.text; })) cur.push(f); }); saveMemory(cur); }
-      if (Array.isArray(imp.vault) && imp.vault.length) { var cv = loadVault(); imp.vault.forEach(function (n) { if (n && n.id && !cv.some(function (x) { return x.id === n.id; })) cv.push(n); }); saveVault(cv); }
-      if (imp.contextFile && (imp.contextFile.about || imp.contextFile.rules)) { var lc = loadCtxFile(); if (!lc.about && !lc.rules) saveCtxFile(imp.contextFile); }
+      if (Array.isArray(imp.memory) && imp.memory.length) {
+        var cur = loadMemory();
+        imp.memory.forEach(function (f) { if (f && f.text && !cur.some(function (x) { return x.text === f.text; })) cur.push(f); });
+        saveMemory(cur);
+      }
+      if (Array.isArray(imp.vault) && imp.vault.length) {
+        var cv = loadVault();
+        imp.vault.forEach(function (n) { if (n && n.id && !cv.some(function (x) { return x.id === n.id; })) cv.push(n); });
+        saveVault(cv);
+      }
+      if (imp.contextFile && (imp.contextFile.about || imp.contextFile.rules)) {
+        var lc = loadCtxFile();
+        if (!lc.about && !lc.rules) saveCtxFile(imp.contextFile);
+      }
       return Promise.resolve(jsonResponse({ imported: { conversations: added, notes: notes } }));
     }
 
@@ -425,26 +471,6 @@
     // --- saved-run activity: web runs are not persisted server-side ---
     if (/^\/api\/runs\/[^/]+\/activity$/.test(path) && method === 'GET')
       return Promise.resolve(jsonResponse({ state: 'completed', events: [] }));
-
-    // --- queued follow-ups: store locally; the tap drains them after the run ---
-    if (path === '/api/run/update' && method === 'POST') {
-      var qb = {};
-      try { qb = JSON.parse((init && init.body) || '{}'); } catch { /* empty */ }
-      if (!qb.session_id || !qb.prompt) return Promise.resolve(jsonResponse({ error: 'Queued message needs a session and text.' }, 400));
-      var qq = loadQueue(); var list = Array.isArray(qq[qb.session_id]) ? qq[qb.session_id] : [];
-      list.push({ id: 'q-' + Math.random().toString(36).slice(2, 9), text: String(qb.prompt), state: 'queued' });
-      qq[qb.session_id] = list; saveQueue(qq);
-      return Promise.resolve(jsonResponse({ queued: list.length }));
-    }
-    if (path === '/api/run/input/edit' && method === 'POST') {
-      var eb = {};
-      try { eb = JSON.parse((init && init.body) || '{}'); } catch { /* empty */ }
-      var eq = loadQueue(); var elist = Array.isArray(eq[eb.session_id]) ? eq[eb.session_id] : [];
-      if (eb.text == null) elist = elist.filter(function (x) { return x.id !== eb.input_id; });
-      else elist.forEach(function (x) { if (x.id === eb.input_id) x.text = String(eb.text); });
-      eq[eb.session_id] = elist; saveQueue(eq);
-      return Promise.resolve(jsonResponse({ ok: true }));
-    }
 
     // --- run: inject local history; tap the stream to persist the exchange ---
     if (path === '/api/run' && method === 'POST') {
@@ -464,7 +490,7 @@
         if (typeof runBody.edit_of === 'number') allHist = allHist.slice(0, runBody.edit_of);
         runBody.messages = allHist.map(function (m) { return { role: m.role, content: m.content }; });
       }
-        if (sess && sess.purpose === 'luna') runBody.companion = 'luna';
+      if (sess && sess.purpose === 'luna') runBody.companion = 'luna';
       var shrinkRunImages = function () {
         var list = Array.isArray(runBody.attachments) ? runBody.attachments : [];
         var jobs = list.filter(function (a) { return a && a.kind === 'image' && a.data && a.data.length > 900000; }).map(function (a) {
@@ -494,14 +520,19 @@
         var newInit = Object.assign({}, init, { body: JSON.stringify(runBody) });
         return nativeFetch(input, newInit).then(function (response) {
           if (isBackground) return response;
-          return tapRunStream(response, runBody.session_id, runBody.prompt, (Array.isArray(runBody.attachments) ? runBody.attachments : []).map(function (a) { return { kind: a && a.kind === 'image' ? 'image' : 'file', name: String((a && a.name) || 'file').slice(0, 80) }; }), (typeof runBody.edit_of === 'number' ? runBody.edit_of : null));
+          return tapRunStream(
+            response, runBody.session_id, runBody.prompt,
+            (Array.isArray(runBody.attachments) ? runBody.attachments : []).map(function (a) {
+              return { kind: a && a.kind === 'image' ? 'image' : 'file', name: String((a && a.name) || 'file').slice(0, 80) };
+            }),
+            (typeof runBody.edit_of === 'number' ? runBody.edit_of : null)
+          );
         });
       });
     }
 
     return nativeFetch(input, init);
   };
-
 
   // --- Janna's own knowledge system (web edition): a notes vault (her
   // Obsidian), a personal context file (her ICM: About me + standing
@@ -767,16 +798,8 @@
   var kbTries = 0;
   var kbTimer = setInterval(function () { if (injectKnowledge() || ++kbTries > 40) clearInterval(kbTimer); }, 400);
 
-  // --- recovery on boot: merge any interrupted run, then drain any queued
-  // follow-ups that a refresh stranded (the queue used to wait for the next
-  // completed run before it moved at all) ---
+  // --- recovery on boot: merge any interrupted run ---
   try { mergeInflight(); } catch { /* never break boot */ }
-  setTimeout(function () {
-    try {
-      var q = loadQueue();
-      Object.keys(q).forEach(function (sid) { if (Array.isArray(q[sid]) && q[sid].length) drainQueue(sid); });
-    } catch { /* ignore */ }
-  }, 1500);
 
   // --- service worker self-heal: when a new shell takes over, reload once
   // so updates actually reach this device in a single visit ---

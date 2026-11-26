@@ -13,6 +13,7 @@
 </head>
 <body data-theme="light">
   <script src="/theme.js"></script>
+  <!-- Inline icon set (stroke icons, 24x24). app.js references these by id. -->
   <svg class="symbols" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
     <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
     <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20.5 20.5L16.7 16.7"/></symbol>
@@ -137,7 +138,7 @@
               <button class="icon-button composer-mic" id="voiceMic" type="button" title="Dictate a message" aria-label="Dictate a message" aria-pressed="false"><svg><use href="#i-mic"/></svg></button>
               <button id="voiceModeBtn" class="voice-mode-btn" type="button" title="Talk to Janna" aria-label="Talk to Janna by voice"><svg><use href="#i-wave"/></svg></button>
               <button id="send" class="send-button" type="button" title="Send" aria-label="Send"><svg><use href="#i-send"/></svg></button>
-              <button id="stop" class="send-button stop-button" type="button" title="Stop" aria-label="Stop" hidden><svg><use href="#i-stop"/></svg></button>
+              <button id="stop" class="send-button stop-button" type="button" title="Stop generating response" aria-label="Stop generating response" hidden><svg><use href="#i-stop"/></svg></button>
             </div>
           </div>
           <div id="modelPicker" class="model-picker" hidden></div>
@@ -154,7 +155,7 @@
         <button id="rightPaneHide" class="icon-button" type="button" title="Hide pane" aria-label="Hide pane"><svg><use href="#i-close"/></svg></button>
       </div>
       <div class="right-pane-body" id="rightPaneBody">
-        <div class="right-pane-empty">
+        <div class="right-pane-empty" id="rightPaneEmpty">
           <button type="button" class="right-pane-row" id="appPreviewRow"><svg><use href="#i-panel"/></svg><span>App preview</span></button>
           <button type="button" class="right-pane-row" id="openFileRow"><svg><use href="#i-file"/></svg><span>Open a file&hellip; Ctrl O</span></button>
         </div>
@@ -210,6 +211,7 @@
   <div id="settingsView" class="full-overlay" hidden role="dialog" aria-label="Settings">
     <div class="full-overlay-card settings-card">
       <div class="settings-head">
+        <h2 id="settingsTitle" style="font-size:17px;margin:0;white-space:nowrap">Settings</h2>
         <input id="settingsSearch" placeholder="Search settings" aria-label="Search settings" autocomplete="off">
         <button type="button" id="settingsClose" class="icon-button" title="Close settings" aria-label="Close settings"><svg><use href="#i-close"/></svg></button>
       </div>
@@ -234,6 +236,25 @@
   </div>
 
   <div id="toast" class="toast" role="status" hidden></div>
+
+  <!-- Voice mode -->
+  <div id="voiceOverlay" class="voice-overlay" hidden role="dialog" aria-label="Voice mode" data-phase="listening">
+    <div class="voice-top">
+      <button id="voiceOrb" class="voice-orb" type="button" aria-label="Voice"></button>
+      <div class="voice-status">
+        <div class="voice-caption" id="voiceCaption">Listening&hellip;</div>
+        <div class="voice-sub">Speak, then tap Send.</div>
+      </div>
+    </div>
+    <div class="voice-bar">
+      <button id="voiceClose" class="voice-plus" type="button" title="Close" aria-label="Close voice mode"><svg><use href="#i-close"/></svg></button>
+      <button id="voiceName" class="voice-name" type="button"><span>Janna</span><svg><use href="#i-chevron"/></svg></button>
+      <span class="voice-bars"><i></i><i></i><i></i><i></i></span>
+    </div>
+    <div class="voice-controls" style="justify-content:center;margin-bottom:24px">
+      <button type="button" id="voiceSend" class="primary-pill">Send</button>
+    </div>
+  </div>
   <input type="file" id="attachment" accept=".txt,.md,.log,.json,.py,.cs,.js,.ts,.rs,.go,.xml,.yaml,.yml,.png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" multiple hidden>
   <input type="file" id="libraryFileInput" accept=".txt,.md,.log,.json,.py,.cs,.js,.ts,.html,.htm,.css,.png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" multiple hidden>
   <input type="file" id="previewFileInput" accept=".html,.htm,text/html" hidden>
