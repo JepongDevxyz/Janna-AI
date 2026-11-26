@@ -146,6 +146,7 @@ svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.65;strok
 .welcome h1{font-size:35px;line-height:1.15;font-weight:400;letter-spacing:-1.2px;text-align:center;margin:0 0 28px}
 .welcome-composer-slot{margin-bottom:18px}
 .welcome-foot{text-align:center;font-size:13px;color:var(--muted);margin:auto -12px 0;padding-top:26px}
+.nowrap{white-space:nowrap}
 .private-note{text-align:center;font-size:13px;color:var(--muted);margin:16px 0 0}
 .ai-disclaimer{text-align:center;font-size:11px;color:var(--faded);margin:6px 0 0;padding:0 16px 10px;flex-shrink:0}
 
@@ -433,6 +434,7 @@ body.wrap-code .message-body .code-block pre{white-space:pre-wrap;overflow-wrap:
 .library-viewer img{max-width:100%;border-radius:10px}
 
 .settings-card{max-width:860px}
+.settings-who,.settings-plan{display:flex;gap:8px;flex-wrap:wrap;align-items:baseline}
 .settings-head{display:flex;align-items:center;gap:10px;margin-bottom:14px}
 .settings-head input{flex:1;min-width:0;border:1px solid var(--line);background:var(--panel);border-radius:999px;padding:10px 16px;font-size:14px;outline:0}
 .settings-layout{display:flex;gap:24px;align-items:flex-start}
@@ -563,8 +565,7 @@ body[data-theme='dark'] .toast,body[data-theme='velvet'] .toast,body[data-theme=
   .welcome-foot{font-size:12px}
   .welcome-composer-slot{margin-bottom:12px}
   .suggest-list{gap:0}
-  .suggest-row{padding:13px 14px 13px 47px}
-  .suggest-row svg{display:none}
+  .suggest-row{padding:13px 14px}
   .composer{border-radius:29px;padding:10px 8px 8px}
   .composer textarea{font-size:15px}
   .composer-plus,.voice-mode-btn,.send-button{width:32px;height:32px}
